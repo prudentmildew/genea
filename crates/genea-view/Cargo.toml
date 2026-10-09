@@ -1,0 +1,28 @@
+[package]
+name = "genea-view"
+description = "Genea's thin Slint view layer and the `genea` app binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "genea"
+path = "src/main.rs"
+
+[dependencies]
+genea-core.workspace = true
+genea-host.workspace = true
+slint.workspace = true
+
+# Native Open panels. The same objc2 stack Slint's winit backend already
+# links, so these add features, not crates.
+objc2 = "0.6.5"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std", "block2", "NSApplication", "NSOpenPanel", "NSPanel", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSWindow",
+] }
+
+[build-dependencies]
+slint-build.workspace = true

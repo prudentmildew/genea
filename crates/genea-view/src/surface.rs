@@ -1,0 +1,120 @@
+//! The editor surface's Rust half: maps the core's `EditorView` onto the
+//! ring of line slots in `ui/editor-surface.slint`.
+//!
+//! Repaint rules (ADR 0004, "an idle caret must not repaint"):
+//! - push to Slint only what changed. `VecModel::set_row_data` always
+//!   notifies, so each slot's last state is cached and compared first;
+//!   property setters already skip equal values;
+//! - no timers. Scrolling and caret moves repaint because input changed
+//!   something, never on a schedule.
+
+use std::rc::Rc;
+
+use genea_core::EditorView;
+use slint::{Color, Model, ModelRc, VecModel};
+
+use crate::{Line, ProjectWindow, Run};
+
+/// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
+/// ui/theme.slint.
+pub const LINE_HEIGHT: f32 = 15.6;
+
+/// Line `y`s are relative to a base line so `f32` stays exact deep into a
+/// huge file. The base moves (and every slot is rebuilt) past this distance.
+const REBASE_LINES: usize = 10_000;
+
+/// `Theme.editor-foreground`. Highlighting gives runs their own colours.
+const FOREGROUND: u32 = 0x24292f;
+
+#[derive(PartialEq)]
+struct SlotState {
+    index: usize,
+    base: usize,
+    text: String,
+}
+
+pub struct Surface {
+    lines: Rc<VecModel<Line>>,
+    slots: Vec<Option<SlotState>>,
+    base: usize,
+    rows: f64,
+    scroll_top: f64,
+}
+
+impl Surface {
+    pub fn new(window: &ProjectWindow) -> Self {
+        let lines = Rc::new(VecModel::default());
+        window.set_lines(ModelRc::from(lines.clone()));
+        Surface { lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0 }
+    }
+
+    /// The viewport's height in rows, if it changed since the last call.
+    pub fn take_viewport_change(&mut self, window: &ProjectWindow) -> Option<f64> {
+        let rows = (window.get_viewport_height() / LINE_HEIGHT).max(1.0) as f64;
+        (rows != self.rows).then(|| {
+            self.rows = rows;
+            rows
+        })
+    }
+
+    /// The grid cell (line, display column) under a point in surface
+    /// coordinates, rounding to the nearest cell boundary like a click.
+    pub fn cell_at(&self, window: &ProjectWindow, x: f32, y: f32) -> (usize, usize) {
+        let line = (self.scroll_top + (y / LINE_HEIGHT) as f64).floor().max(0.0) as usize;
+        let char_width = window.get_char_width().max(1.0);
+        let column = ((x - window.get_text_left()) / char_width).round().max(0.0) as usize;
+        (line, column)
+    }
+
+    pub fn sync(&mut self, window: &ProjectWindow, editor: Option<&EditorView>) {
+        let slot_count = self.rows.max(1.0).ceil() as usize + 1;
+        if self.lines.row_count() != slot_count {
+            self.lines.set_vec(vec![Line::default(); slot_count]);
+            self.slots = (0..slot_count).map(|_| None).collect();
+        }
+
+        let mut wanted: Vec<Option<SlotState>> = (0..slot_count).map(|_| None).collect();
+        if let Some(editor) = editor {
+            let first = editor.lines.first().map_or(0, |l| l.index);
+            if first < self.base || first - self.base > REBASE_LINES {
+                self.base = first;
+            }
+            for line in &editor.lines {
+                wanted[line.index % slot_count] =
+                    Some(SlotState { index: line.index, base: self.base, text: line.text.clone() });
+            }
+            self.scroll_top = editor.scroll_top;
+        }
+
+        for (slot, state) in wanted.into_iter().enumerate() {
+            if self.slots[slot] == state {
+                continue;
+            }
+            let row = match &state {
+                None => Line { y: -1000.0, ..Line::default() },
+                Some(s) => Line {
+                    y: (s.index - s.base) as f32 * LINE_HEIGHT,
+                    number: (s.index + 1).to_string().into(),
+                    runs: if s.text.trim().is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(vec![Run {
+                            x: 0.0,
+                            text: s.text.as_str().into(),
+                            color: Color::from_argb_encoded(0xff00_0000 | FOREGROUND),
+                        }]))
+                    },
+                },
+            };
+            self.lines.set_row_data(slot, row);
+            self.slots[slot] = state;
+        }
+
+        let base = self.base as f64;
+        window.set_offset_y(-((self.scroll_top - base) * LINE_HEIGHT as f64) as f32);
+        if let Some(editor) = editor {
+            window.set_caret_x(editor.caret.column as f32 * window.get_char_width());
+            window.set_caret_y(((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32);
+        }
+    }
+}

@@ -1,0 +1,40 @@
+// The status bar at the bottom of a project window. Each item is a plain
+// string from the core's StatusBar view state.
+
+import { Theme } from "theme.slint";
+
+export component StatusBar inherits Rectangle {
+    in property <string> notice;
+    in property <string> caret;
+
+    height: 22px;
+    background: Theme.chrome-background;
+
+    Rectangle {
+        y: 0px;
+        height: 1px;
+        background: Theme.chrome-border;
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 16px;
+
+        Text {
+            text: root.notice;
+            color: Theme.chrome-muted;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        Text {
+            text: root.caret;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+    }
+}

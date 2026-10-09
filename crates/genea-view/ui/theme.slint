@@ -1,0 +1,23 @@
+// Colours, fonts and metrics shared by every view. One light theme for now;
+// the themes ticket adds dark and follows the system.
+//
+// The editor font is Menlo 13 pt with a line height of 1.2 (spec #19). Keep
+// line-height in step with LINE_HEIGHT in src/surface.rs.
+
+export global Theme {
+    out property <string> editor-font: "Menlo";
+    out property <length> editor-font-size: 13px;
+    out property <length> line-height: 15.6px;
+    out property <length> gutter-width: 56px;
+
+    out property <color> editor-background: #ffffff;
+    out property <color> editor-foreground: #24292f;
+    out property <color> gutter-foreground: #9a9a9a;
+    out property <color> caret: #1f6feb;
+
+    out property <color> chrome-background: #f6f8fa;
+    out property <color> chrome-border: #d0d7de;
+    out property <color> chrome-foreground: #24292f;
+    out property <color> chrome-muted: #57606a;
+    out property <length> chrome-font-size: 12px;
+}
