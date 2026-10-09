@@ -466,6 +466,16 @@ impl Editor {
         self.replace(edits, EditKind::Other, now, viewport_rows);
     }
 
+    /// Replaces whole lines (0-based, end exclusive; an empty range inserts
+    /// before its start) with `text`, taken as it is, as one undo step.
+    /// One caret is left, after the new text. Git's Rollback (ticket #56).
+    pub(crate) fn replace_lines(&mut self, lines: Range<usize>, text: &str, now: Instant, viewport_rows: f64) {
+        self.preedit.clear();
+        let last = self.text.len_lines();
+        let chars = self.text.line_to_char(lines.start.min(last))..self.text.line_to_char(lines.end.min(last));
+        self.replace(vec![(0, chars, text.to_owned())], EditKind::Other, now, viewport_rows);
+    }
+
     pub(crate) fn set_preedit(&mut self, text: String) {
         if self.read_only {
             return;

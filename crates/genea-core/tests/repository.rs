@@ -109,6 +109,17 @@ fn typing_in_a_line_marks_it_modified() {
 }
 
 #[test]
+fn a_keystroke_never_waits_for_the_markers() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 1, 3, "!");
+    // The keystroke is in the text at once; the diff runs in the background.
+    assert_eq!(text(&workbench, project), "one\ntwo!\nthree\nfour\n");
+    assert_eq!(markers(&workbench, project), []);
+    workbench.settle().unwrap();
+    assert_eq!(markers(&workbench, project), [(1, LineChange::Modified)]);
+}
+
+#[test]
 fn new_lines_are_marked_added() {
     let (_fixture, mut workbench, project) = editing_main();
     type_at(&mut workbench, project, 2, 0, "two and a half\nnearly three\n");
@@ -233,6 +244,66 @@ fn a_line_without_a_marker_shows_nothing() {
     workbench.settle().unwrap();
     workbench.dispatch(project, Command::ShowHunk { line: 2 });
     assert_eq!(shown_hunk(&workbench, project), None);
+}
+
+#[test]
+fn rollback_restores_the_change_and_undo_brings_it_back() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 0, 3, "!");
+    workbench.dispatch(project, Command::SelectLine { line: 2 });
+    workbench.dispatch(project, Command::InsertText("3\n".into()));
+    workbench.settle().unwrap();
+    let edited = "one!\ntwo\n3\nfour\n";
+    assert_eq!(text(&workbench, project), edited);
+
+    workbench.dispatch(project, Command::ShowHunk { line: 2 });
+    workbench.dispatch(project, Command::RollbackHunk);
+    workbench.settle().unwrap();
+    let rolled_back = "one!\ntwo\nthree\nfour\n";
+    assert_eq!(text(&workbench, project), rolled_back);
+    assert_eq!(markers(&workbench, project), [(0, LineChange::Modified)]);
+    assert_eq!(shown_hunk(&workbench, project), None);
+
+    workbench.dispatch(project, Command::Undo);
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), edited);
+    assert_eq!(markers(&workbench, project), [(0, LineChange::Modified), (2, LineChange::Modified)]);
+
+    workbench.dispatch(project, Command::Redo);
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), rolled_back);
+}
+
+#[test]
+fn rollback_removes_added_lines_and_restores_deleted_ones() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 0, 0, "zero\n");
+    workbench.dispatch(project, Command::SelectLine { line: 4 });
+    workbench.dispatch(project, Command::Delete(CaretMove::Left));
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "zero\none\ntwo\nthree\n");
+    assert_eq!(markers(&workbench, project), [(0, LineChange::Added), (4, LineChange::Deleted)]);
+
+    workbench.dispatch(project, Command::ShowHunk { line: 4 });
+    workbench.dispatch(project, Command::RollbackHunk);
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "zero\none\ntwo\nthree\nfour\n");
+
+    workbench.dispatch(project, Command::ShowHunk { line: 0 });
+    workbench.dispatch(project, Command::RollbackHunk);
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), MAIN);
+    assert_eq!(markers(&workbench, project), []);
+}
+
+#[test]
+fn rollback_without_a_shown_change_does_nothing() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 0, 0, "zero\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::RollbackHunk);
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "zero\none\ntwo\nthree\nfour\n");
 }
 
 #[test]

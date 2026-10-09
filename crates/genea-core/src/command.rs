@@ -152,6 +152,10 @@ pub enum Command {
     ShowHunk { line: usize },
     /// Closes the shown change (Esc, a click outside it).
     HideHunk,
+    /// The shown change's Rollback: puts its lines at HEAD back in the
+    /// buffer, as an edit that Undo reverts, and closes it. Does nothing
+    /// without a shown change.
+    RollbackHunk,
 }
 
 /// What to do with unsaved edits in a closing tab.

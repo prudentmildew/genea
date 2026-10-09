@@ -278,14 +278,22 @@ impl Project {
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
         // A shown change closes on anything but scrolling.
-        if !matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. }) {
-            self.shown_hunk = None;
-        }
+        let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
+        let shown = if scrolling { None } else { self.shown_hunk.take() };
         match command {
             Command::ShowHunk { line } => {
                 self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
             }
             Command::HideHunk => {}
+            Command::RollbackHunk => {
+                // `shown_hunk` was taken above; it is still the one shown.
+                if let Some(editor) = &mut self.editor
+                    && let Some((path, line)) = shown.filter(|(path, _)| path == editor.path())
+                    && let Some((lines, text)) = self.git.rollback(&path, editor.version(), line)
+                {
+                    editor.replace_lines(lines, &text, now, self.viewport_rows);
+                }
+            }
             Command::OpenFile(path) => self.open_file(path, None, jobs),
             Command::OpenFileAt { path, at } => self.open_file(path, Some(at), jobs),
             Command::OpenConfig => self.open_config(jobs),

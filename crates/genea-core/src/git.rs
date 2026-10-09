@@ -238,6 +238,14 @@ impl Git {
         Some(HunkView { lines: hunk.lines.clone(), change: hunk.change(), head })
     }
 
+    /// What rolling back the change marked on `line` of `path` takes: the
+    /// buffer's lines to replace, and their text at HEAD (line breaks
+    /// included) to replace them with.
+    pub(crate) fn rollback(&self, path: &Path, version: u64, line: usize) -> Option<(Range<usize>, String)> {
+        let (hunk, base) = self.current_hunk(path, version, line)?;
+        Some((hunk.lines.clone(), head_text(hunk, base)))
+    }
+
     /// The gutter markers of `path` on `lines`, top to bottom.
     pub(crate) fn gutter(&self, path: &Path, lines: Range<usize>) -> Vec<GutterMark> {
         let Some(file) = self.files.get(path).filter(|f| f.base.is_some()) else { return Vec::new() };
