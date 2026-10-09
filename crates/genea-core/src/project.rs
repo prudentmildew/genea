@@ -543,8 +543,8 @@ impl Project {
     /// Writes an open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
     fn save(&mut self, path: PathBuf, jobs: &Jobs) {
-        let Some(editor) = self.open_editor(&path).filter(|e| !e.is_read_only()) else { return };
-        let snapshot = editor.snapshot();
+        let Some(editor) = self.open_editor_mut(&path).filter(|e| !e.is_read_only()) else { return };
+        let snapshot = editor.start_save();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
         jobs.spawn("save file", move || {

@@ -1019,6 +1019,16 @@ impl Editor {
         true
     }
 
+    /// The buffer to write for a save. From now on Genea believes the file
+    /// holds it, so the watcher's report of this write is no external
+    /// change. Saving overwrites the disk, which settles a conflict.
+    pub(crate) fn start_save(&mut self) -> Snapshot {
+        let snapshot = self.snapshot();
+        self.set_disk(snapshot.text.clone());
+        self.conflict = false;
+        snapshot
+    }
+
     /// Answers the conflict bar. Reload replaces the buffer with the disk's
     /// text as one undo step.
     pub(crate) fn resolve_conflict(&mut self, choice: ConflictChoice, now: Instant, viewport_rows: f64) {

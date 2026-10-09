@@ -123,3 +123,29 @@ fn keep_my_edits_closes_the_bar_and_the_next_save_overwrites_the_disk() {
     assert!(!view.conflict);
     assert!(!view.modified);
 }
+
+#[test]
+fn saving_in_genea_never_shows_the_conflict_bar() {
+    let (fixture, mut workbench, project) = open("main.ts", "a\n");
+
+    // The save's own change on disk arrives while the buffer has newer edits.
+    run(&mut workbench, project, [Command::InsertText("1".into()), Command::Save, Command::InsertText("2".into())]);
+    workbench.settle().unwrap();
+
+    let view = editor(&workbench, project);
+    assert!(!view.conflict);
+    assert!(view.modified);
+    assert_eq!(text(&workbench, project), ["12a", ""]);
+    assert_eq!(fixture.read("main.ts"), "1a\n");
+}
+
+#[test]
+fn saving_in_genea_never_reloads() {
+    let (_fixture, mut workbench, project) = open("main.ts", "a\n");
+
+    run(&mut workbench, project, [Command::InsertText("1".into()), Command::Save]);
+    workbench.settle().unwrap();
+    run(&mut workbench, project, [Command::Undo]);
+
+    assert_eq!(text(&workbench, project), ["a", ""], "undo takes back the typing, not a reload");
+}
