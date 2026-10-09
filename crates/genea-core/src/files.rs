@@ -39,7 +39,8 @@ pub(crate) struct FileIndex {
     folders: HashMap<PathBuf, Entries>,
     /// Folders the user expanded (relative).
     expanded: HashSet<PathBuf>,
-    /// The config's `exclude` patterns.
+    /// The config's `exclude` patterns, as written and as a matcher.
+    exclude_patterns: Vec<String>,
     exclude: Gitignore,
     /// The tree's rows, rebuilt when anything above changes.
     rows: Arc<[FileRow]>,
@@ -73,13 +74,13 @@ struct Found {
 
 impl FileIndex {
     pub(crate) fn new(id: ProjectId, root: PathBuf) -> Self {
-        let exclude = GitignoreBuilder::new(&root).build().expect("an empty matcher builds");
         FileIndex {
             id,
             root,
             folders: HashMap::new(),
             expanded: HashSet::new(),
-            exclude,
+            exclude_patterns: Vec::new(),
+            exclude: Gitignore::empty(),
             rows: Arc::from([]),
             reading: false,
             changed: BTreeSet::new(),
@@ -106,6 +107,22 @@ impl FileIndex {
 
     pub(crate) fn rows(&self) -> Arc<[FileRow]> {
         self.rows.clone()
+    }
+
+    /// Applies the config's `exclude` patterns (`.gitignore` lines) to the
+    /// tree.
+    pub(crate) fn set_exclude(&mut self, patterns: &[String]) {
+        if patterns == self.exclude_patterns {
+            return;
+        }
+        let mut builder = GitignoreBuilder::new(&self.root);
+        for pattern in patterns {
+            // The config only keeps patterns that build.
+            let _ = builder.add_line(None, pattern);
+        }
+        self.exclude = builder.build().unwrap_or_else(|_| Gitignore::empty());
+        self.exclude_patterns = patterns.to_vec();
+        self.rebuild_rows();
     }
 
     /// Expands a folder, or collapses it if it is expanded.

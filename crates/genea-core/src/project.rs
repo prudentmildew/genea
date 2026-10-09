@@ -166,6 +166,7 @@ impl Project {
                     };
                     (Config::default(), vec![problem])
                 });
+                project.files.set_exclude(&config.exclude);
                 project.config = config;
                 project.config_problems = problems;
                 project.update_config_problems();

@@ -4,7 +4,7 @@
 
 use std::{fs, path::Path};
 
-use genea_core::{Command, FileRow, FileRowKind, ProjectId, Workbench};
+use genea_core::{Command, FileRow, FileRowKind, ProjectId, Severity, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 fn open(fixture: FixtureBuilder) -> (FixtureProject, Workbench, ProjectId) {
@@ -123,6 +123,89 @@ fn changes_inside_node_modules_stay_hidden() {
     workbench.dispatch(project, Command::ToggleFolder("src".into()));
 
     assert_eq!(tree(&workbench, project), ["- src/", "  main.ts"]);
+}
+
+#[test]
+fn exclude_hides_matching_paths_and_a_negation_brings_one_back() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new()
+            .file("genea.jsonc", r#"{ "exclude": ["*.log", "!keep.log", "/build", "generated/"] }"#)
+            .file("debug.log", "")
+            .file("keep.log", "")
+            .file("build/out.js", "")
+            .file("src/build/index.ts", "")
+            .file("src/generated/api.ts", "")
+            .file("src/main.ts", "")
+            .file("src/trace.log", ""),
+    );
+    workbench.dispatch(project, Command::ToggleFolder("src".into()));
+
+    assert_eq!(
+        tree(&workbench, project),
+        ["- src/", "  + build/", "  main.ts", "genea.jsonc", "keep.log"]
+    );
+}
+
+#[test]
+fn an_excluded_folder_hides_its_contents_even_from_a_negation() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new()
+            .file("genea.jsonc", r#"{ "exclude": ["dist/", "!dist/keep.ts"] }"#)
+            .file("dist/keep.ts", "")
+            .file("dist/bundle.js", "")
+            .file("src/main.ts", ""),
+    );
+    workbench.dispatch(project, Command::ToggleFolder("dist".into()));
+
+    assert_eq!(tree(&workbench, project), ["+ src/", "genea.jsonc"]);
+}
+
+#[test]
+fn exclude_applies_live_when_the_config_changes_on_disk() {
+    let (fixture, mut workbench, project) =
+        open(FixtureProject::new().file("dist/bundle.js", "").file("src/main.ts", ""));
+    assert_eq!(tree(&workbench, project), ["+ dist/", "+ src/"]);
+
+    fixture.write("genea.jsonc", r#"{ "exclude": ["dist"] }"#);
+    workbench.settle().unwrap();
+    assert_eq!(tree(&workbench, project), ["+ src/", "genea.jsonc"]);
+
+    fixture.write("genea.jsonc", "{}");
+    workbench.settle().unwrap();
+    assert_eq!(tree(&workbench, project), ["+ dist/", "+ src/", "genea.jsonc"]);
+}
+
+#[test]
+fn an_invalid_exclude_pattern_hides_nothing_and_shows_an_error() {
+    let (_fixture, workbench, project) = open(
+        FixtureProject::new()
+            .file("genea.jsonc", r#"{ "exclude": ["dist/", "src/[z-a].ts"] }"#)
+            .file("dist/bundle.js", ""),
+    );
+
+    assert_eq!(tree(&workbench, project), ["+ dist/", "genea.jsonc"]);
+    let problems = workbench.project(project).unwrap().problems;
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].severity, Severity::Error);
+    assert!(problems[0].message.starts_with("\"exclude\" has a bad pattern"), "{}", problems[0].message);
+}
+
+#[test]
+fn hidden_files_can_still_be_opened() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new()
+            .file("genea.jsonc", r#"{ "exclude": ["dist/"] }"#)
+            .file("dist/bundle.js", "bundled();\n")
+            .file("node_modules/left-pad/index.js", "module.exports = 1;\n"),
+    );
+
+    for (path, text) in [("dist/bundle.js", "bundled();"), ("node_modules/left-pad/index.js", "module.exports = 1;")] {
+        workbench.dispatch(project, Command::OpenFile(path.into()));
+        workbench.settle().unwrap();
+        let editor = workbench.project(project).unwrap().editor.unwrap();
+        assert_eq!(editor.path, Path::new(path));
+        assert_eq!(editor.lines[0].text, text);
+    }
 }
 
 #[test]
