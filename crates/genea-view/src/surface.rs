@@ -10,8 +10,9 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::EditorView;
-use slint::{Color, Model, ModelRc, VecModel};
+use genea_core::{EditorView, Highlight, HighlightSpan};
+use slint::{Model, ModelRc, VecModel};
+use unicode_width::UnicodeWidthChar;
 
 use crate::{Line, ProjectWindow, Run, Span};
 
@@ -23,16 +24,14 @@ pub const LINE_HEIGHT: f32 = 15.6;
 /// huge file. The base moves (and every slot is rebuilt) past this distance.
 const REBASE_LINES: usize = 10_000;
 
-/// `Theme.editor-foreground`. Highlighting gives runs their own colours.
-const FOREGROUND: u32 = 0x24292f;
-
 #[derive(PartialEq)]
 struct SlotState {
     index: usize,
     base: usize,
     text: String,
     selections: Vec<Range<usize>>,
-    /// The cell width the selections were laid out with.
+    highlights: Vec<HighlightSpan>,
+    /// The cell width the runs and selections were laid out with.
     char_width: f32,
 }
 
@@ -96,6 +95,7 @@ impl Surface {
                     base: self.base,
                     text: line.text.clone(),
                     selections: line.selections.clone(),
+                    highlights: line.highlights.clone(),
                     char_width,
                 });
             }
@@ -114,11 +114,7 @@ impl Surface {
                     runs: if s.text.trim().is_empty() {
                         ModelRc::default()
                     } else {
-                        ModelRc::new(VecModel::from(vec![Run {
-                            x: 0.0,
-                            text: s.text.as_str().into(),
-                            color: Color::from_argb_encoded(0xff00_0000 | FOREGROUND),
-                        }]))
+                        ModelRc::new(VecModel::from(runs(&s.text, &s.highlights, char_width)))
                     },
                     selections: if s.selections.is_empty() {
                         ModelRc::default()
@@ -146,5 +142,77 @@ impl Surface {
             window.set_caret_x((editor.caret.column + preedit) as f32 * char_width);
             window.set_caret_y(((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32);
         }
+    }
+}
+
+/// Splits a line's grid text into runs: one per highlight, and one for each
+/// character a fallback font may draw (wide, CJK, emoji, symbols), so its
+/// advance can't push what follows off the grid. Each run is placed at its
+/// own column; blank runs are left out.
+fn runs(text: &str, highlights: &[HighlightSpan], char_width: f32) -> Vec<Run> {
+    let mut runs = Vec::new();
+    let mut current = String::new();
+    let mut current_column = 0;
+    let mut current_highlight = 0;
+    let mut current_on_grid = true;
+    let mut spans = highlights.iter().peekable();
+    let mut column = 0;
+    let mut flush = |text: &mut String, column: usize, highlight: i32| {
+        if !text.trim().is_empty() {
+            runs.push(Run { x: column as f32 * char_width, text: text.as_str().into(), highlight });
+        }
+        text.clear();
+    };
+    for c in text.chars() {
+        let width = c.width().unwrap_or(0);
+        // A combining mark stays with the character before it.
+        if width == 0 && !current.is_empty() {
+            current.push(c);
+            continue;
+        }
+        while spans.next_if(|s| s.columns.end <= column).is_some() {}
+        let highlight = spans.peek().filter(|s| s.columns.start <= column).map_or(0, |s| highlight_index(s.highlight));
+        let on_grid = width == 1 && c <= '\u{024f}';
+        if current.is_empty() || highlight != current_highlight || !on_grid || !current_on_grid {
+            flush(&mut current, current_column, current_highlight);
+            current_column = column;
+            current_highlight = highlight;
+            current_on_grid = on_grid;
+        }
+        current.push(c);
+        column += width;
+    }
+    flush(&mut current, current_column, current_highlight);
+    runs
+}
+
+/// A highlight's index into `Theme.syntax` (ui/theme.slint); 0 is plain.
+fn highlight_index(highlight: Highlight) -> i32 {
+    match highlight {
+        Highlight::Comment => 1,
+        Highlight::Keyword => 2,
+        Highlight::Operator => 3,
+        Highlight::Punctuation => 4,
+        Highlight::String => 5,
+        Highlight::StringSpecial => 6,
+        Highlight::Escape => 7,
+        Highlight::Number => 8,
+        Highlight::Constant => 9,
+        Highlight::Function => 10,
+        Highlight::Constructor => 11,
+        Highlight::Type => 12,
+        Highlight::TypeBuiltin => 13,
+        Highlight::Variable => 14,
+        Highlight::VariableBuiltin => 15,
+        Highlight::Parameter => 16,
+        Highlight::Property => 17,
+        Highlight::Tag => 18,
+        Highlight::Attribute => 19,
+        Highlight::Label => 20,
+        Highlight::Heading => 21,
+        Highlight::Emphasis => 22,
+        Highlight::Strong => 23,
+        Highlight::Link => 24,
+        Highlight::Literal => 25,
     }
 }

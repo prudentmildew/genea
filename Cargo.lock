@@ -1336,6 +1336,7 @@ dependencies = [
  "raw-window-handle",
  "slint",
  "slint-build",
+ "unicode-width",
 ]
 
 [[package]]

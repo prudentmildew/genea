@@ -17,6 +17,8 @@ genea-host.workspace = true
 # front (Slint's `show` does nothing for a window that is already shown).
 slint = { workspace = true, features = ["raw-window-handle-06"] }
 raw-window-handle = "0.6.2"
+# Grid columns per char, to place highlight runs (the same widths the core uses).
+unicode-width.workspace = true
 
 # Native Open panels. The same objc2 stack Slint's winit backend already
 # links, so these add features, not crates.

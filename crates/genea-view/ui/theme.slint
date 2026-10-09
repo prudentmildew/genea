@@ -1,24 +1,90 @@
-// Colours, fonts and metrics shared by every view. One light theme for now;
-// the themes ticket adds dark and follows the system.
+// Colours, fonts and metrics shared by every view. Built-in light and dark
+// palettes follow the system appearance live: Slint's winit backend sets
+// `Palette.color-scheme` from the window's theme and updates it when macOS
+// switches. The config's `theme` key, which can pin one, comes with the
+// config ticket.
 //
 // The editor font is Menlo 13 pt with a line height of 1.2 (spec #19). Keep
 // line-height in step with LINE_HEIGHT in src/surface.rs.
 
+import { Palette } from "std-widgets.slint";
+
 export global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+
     out property <string> editor-font: "Menlo";
     out property <length> editor-font-size: 13px;
     out property <length> line-height: 15.6px;
     out property <length> gutter-width: 56px;
 
-    out property <color> editor-background: #ffffff;
-    out property <color> editor-foreground: #24292f;
-    out property <color> gutter-foreground: #9a9a9a;
-    out property <color> caret: #1f6feb;
-    out property <color> selection: #b6d6fd;
+    out property <color> editor-background: dark ? #0d1117 : #ffffff;
+    out property <color> editor-foreground: dark ? #e6edf3 : #24292f;
+    out property <color> gutter-foreground: dark ? #6e7681 : #9a9a9a;
+    out property <color> caret: dark ? #58a6ff : #1f6feb;
+    out property <color> selection: dark ? #264f78 : #b6d6fd;
 
-    out property <color> chrome-background: #f6f8fa;
-    out property <color> chrome-border: #d0d7de;
-    out property <color> chrome-foreground: #24292f;
-    out property <color> chrome-muted: #57606a;
+    out property <color> chrome-background: dark ? #161b22 : #f6f8fa;
+    out property <color> chrome-border: dark ? #30363d : #d0d7de;
+    out property <color> chrome-foreground: dark ? #e6edf3 : #24292f;
+    out property <color> chrome-muted: dark ? #8b949e : #57606a;
     out property <length> chrome-font-size: 12px;
+
+    // Highlight colours, indexed by `Run.highlight`. The order is
+    // `highlight_index` in src/surface.rs: 0 is plain text, then one entry per
+    // `genea_core::Highlight`.
+    out property <[color]> syntax: dark ? [
+        #e6edf3, // plain
+        #8b949e, // comment
+        #ff7b72, // keyword
+        #e6edf3, // operator
+        #c9d1d9, // punctuation
+        #a5d6ff, // string
+        #7ee787, // string special (regex, colour)
+        #79c0ff, // escape
+        #79c0ff, // number
+        #79c0ff, // constant
+        #d2a8ff, // function
+        #ffa657, // constructor
+        #ffa657, // type
+        #79c0ff, // built-in type
+        #e6edf3, // variable
+        #79c0ff, // built-in variable
+        #ffa657, // parameter
+        #79c0ff, // property
+        #7ee787, // tag
+        #79c0ff, // attribute
+        #ffa657, // label
+        #79c0ff, // heading
+        #d2a8ff, // emphasis
+        #ffa657, // strong
+        #a5d6ff, // link
+        #a5d6ff, // literal
+    ] : [
+        #24292f, // plain
+        #6e7781, // comment
+        #cf222e, // keyword
+        #24292f, // operator
+        #57606a, // punctuation
+        #0a3069, // string
+        #116329, // string special (regex, colour)
+        #0550ae, // escape
+        #0550ae, // number
+        #0550ae, // constant
+        #8250df, // function
+        #953800, // constructor
+        #953800, // type
+        #0550ae, // built-in type
+        #24292f, // variable
+        #0550ae, // built-in variable
+        #953800, // parameter
+        #0550ae, // property
+        #116329, // tag
+        #0550ae, // attribute
+        #953800, // label
+        #0550ae, // heading
+        #8250df, // emphasis
+        #953800, // strong
+        #0a3069, // link
+        #0a3069, // literal
+    ];
 }
