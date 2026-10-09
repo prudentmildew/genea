@@ -93,8 +93,8 @@ fn edits_saved_in_genea_are_never_listed_and_move_the_baseline() {
     for text in ["x", "y", "z"] {
         workbench.dispatch(project, Command::InsertText(text.into()));
         workbench.dispatch(project, Command::Save);
+        workbench.settle().unwrap();
     }
-    workbench.settle().unwrap();
     assert_eq!(fixture.read("main.ts"), "xyzlet a = 1;\n");
     assert_eq!(changes(&workbench, project), []);
     assert_eq!(banner(&workbench, project), None);
@@ -133,4 +133,149 @@ fn creating_the_config_from_genea_is_not_listed() {
 
     assert_eq!(fixture.read("genea.jsonc"), "{}\n");
     assert_eq!(changes(&workbench, project), []);
+}
+
+/// Opens a project with `kept.ts`, `edited.ts` and `deleted.ts`, then edits
+/// `edited.ts`, deletes `deleted.ts` (and its folder) and creates
+/// `created.ts` outside Genea.
+fn three_changes() -> (FixtureProject, Workbench, ProjectId) {
+    let (fixture, mut workbench, project) =
+        open(&[("kept.ts", "kept\n"), ("edited.ts", "before\n"), ("old/deleted.ts", "deleted\n")]);
+    fixture.write("edited.ts", "after\n");
+    std::fs::remove_dir_all(fixture.path("old")).unwrap();
+    fixture.write("created.ts", "created\n");
+    workbench.settle().unwrap();
+    assert_eq!(
+        changes(&workbench, project),
+        [
+            ("created.ts".into(), ChangeKind::Created),
+            ("edited.ts".into(), ChangeKind::Modified),
+            ("old/deleted.ts".into(), ChangeKind::Deleted),
+        ]
+    );
+    (fixture, workbench, project)
+}
+
+#[test]
+fn keep_makes_the_disk_content_the_baseline_for_each_kind_of_change() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    for path in ["created.ts", "edited.ts", "old/deleted.ts"] {
+        workbench.dispatch(project, Command::KeepChange(path.into()));
+    }
+    workbench.settle().unwrap();
+    assert_eq!(changes(&workbench, project), []);
+    assert_eq!(banner(&workbench, project), None);
+    assert_eq!(fixture.read("edited.ts"), "after\n", "Keep doesn't touch the disk");
+    assert!(fixture.path("created.ts").exists());
+    assert!(!fixture.path("old/deleted.ts").exists());
+
+    // Further changes are against the kept contents.
+    fixture.write("edited.ts", "before\n");
+    fixture.remove("created.ts");
+    fixture.write("old/deleted.ts", "deleted\n");
+    workbench.settle().unwrap();
+    assert_eq!(
+        changes(&workbench, project),
+        [
+            ("created.ts".into(), ChangeKind::Deleted),
+            ("edited.ts".into(), ChangeKind::Modified),
+            ("old/deleted.ts".into(), ChangeKind::Created),
+        ]
+    );
+}
+
+#[test]
+fn revert_writes_the_baseline_back_for_each_kind_of_change() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    for path in ["created.ts", "edited.ts", "old/deleted.ts"] {
+        workbench.dispatch(project, Command::RevertChange(path.into()));
+    }
+    workbench.settle().unwrap();
+
+    assert_eq!(changes(&workbench, project), []);
+    assert_eq!(fixture.read("edited.ts"), "before\n");
+    assert!(!fixture.path("created.ts").exists(), "a created file is deleted");
+    assert_eq!(fixture.read("old/deleted.ts"), "deleted\n", "a deleted file is restored, with its folder");
+}
+
+#[test]
+fn keep_and_revert_act_only_on_their_own_file() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    workbench.dispatch(project, Command::KeepChange("edited.ts".into()));
+    workbench.dispatch(project, Command::RevertChange("created.ts".into()));
+    workbench.dispatch(project, Command::KeepChange("kept.ts".into()));
+    workbench.settle().unwrap();
+
+    assert_eq!(changes(&workbench, project), [("old/deleted.ts".into(), ChangeKind::Deleted)]);
+    assert_eq!(fixture.read("edited.ts"), "after\n");
+    assert_eq!(fixture.read("kept.ts"), "kept\n");
+}
+
+#[test]
+fn keep_all_accepts_every_change() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    workbench.dispatch(project, Command::KeepAllChanges);
+    workbench.settle().unwrap();
+
+    assert_eq!(changes(&workbench, project), []);
+    assert_eq!(fixture.read("edited.ts"), "after\n");
+    assert_eq!(fixture.read("created.ts"), "created\n");
+    assert!(!fixture.path("old/deleted.ts").exists());
+}
+
+#[test]
+fn revert_all_restores_every_file() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    workbench.dispatch(project, Command::RevertAllChanges);
+    workbench.settle().unwrap();
+
+    assert_eq!(changes(&workbench, project), []);
+    assert_eq!(fixture.read("edited.ts"), "before\n");
+    assert!(!fixture.path("created.ts").exists());
+    assert_eq!(fixture.read("old/deleted.ts"), "deleted\n");
+}
+
+#[test]
+fn revert_reloads_an_open_editor() {
+    let (fixture, mut workbench, project) = open(&[("main.ts", "mine\n")]);
+    workbench.dispatch(project, Command::OpenFile("main.ts".into()));
+    workbench.settle().unwrap();
+    fixture.write("main.ts", "theirs\n");
+    workbench.settle().unwrap();
+    assert_eq!(editor_text(&workbench, project), ["theirs", ""]);
+
+    workbench.dispatch(project, Command::RevertChange("main.ts".into()));
+    workbench.settle().unwrap();
+
+    assert_eq!(editor_text(&workbench, project), ["mine", ""]);
+    assert!(!workbench.project(project).unwrap().editor.unwrap().modified);
+    workbench.dispatch(project, Command::Undo);
+    assert_eq!(editor_text(&workbench, project), ["theirs", ""], "the revert's reload is one undo step");
+}
+
+#[test]
+fn revert_under_unsaved_edits_shows_the_conflict_bar() {
+    let (fixture, mut workbench, project) = open(&[("main.ts", "mine\n")]);
+    workbench.dispatch(project, Command::OpenFile("main.ts".into()));
+    workbench.settle().unwrap();
+    fixture.write("main.ts", "theirs\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::InsertText("typed ".into()));
+
+    workbench.dispatch(project, Command::RevertChange("main.ts".into()));
+    workbench.settle().unwrap();
+
+    let editor = workbench.project(project).unwrap().editor.unwrap();
+    assert!(editor.conflict);
+    assert_eq!(editor_text(&workbench, project), ["typed theirs", ""]);
+    assert_eq!(fixture.read("main.ts"), "mine\n");
+}
+
+fn editor_text(workbench: &Workbench, project: ProjectId) -> Vec<String> {
+    workbench.project(project).unwrap().editor.unwrap().lines.into_iter().map(|l| l.text).collect()
 }
