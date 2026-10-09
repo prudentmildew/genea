@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use genea_core::{
     Command, Modifiers as TermModifiers, MouseAction, MouseButton, TerminalColor, TerminalKey, TerminalLine,
-    TerminalRun, TerminalStatus, TerminalTabView, TerminalView, grid_pieces,
+    TerminalRun, TerminalStatus, TerminalView, grid_pieces,
 };
 use slint::{Color, Model, ModelRc, SharedString, VecModel, platform::Key};
 use unicode_width::UnicodeWidthStr;
@@ -33,8 +33,8 @@ pub struct TerminalSurface {
     held: Option<MouseButton>,
     /// Scroll-wheel distance not yet a whole row.
     scroll_rest: f32,
-    /// The tabs and the active one as last pushed.
-    tabs: Option<(Vec<TerminalTabView>, usize)>,
+    /// The tabs as last pushed.
+    tabs: Vec<TermTab>,
 }
 
 impl TerminalSurface {
@@ -48,7 +48,7 @@ impl TerminalSurface {
             lines: Vec::new(),
             held: None,
             scroll_rest: 0.0,
-            tabs: None,
+            tabs: Vec::new(),
         }
     }
 
@@ -114,24 +114,22 @@ impl TerminalSurface {
     pub fn sync(&mut self, window: &ProjectWindow, view: &TerminalView) {
         window.set_terminal_visible(view.visible);
         window.set_terminal_focused(view.focused);
-        if self.tabs.as_ref().is_none_or(|(tabs, active)| *tabs != view.tabs || *active != view.active) {
-            for tab in &view.tabs {
-                fonts::prepare(&tab.title);
-            }
-            let tabs: Vec<TermTab> = view
-                .tabs
-                .iter()
-                .enumerate()
-                .map(|(index, tab)| TermTab {
-                    title: tab.title.as_str().into(),
-                    active: index == view.active,
-                    ended: matches!(tab.status, TerminalStatus::Exited { .. } | TerminalStatus::Failed(_)),
-                })
-                .collect();
-            window.set_terminal_tabs(ModelRc::new(VecModel::from(tabs)));
-            self.tabs = Some((view.tabs.clone(), view.active));
+        let tabs: Vec<TermTab> = view
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| TermTab {
+                title: tab.title.as_str().into(),
+                active: index == view.active_tab,
+                ended: matches!(tab.status, TerminalStatus::Exited { .. } | TerminalStatus::Failed(_)),
+            })
+            .collect();
+        if self.tabs != tabs {
+            window.set_terminal_tabs(ModelRc::new(VecModel::from(tabs.clone())));
+            self.tabs = tabs;
         }
-        window.set_terminal_message(message(&view.status).into());
+        let shell = view.tabs.get(view.active_tab).is_none_or(|tab| tab.shell);
+        window.set_terminal_message(message(&view.status, shell, &view.title).into());
         window.set_terminal_mouse_reporting(view.mouse_reporting);
 
         let char_width = window.get_terminal_char_width();
@@ -181,8 +179,19 @@ impl TerminalSurface {
     }
 }
 
-/// What the pane says over the grid while the shell isn't running.
-fn message(status: &TerminalStatus) -> String {
+/// What the pane says over the grid while the showing tab's program
+/// isn't running: the shell's, or a command's (`title`).
+fn message(status: &TerminalStatus, shell: bool, title: &str) -> String {
+    if !shell {
+        return match status {
+            TerminalStatus::Starting => format!("Starting {title}…"),
+            TerminalStatus::Running => String::new(),
+            TerminalStatus::Exited { code: Some(0) } => format!("{title} finished."),
+            TerminalStatus::Exited { code: Some(code) } => format!("{title} failed with code {code}."),
+            TerminalStatus::Exited { code: None } => format!("{title} was stopped."),
+            TerminalStatus::Failed(reason) => reason.clone(),
+        };
+    }
     match status {
         TerminalStatus::Starting => "Starting your shell…".into(),
         TerminalStatus::Running => String::new(),

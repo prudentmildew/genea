@@ -549,22 +549,26 @@ pub struct RecentProject {
     pub name: String,
 }
 
-/// The terminal pane next to the editor (tickets #38 and #39): tabs of
-/// shells, the active one drawn on a grid like the editor. The fields after
-/// `active` describe the active tab (blank while the pane has no tabs).
+/// The terminal pane next to the editor (tickets #38, #39, #41): tabs, the
+/// showing one drawn on a grid like the editor. The first tab is a shell.
+/// With no tabs (the user closed the last), the showing tab's fields are
+/// blank and the pane is collapsed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalView {
     /// The pane is showing; ⌥F12 collapses it.
     pub visible: bool,
     /// Keys and text go to the terminal, not the editor.
     pub focused: bool,
-    /// The tabs, left to right. Empty once the last one is closed.
-    pub tabs: Vec<TerminalTabView>,
-    /// The index of the tab the pane shows.
-    pub active: usize,
+    /// The showing tab's program.
     pub status: TerminalStatus,
-    /// The title the program set (OSC 0 or 2), else the shell's name.
+    /// The showing tab's title: what the program set (OSC 0 or 2), else the
+    /// shell's name or the command line (`pnpm install`).
     pub title: String,
+    /// Every tab, left to right; `Command::SelectTerminalTab` shows one.
+    /// Everything below is the showing tab's.
+    pub tabs: Vec<TerminalTab>,
+    /// Index into `tabs` of the one showing.
+    pub active_tab: usize,
     /// The grid's size in cells.
     pub rows: usize,
     pub columns: usize,
@@ -587,23 +591,25 @@ pub struct TerminalView {
     pub preedit: Option<String>,
 }
 
-/// A terminal tab, as its header shows it.
+/// A terminal tab, as its tab strip shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalTabView {
-    /// The title the program set, else the shell's name.
+pub struct TerminalTab {
     pub title: String,
     pub status: TerminalStatus,
+    /// It runs the user's shell, which Return starts again once it ended;
+    /// else a command (`pnpm install`), which ends with its program.
+    pub shell: bool,
 }
 
-/// Whether the terminal's shell runs.
+/// Whether a terminal tab's program runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalStatus {
     /// Waiting for the project environment, or starting.
     Starting,
     Running,
-    /// The shell exited, with its code if it exited normally.
+    /// The program exited, with its code if it exited normally.
     Exited { code: Option<i32> },
-    /// The shell couldn't start: why.
+    /// The program couldn't start: why.
     Failed(String),
 }
 

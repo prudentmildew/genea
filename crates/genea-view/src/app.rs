@@ -295,7 +295,7 @@ impl App {
         let Some(view) = self.workbench.project(controller.project) else { return };
         let count = view.terminal.tabs.len();
         if count > 0 {
-            controller.dispatch(&mut self.workbench, terminal(view.terminal.active, count));
+            controller.dispatch(&mut self.workbench, terminal(view.terminal.active_tab, count));
         }
     }
 
@@ -511,9 +511,6 @@ fn wire(controller: &WindowController) {
     window.on_terminal_size_changed(move || with_app(move |app| app.sync(key)));
     // Terminal tabs (ticket #39).
     window.on_new_terminal_tab(menu(Command::NewTerminalTab));
-    window.on_terminal_tab_clicked(move |tab| {
-        with_app(move |app| app.dispatch(key, Command::SelectTerminalTab(index(tab))));
-    });
     window.on_terminal_tab_closed(move |tab| {
         with_app(move |app| app.dispatch(key, Command::CloseTerminalTab(index(tab))));
     });
@@ -565,6 +562,14 @@ fn wire(controller: &WindowController) {
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
+    window.on_install_dependencies(menu(Command::InstallDependencies));
+    window.on_terminal_tab_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.dispatch(&mut app.workbench, Command::SelectTerminalTab(index));
+        });
+    });
     window.on_structural(move |action| {
         let command = match action {
             StructuralAction::ToggleLineComment => Command::ToggleLineComment,

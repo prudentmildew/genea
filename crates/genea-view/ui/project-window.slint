@@ -128,6 +128,7 @@ export component ProjectWindow inherits Window {
     callback paste();
     callback select-all();
     callback reload-environment();
+    callback install-dependencies();
     // The Code menu's structural editing items (ticket #25).
     callback structural(StructuralAction);
     // Toolchain commands (ticket #37).
@@ -164,6 +165,7 @@ export component ProjectWindow inherits Window {
     // The terminal pane.
     callback toggle-terminal();
     callback terminal-focus();
+    callback terminal-tab-clicked(index: int);
     callback terminal-key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
     callback terminal-committed(text: string);
     callback terminal-preedit-changed(text: string);
@@ -171,7 +173,6 @@ export component ProjectWindow inherits Window {
     callback terminal-scrolled(delta-y: length, x: length, y: length);
     callback terminal-size-changed();
     callback new-terminal-tab();
-    callback terminal-tab-clicked(index: int);
     callback terminal-tab-closed(index: int);
 
     // The finder: a shortcut opens it; the rest come from the overlay.
@@ -281,6 +282,14 @@ export component ProjectWindow inherits Window {
                 title: "Reload Environment";
                 activated => {
                     root.reload-environment();
+                }
+            }
+
+            // The pinned package manager's install, in a terminal tab (#41).
+            MenuItem {
+                title: "Install Dependencies";
+                activated => {
+                    root.install-dependencies();
                 }
             }
 

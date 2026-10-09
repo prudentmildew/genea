@@ -40,14 +40,6 @@ export struct TermRow {
     links: [TermLink],
 }
 
-// A tab in the strip.
-export struct TermTab {
-    title: string,
-    active: bool,
-    // Its shell has exited or failed: the title is muted.
-    ended: bool,
-}
-
 // Where the cursor and the preedit are, placed by Rust.
 export struct TermCursor {
     visible: bool,
@@ -55,6 +47,14 @@ export struct TermCursor {
     y: length,
     preedit: string,
     preedit-width: length,
+}
+
+// A terminal tab: the shell, or a command like `pnpm install` (#41).
+export struct TermTab {
+    title: string,
+    active: bool,
+    // Its program has exited or couldn't start.
+    ended: bool,
 }
 
 export component TerminalPane inherits Rectangle {
@@ -121,7 +121,7 @@ export component TerminalPane inherits Rectangle {
                         background: Theme.chrome-border;
                     }
 
-                    // The focused pane's active tab, as on the editor's.
+                    // The focused pane's marker, as on the editor's tabs.
                     Rectangle {
                         y: 0px;
                         height: 2px;
@@ -143,7 +143,8 @@ export component TerminalPane inherits Rectangle {
                         Text {
                             max-width: 180px;
                             text: tab.title;
-                            color: tab.active && !tab.ended ? Theme.chrome-foreground : Theme.chrome-muted;
+                            color: tab.active && root.focused ? Theme.chrome-foreground : Theme.chrome-muted;
+                            opacity: tab.ended ? 0.6 : 1;
                             vertical-alignment: center;
                             overflow: elide;
                         }

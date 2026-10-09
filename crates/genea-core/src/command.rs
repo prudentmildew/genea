@@ -69,6 +69,13 @@ pub enum Command {
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
     ReloadEnvironment,
+    /// "Install dependencies" (ticket #41): runs the pinned package
+    /// manager's `install` in the project root, in a terminal tab of its
+    /// own, once the toolchain has settled. Install scripts run project
+    /// code (ADR 0005), so Genea dispatches this only on the user's click,
+    /// and the new-project flow dispatches it once for a project it just
+    /// created. While an install runs, it shows that tab instead.
+    InstallDependencies,
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },
@@ -234,6 +241,8 @@ pub enum Command {
     /// Gives the terminal the keyboard focus (a click in it). The editor
     /// gets it back with `FocusPane` or `SelectTab`.
     FocusTerminal,
+    /// Shows a terminal tab: an index into `TerminalView::tabs`.
+    SelectTerminalTab(usize),
     /// Tells the core how many rows and columns of cells fit in the
     /// terminal pane. The shell is told too (SIGWINCH), and the grid
     /// reflows.
@@ -263,13 +272,10 @@ pub enum Command {
     /// otherwise nothing happens.
     TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
     // Terminal tabs and links (ticket #39). The commands above act on the
-    // active tab.
+    // showing tab.
     /// ⌘T in the terminal, or the pane's +: opens a tab with a new shell,
     /// shows it and focuses the pane.
     NewTerminalTab,
-    /// A click on a terminal tab, or ⌘⇧[ / ⌘⇧] in the terminal: shows that
-    /// tab (by index) and focuses the pane.
-    SelectTerminalTab(usize),
     /// Closes a terminal tab (by index), hanging up its shell. The pane
     /// shows the tab to its right, else the one to its left; closing the
     /// last tab collapses the pane, and showing it again opens a new one.

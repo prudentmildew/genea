@@ -8,8 +8,10 @@
 use genea_core::{Command, ProjectId, ToolState, ToolView, ToolchainPicker, ToolchainPickerKind, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
+/// A project with this root `package.json`, its dependencies installed (so
+/// the only notices are the toolchain's).
 fn project(package_json: &str) -> FixtureProject {
-    FixtureProject::new().file("package.json", package_json).build()
+    FixtureProject::new().file("package.json", package_json).dir("node_modules").build()
 }
 
 const PINNED: &str = r#"{

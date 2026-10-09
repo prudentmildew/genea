@@ -36,7 +36,7 @@ fn screen(workbench: &Workbench, project: ProjectId) -> Vec<String> {
 /// Each tab's title and status, and which one is active.
 fn tabs(workbench: &Workbench, project: ProjectId) -> (Vec<(String, TerminalStatus)>, usize) {
     let view = terminal(workbench, project);
-    (view.tabs.into_iter().map(|tab| (tab.title, tab.status)).collect(), view.active)
+    (view.tabs.into_iter().map(|tab| (tab.title, tab.status)).collect(), view.active_tab)
 }
 
 fn running(title: &str) -> (String, TerminalStatus) {
@@ -86,7 +86,7 @@ fn switching_tabs_shows_each_ones_output_and_types_into_it() {
     let (mut workbench, project, first, second) = two_tabs(&host, &fixture);
 
     workbench.dispatch(project, Command::SelectTerminalTab(0));
-    assert_eq!(terminal(&workbench, project).active, 0);
+    assert_eq!(terminal(&workbench, project).active_tab, 0);
     assert_eq!(screen(&workbench, project), ["first"]);
     workbench.dispatch(project, Command::TerminalText("ls".into()));
     assert_eq!(first.wait_for_input("ls"), "ls");

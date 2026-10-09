@@ -23,6 +23,7 @@
 mod action;
 mod command;
 mod config;
+mod dependencies;
 mod disk;
 mod editor;
 mod environment;
@@ -70,7 +71,7 @@ pub use view::{
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use view::{
     TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle,
-    TerminalTabView, TerminalView,
+    TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};
