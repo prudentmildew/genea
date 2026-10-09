@@ -28,6 +28,8 @@ pub struct WindowController {
     surface: Surface,
     /// A window-level message, e.g. why a folder couldn't be opened.
     pub notice: Option<String>,
+    /// The command behind the shown notice's button, if it has one.
+    pub notice_action: Option<Command>,
     /// When and on which line the last double-click was, to spot a third.
     last_double_click: Option<(Instant, usize)>,
     /// The Problems items as last pushed, so a click maps to the item the
@@ -51,6 +53,7 @@ impl WindowController {
             project,
             surface,
             notice: None,
+            notice_action: None,
             last_double_click: None,
             problems: Vec::new(),
             problem_rows,
@@ -131,6 +134,8 @@ impl WindowController {
         if let Some(rows) = self.surface.take_viewport_change(window) {
             workbench.dispatch(self.project, Command::SetViewport { rows });
         }
+        let update = workbench.update_notice().map(|notice| notice.message).unwrap_or_default();
+        window.set_status_update(update.into());
         // The project closes with its window, so this is always there.
         let Some(view) = workbench.project(self.project) else { return };
 
@@ -172,6 +177,10 @@ impl WindowController {
             self.problem_rows.set_vec(rows);
             self.problems = view.problems.clone();
         }
+        let action = view.notices.last().and_then(|n| n.action.clone());
+        window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
+        self.notice_action = action.map(|a| a.command);
+        window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
         self.surface.sync(window, editor);
     }
 

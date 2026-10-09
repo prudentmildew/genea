@@ -11,6 +11,7 @@ crates/
   genea-core/     framework-free core; the Workbench is its single entry point
   genea-host/     the host boundary: processes, downloads, the clock; RealHost
   genea-testkit/  TestHost (manual clock, scripted processes/downloads) + FixtureProject
+  genea-toolchain/ toolchain pins, version resolution, the shared store (ADR 0005)
   genea-view/     the thin Slint view layer and the `genea` binary
 patches/          the one Slint patch (ADR 0004); see patches/README.md
 scripts/          reapply-slint-patch.sh
@@ -45,6 +46,8 @@ use, and nothing else:
 | View state out | `project(id) -> Option<ProjectView>` | Plain snapshots (`src/view.rs`) of what the window shows: user-visible text, 1-based labels, display columns. |
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
+| Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
+| Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
 
@@ -88,9 +91,11 @@ use, and nothing else:
 
 `genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
 `clipboard()` (below), and `support_dir()`, Genea's application-support
-folder, where the core keeps its own files (recent projects; session state,
-review baselines, …). The folder is used through the real filesystem; the
-host only says where it is, so tests never touch the user's.
+folder, where the core keeps its own files (recent projects, the toolchain
+store; session state, review baselines, …). The folder is used through the
+real filesystem; the host only says where it is, so tests never touch the
+user's. `Downloads::fetch_with_length` also reports the response's
+`Content-Length`, for progress.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
   idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
@@ -106,11 +111,30 @@ host only says where it is, so tests never touch the user's.
   table (unknown URLs answer 404) and records every request. Each test host
   has its own temp support folder; a second workbench on a clone of the same
   host is a restart.
+  Once started, `TestHost::download_server()` (the **local download fixture
+  server**, a real HTTP server on 127.0.0.1) answers every URL not in the
+  table, over real HTTP. Tests publish files under the real URLs
+  (`server.publish(url, bytes)`), `hold`/`release` a response halfway to
+  look at Genea mid-download, and `TestHost::tools()` publishes fake Node,
+  Bun and pnpm releases (indexes, checksums, archives; `*_with_bad_checksum`
+  for a mismatch).
 
 A new kind of effect (a PTY, say) gets a trait in `genea-host`, an accessor on
 `Host`, a real implementation in `genea-host/src/real.rs` and a scripted one
 in `genea-testkit/src/host.rs`. Keep the traits small and blocking: the core
 calls them from background threads.
+
+## The toolchain
+
+`genea-toolchain` (blocking, no threads) reads and writes the pins in
+`package.json` (`pins`), resolves a `Request` (newest match in the store,
+else newest published), and installs into the `Store` at
+`<support_dir>/toolchains/<tool>/<version>/`; `Installed::bin_dir` is the
+folder to put on PATH (`bin/` for Node and Bun, the unpacked `@pnpm/exe`
+package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it reads the pins
+in a job when a project with a root `package.json` opens, starts one job per
+role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
+whose `NoticeAction` carries the `Command` a click dispatches.
 
 ## Tests
 
@@ -190,3 +214,8 @@ cargo run --bin genea -- [FOLDER [FILE]]
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`.
+
+Releases (a signed, notarized DMG for Apple Silicon, macOS 14+) and the
+third-party licence list shown in About are in `docs/releasing.md`:
+`scripts/release.sh [--local]`, `scripts/third-party-licences.sh`,
+`packaging/`.

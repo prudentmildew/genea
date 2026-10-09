@@ -6,11 +6,6 @@ use std::ops::Range;
 use genea_core::{CaretMove::*, Command, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
-/// A line with nothing highlighted. Spelled out because `[vec![], vec![]]`
-/// can't infer its type: regex-automata and aho-corasick (under `ignore`)
-/// add `PartialEq` impls for `Range<usize>`.
-const NONE: Vec<Range<usize>> = Vec::new();
-
 fn open(text: &str) -> (FixtureProject, Workbench, ProjectId) {
     let fixture = FixtureProject::new().file("file.ts", text).build();
     let mut workbench = Workbench::new(TestHost::new().shared());
@@ -30,6 +25,11 @@ fn run(workbench: &mut Workbench, project: ProjectId, commands: impl IntoIterato
 fn lines(workbench: &Workbench, project: ProjectId) -> Vec<String> {
     workbench.project(project).unwrap().editor.unwrap().lines.into_iter().map(|l| l.text).collect()
 }
+
+/// A line with nothing highlighted. Typed, because a bare `vec![]` can't be
+/// inferred once another crate in the tree (regex-automata, through gix)
+/// adds a `PartialEq` impl for `Range<usize>`.
+const NONE: Vec<Range<usize>> = Vec::new();
 
 /// The highlighted columns of each visible line.
 fn highlighted(workbench: &Workbench, project: ProjectId) -> Vec<Vec<Range<usize>>> {

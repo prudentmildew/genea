@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Build output and test coverage
+dist/
+coverage/
+
+# Local environment and secrets
+.env
+.env.*
+
+# Logs and editor files
+*.log
+.DS_Store

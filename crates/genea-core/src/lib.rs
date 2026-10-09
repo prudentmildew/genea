@@ -23,11 +23,15 @@
 mod command;
 mod config;
 mod editor;
+mod history;
 mod jobs;
 mod problems;
 mod project;
 mod recent;
+mod templates;
 mod text;
+mod toolchain;
+mod update;
 mod view;
 mod watcher;
 mod workbench;
@@ -36,8 +40,10 @@ pub use command::{CaretMove, Command};
 pub use config::{Config, TerminalPosition, Theme};
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use problems::{ProblemSource, Severity, TextPosition};
+pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
+pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, InlineProblem, LeftColumnView, Notice, Preedit, ProblemItem, ProjectView, RecentProject,
-    StatusBar, VisibleLine, WelcomeView,
+    Caret, EditorView, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem, ProjectView,
+    RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

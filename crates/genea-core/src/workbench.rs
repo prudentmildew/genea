@@ -15,6 +15,9 @@ use crate::{
     jobs::{self, Inbox, Jobs},
     project::Project,
     recent::RecentProjects,
+    templates::{self, Creations, NewProject, ProjectCreation},
+    toolchain::ToolchainContext,
+    update::{self, UpdateNotice},
     view::{ProjectView, WelcomeView},
 };
 
@@ -47,10 +50,18 @@ pub(crate) struct Core {
     /// The outside world: the clipboard now; the toolchain, LSP, undo and
     /// terminal tickets reach it only through this too.
     pub(crate) host: SharedHost,
+    /// The host and the shared toolchain store, for every project (#35).
+    pub(crate) toolchain: ToolchainContext,
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
     recent: RecentProjects,
+    pub(crate) creations: Creations,
+    /// A newer Genea release, once the update check has found one.
+    pub(crate) update_notice: Option<UpdateNotice>,
+    /// Lives as long as the core. Host timers hold a weak reference to it,
+    /// so they do nothing once the workbench is gone.
+    alive: Arc<()>,
 }
 
 impl Core {
@@ -63,7 +74,12 @@ impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
         let recent = RecentProjects::load(host.support_dir());
-        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0, recent }, inbox, applied: 0 }
+        let toolchain = ToolchainContext::new(host.clone());
+        let creations = Creations::default();
+        let (update_notice, alive) = (None, Arc::new(()));
+        let core =
+            Core { host, toolchain, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations, update_notice, alive };
+        Workbench { core, inbox, applied: 0 }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -100,9 +116,9 @@ impl Workbench {
         }
         let id = ProjectId(self.core.next_id);
         self.core.next_id += 1;
-        let mut project = Project::new(id, root);
+        let project = self.core.projects.entry(id).or_insert(Project::new(id, root));
         project.start(&self.core.jobs, self.core.host.as_ref());
-        self.core.projects.insert(id, project);
+        project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
         Ok(id)
     }
 
@@ -135,6 +151,38 @@ impl Workbench {
     /// project isn't open.
     pub fn project(&self, project: ProjectId) -> Option<ProjectView> {
         self.core.projects.get(&project).map(Project::view)
+    }
+
+    /// Creates a project from a template in the background: writes its
+    /// files into `request.folder` and initialises a git repository there.
+    /// It refuses a folder that isn't empty. The outcome shows in
+    /// [`project_creation`](Self::project_creation); a new request replaces
+    /// the last one's state.
+    pub fn create_project(&mut self, request: NewProject) {
+        templates::create(&mut self.core, request);
+    }
+
+    /// The state of the last [`create_project`](Self::create_project), if
+    /// any.
+    pub fn project_creation(&self) -> Option<ProjectCreation> {
+        self.core.creations.view()
+    }
+
+    /// Starts the release-update check: at most once a day, the first one a
+    /// little after start, always off the main thread. A newer release shows
+    /// up as [`update_notice`](Self::update_notice), with the change
+    /// notification. Call it once, after the first window is up, with the
+    /// running Genea's version (`env!("CARGO_PKG_VERSION")`). What it learns
+    /// is kept in the host's support folder, so restarts don't check more.
+    pub fn start_update_checks(&mut self, current_version: &str) {
+        let core = &self.core;
+        update::start(core.host.clone(), core.jobs.clone(), Arc::downgrade(&core.alive), current_version);
+    }
+
+    /// The newer release the update check found, if any. It isn't tied to a
+    /// project: every window shows it.
+    pub fn update_notice(&self) -> Option<UpdateNotice> {
+        self.core.update_notice.clone()
     }
 
     /// Applies finished background work without waiting. Returns whether

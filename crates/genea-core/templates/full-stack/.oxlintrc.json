@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript"],
+  "overrides": [
+    {
+      "files": ["apps/web/**"],
+      "plugins": ["typescript", "react", "react-hooks"]
+    }
+  ]
+}

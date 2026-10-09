@@ -1,17 +1,19 @@
 //! One open file on the editor surface: its text, selection, scroll position
 //! and saved state.
 //!
-//! Every edit goes through `insert` or `delete_selection`, which bump the
-//! version that `modified` compares with the saved one. Undo, multi-caret
-//! and syntax build on those two (tickets #22, #52, #24).
+//! Every edit goes through `insert` or `delete`, which give the buffer a
+//! fresh version (compared with the saved one for `modified`) and record
+//! the change in the undo history. Multi-caret and syntax build on those
+//! two (tickets #52, #24).
 
-use std::{ops::Range, path::PathBuf};
+use std::{ops::Range, path::PathBuf, time::Instant};
 
 use ropey::Rope;
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
     command::CaretMove,
+    history::{Change, Edit, EditKind, History, Selection},
     text::{self, LineEnding},
     view::{Caret, EditorView, Preedit, VisibleLine},
 };
@@ -41,10 +43,14 @@ pub(crate) struct Editor {
     line_ending: LineEnding,
     /// The IME's marked text, drawn at the caret; never in `text`.
     preedit: String,
-    /// Bumped by every edit.
+    /// Identifies the text: every edit gives it a fresh one, and undo and
+    /// redo restore the one the text had then.
     version: u64,
+    /// The newest version handed out, so a fresh one is never reused.
+    last_version: u64,
     /// The version last written to disk (or read from it).
     saved_version: u64,
+    history: History,
 }
 
 /// The buffer as it was when a save started.
@@ -68,7 +74,9 @@ impl Editor {
             line_ending,
             preedit: String::new(),
             version: 0,
+            last_version: 0,
             saved_version: 0,
+            history: History::default(),
         }
     }
 
@@ -187,20 +195,26 @@ impl Editor {
     }
 
     /// Inserts `text` at the caret, replacing the selection, and puts the
-    /// caret after it. Line breaks become the file's line ending.
-    pub(crate) fn insert(&mut self, text: &str, viewport_rows: f64) {
+    /// caret after it. Line breaks become the file's line ending. `now` is
+    /// the host clock's time, for grouping undo steps.
+    pub(crate) fn insert(&mut self, text: &str, kind: EditKind, now: Instant, viewport_rows: f64) {
         self.preedit.clear();
         if text.is_empty() && self.anchor == self.caret {
             return;
         }
         let text = self.line_ending.normalize(text);
-        self.delete_selection();
-        self.text.insert(self.caret, &text);
-        self.version += 1;
+        let (before, version_before) = (self.selection_state(), self.version);
+        let mut changes: Vec<Change> = self.delete_selection().into_iter().collect();
+        if !text.is_empty() {
+            self.text.insert(self.caret, &text);
+            self.new_version();
+            changes.push(Change::Insert { at: self.caret, text: text.clone() });
+        }
         self.caret += text.chars().count();
         self.anchor = self.caret;
         self.goal_column = None;
         self.reveal_caret(viewport_rows);
+        self.record(kind, now, changes, before, version_before);
     }
 
     pub(crate) fn set_preedit(&mut self, text: String) {
@@ -208,24 +222,77 @@ impl Editor {
     }
 
     /// Deletes the selection, or the text the movement would pass over.
-    pub(crate) fn delete(&mut self, movement: CaretMove, viewport_rows: f64) {
+    pub(crate) fn delete(&mut self, movement: CaretMove, kind: EditKind, now: Instant, viewport_rows: f64) {
+        let (before, version_before) = (self.selection_state(), self.version);
         if self.anchor == self.caret {
             self.move_head(movement, viewport_rows);
         }
-        self.delete_selection();
+        let changes = self.delete_selection().into_iter().collect();
+        self.goal_column = None;
+        self.reveal_caret(viewport_rows);
+        self.record(kind, now, changes, before, version_before);
+    }
+
+    /// Removes the selected text and collapses the selection where it was.
+    fn delete_selection(&mut self) -> Option<Change> {
+        let (start, end) = self.selection();
+        let removed = (start != end).then(|| {
+            let text = self.text.slice(start..end).to_string();
+            self.text.remove(start..end);
+            self.new_version();
+            Change::Remove { at: start, text }
+        });
+        self.caret = start;
+        self.anchor = start;
+        removed
+    }
+
+    /// ⌘Z: reverts the last undo step and restores the selection from
+    /// before it.
+    pub(crate) fn undo(&mut self, viewport_rows: f64) {
+        self.preedit.clear();
+        if let Some(restored) = self.history.undo(&mut self.text) {
+            self.restore(restored.selection, restored.version, viewport_rows);
+        }
+    }
+
+    /// ⌘⇧Z: makes the last undone step again and restores the selection
+    /// from after it.
+    pub(crate) fn redo(&mut self, viewport_rows: f64) {
+        self.preedit.clear();
+        if let Some(restored) = self.history.redo(&mut self.text) {
+            self.restore(restored.selection, restored.version, viewport_rows);
+        }
+    }
+
+    fn restore(&mut self, selection: Selection, version: u64, viewport_rows: f64) {
+        self.anchor = selection.anchor;
+        self.caret = selection.caret;
+        self.version = version;
         self.goal_column = None;
         self.reveal_caret(viewport_rows);
     }
 
-    /// Removes the selected text and collapses the selection where it was.
-    fn delete_selection(&mut self) {
-        let (start, end) = self.selection();
-        if start != end {
-            self.text.remove(start..end);
-            self.version += 1;
-        }
-        self.caret = start;
-        self.anchor = start;
+    fn new_version(&mut self) {
+        self.last_version += 1;
+        self.version = self.last_version;
+    }
+
+    fn selection_state(&self) -> Selection {
+        Selection { anchor: self.anchor, caret: self.caret }
+    }
+
+    /// Adds an edit's changes to the undo history.
+    fn record(&mut self, kind: EditKind, at: Instant, changes: Vec<Change>, before: Selection, version_before: u64) {
+        self.history.record(Edit {
+            kind,
+            at,
+            changes,
+            before,
+            after: self.selection_state(),
+            version_before,
+            version_after: self.version,
+        });
     }
 
     /// The selected text, or `None` with nothing selected.
