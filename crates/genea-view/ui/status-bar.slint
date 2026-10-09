@@ -7,6 +7,12 @@ export component StatusBar inherits Rectangle {
     in property <string> notice;
     // The notice's button label (Retry, …), or empty for none.
     in property <string> notice-action;
+    // "genea.jsonc has 1 error", while the config has problems (#29).
+    in property <string> config-notice;
+    // Problem counts over every source, e.g. "1 error  2 warnings"; empty
+    // with none.
+    in property <string> problems;
+    in property <bool> has-errors;
     // Toolchain download progress (ticket #35).
     in property <string> toolchain;
     in property <string> caret;
@@ -17,6 +23,8 @@ export component StatusBar inherits Rectangle {
 
     callback notice-action-clicked();
     callback update-clicked();
+    // The config notice or the counts were clicked.
+    callback show-problems();
 
     height: 22px;
     background: Theme.chrome-background;
@@ -31,6 +39,20 @@ export component StatusBar inherits Rectangle {
         padding-left: 10px;
         padding-right: 10px;
         spacing: 16px;
+
+        if root.config-notice != "": Text {
+            text: root.config-notice;
+            color: Theme.warning;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.show-problems();
+                }
+            }
+        }
 
         Text {
             text: root.notice;
@@ -73,6 +95,20 @@ export component StatusBar inherits Rectangle {
                 mouse-cursor: pointer;
                 clicked => {
                     root.update-clicked();
+                }
+            }
+        }
+
+        if root.problems != "": Text {
+            text: root.problems;
+            color: root.has-errors ? Theme.error : Theme.warning;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.show-problems();
                 }
             }
         }

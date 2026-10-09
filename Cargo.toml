@@ -24,6 +24,12 @@ genea-toolchain = { path = "crates/genea-toolchain" }
 # Core building blocks (spec #19, "Building blocks").
 ropey = "1.6.1"
 unicode-width = "0.2.2"
+# The config (#29): JSONC with positions for inline errors, and the
+# `.gitignore` syntax of `exclude` (also used to walk the project).
+jsonc-parser = { version = "0.34.0", default-features = false }
+ignore = "0.4.33"
+# The project watcher: FSEvents on macOS (#29; the Files view builds on it).
+notify = "8.2.0"
 # Git, in-process (ADR 0005): pure Rust, so no `git` binary or C toolchain is
 # needed. Each crate turns on the features it uses.
 gix = { version = "0.89.0", default-features = false }

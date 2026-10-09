@@ -107,6 +107,9 @@ fn background_work_notifies_and_shows_up_after_pump() {
         let _ = notified_tx.send(());
     });
     let project = workbench.open_project(fixture.root()).unwrap();
+    // Opening starts background work of its own (reading the config).
+    workbench.settle().unwrap();
+    while notified.try_recv().is_ok() {}
 
     workbench.dispatch(project, Command::OpenFile("a.ts".into()));
     notified.recv_timeout(Duration::from_secs(5)).expect("a change notification");

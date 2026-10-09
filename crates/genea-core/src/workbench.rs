@@ -41,6 +41,8 @@ pub struct ProjectId(u64);
 pub struct Workbench {
     core: Core,
     inbox: Inbox,
+    /// Applies run so far; `settle` counts what a watcher sync brought in.
+    applied: usize,
 }
 
 /// Core state. Background Applies get `&mut Core`.
@@ -77,7 +79,7 @@ impl Workbench {
         let (update_notice, alive) = (None, Arc::new(()));
         let core =
             Core { host, toolchain, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations, update_notice, alive };
-        Workbench { core, inbox }
+        Workbench { core, inbox, applied: 0 }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -115,6 +117,7 @@ impl Workbench {
         let id = ProjectId(self.core.next_id);
         self.core.next_id += 1;
         let project = self.core.projects.entry(id).or_insert(Project::new(id, root));
+        project.start(&self.core.jobs, self.core.host.as_ref());
         project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
         project.start_environment(self.core.host.clone(), &self.core.jobs);
         Ok(id)
@@ -210,12 +213,32 @@ impl Workbench {
     }
 
     /// Waits until the core is quiescent: every background job has finished
-    /// and its result is applied. Tests call this instead of sleeping.
+    /// and its result is applied, and every project's watcher has delivered
+    /// the changes made on disk before the call (and those made by the
+    /// work it waited for). Tests call this instead of sleeping.
     ///
     /// Timers on the host clock are not background work: with the test
     /// host, advance the clock first, then settle.
     pub fn settle(&mut self) -> Result<(), SettleError> {
         let deadline = Instant::now() + SETTLE_TIMEOUT;
+        loop {
+            self.drain(deadline)?;
+            // A watcher cookie per project (see `Watcher::sync`). If nothing
+            // but the cookies came back, the watchers are drained too.
+            let before = self.applied;
+            let cookies = self.core.projects.values().filter(|p| p.sync_watcher()).count();
+            if cookies == 0 {
+                return Ok(());
+            }
+            self.drain(deadline)?;
+            if self.applied - before == cookies {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Runs Applies until no job is pending.
+    fn drain(&mut self, deadline: Instant) -> Result<(), SettleError> {
         loop {
             self.pump();
             if self.inbox.pending() == 0 {
@@ -241,6 +264,7 @@ impl Workbench {
             }
         }
         let _done = Done(&self.inbox);
+        self.applied += 1;
         apply(&mut self.core);
         // A pane without the focus shows a kept view (ticket #31).
         for project in self.core.projects.values_mut() {

@@ -13,11 +13,20 @@
 
 import { Theme } from "theme.slint";
 
-// One highlight run of a line, placed on the monospace grid by Rust.
+// One highlight run of a line, placed on the monospace grid by Rust. A
+// transparent colour means the theme's editor foreground.
 export struct Run {
     x: length,
     text: string,
     color: color,
+}
+
+// A problem underlined on a line (ticket #29), placed by Rust.
+export struct Mark {
+    x: length,
+    width: length,
+    // An error; otherwise a warning.
+    error: bool,
 }
 
 // A highlighted stretch of a line (a selection), placed by Rust.
@@ -33,6 +42,7 @@ export struct Line {
     number: string,
     runs: [Run],
     selections: [Span],
+    problems: [Mark],
     // The x of each caret on this line other than the primary one, which
     // is drawn on its own (multi-caret, ticket #52).
     carets: [length],
@@ -127,9 +137,18 @@ export component EditorSurface inherits Rectangle {
                 height: Theme.line-height;
                 vertical-alignment: center;
                 text: run.text;
-                color: run.color;
+                color: run.color == Colors.transparent ? Theme.editor-foreground : run.color;
                 font-family: Theme.editor-font;
                 font-size: Theme.editor-font-size;
+            }
+
+            // Problems: a 2px underline at the bottom of the line.
+            for mark in line.problems: Rectangle {
+                x: Theme.gutter-width + mark.x;
+                y: Theme.line-height - 2px;
+                width: mark.width;
+                height: 2px;
+                background: mark.error ? Theme.error : Theme.warning;
             }
         }
 

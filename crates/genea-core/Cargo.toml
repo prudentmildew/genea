@@ -12,6 +12,9 @@ genea-host.workspace = true
 genea-toolchain.workspace = true
 ropey.workspace = true
 unicode-width.workspace = true
+jsonc-parser.workspace = true
+ignore.workspace = true
+notify.workspace = true
 # Templates: `git init` (ticket #60).
 gix = { workspace = true, features = ["sha1"] }
 # Templates write package.json with its keys in the conventional order; the

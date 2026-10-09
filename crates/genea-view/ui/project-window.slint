@@ -6,6 +6,8 @@ import { Theme } from "theme.slint";
 import { Line } from "editor-surface.slint";
 import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
+import { LeftColumn, LeftView } from "left-column.slint";
+import { ProblemRow } from "problems-view.slint";
 
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
@@ -13,6 +15,14 @@ export component ProjectWindow inherits Window {
     in property <bool> has-editor;
     in property <string> status-caret;
     in property <string> status-notice;
+    in property <string> status-config-notice;
+    in property <string> status-problems;
+    in property <bool> status-has-errors;
+
+    // The left column: shown while `left-column-visible`, with `left-view`.
+    in property <bool> left-column-visible;
+    in property <LeftView> left-view;
+    in property <[ProblemRow]> problems;
     in property <string> status-encoding;
     in property <string> status-line-ending;
     in property <string> status-notice-action;
@@ -49,6 +59,12 @@ export component ProjectWindow inherits Window {
     callback select-all();
     callback reload-environment();
     callback show-about();
+    callback open-config();
+    // A left-column view's shortcut: show it, or collapse the column.
+    callback toggle-view(LeftView);
+    // Show a left-column view (a switcher tab, the status-bar notice).
+    callback show-view(LeftView);
+    callback problem-clicked(int);
     callback close-tab();
     callback split-right();
     callback move-tab();
@@ -113,6 +129,13 @@ export component ProjectWindow inherits Window {
                 title: "Open File…";
                 activated => {
                     root.open-file();
+                }
+            }
+
+            MenuItem {
+                title: "Open Config";
+                activated => {
+                    root.open-config();
                 }
             }
 
@@ -205,6 +228,17 @@ export component ProjectWindow inherits Window {
         }
 
         Menu {
+            title: "View";
+            MenuItem {
+                title: "Problems";
+                shortcut: @keys(Control + "6");
+                activated => {
+                    root.toggle-view(LeftView.problems);
+                }
+            }
+        }
+
+        Menu {
             title: "Window";
             MenuItem {
                 title: "Split Right";
@@ -263,6 +297,23 @@ export component ProjectWindow inherits Window {
     VerticalLayout {
         HorizontalLayout {
             vertical-stretch: 1;
+
+            if root.left-column-visible: LeftColumn {
+                width: 300px;
+                view: root.left-view;
+                problems: root.problems;
+                show(view) => {
+                    root.show-view(view);
+                }
+                problem-clicked(index) => {
+                    root.problem-clicked(index);
+                }
+            }
+
+            if root.left-column-visible: Rectangle {
+                width: 1px;
+                background: Theme.chrome-border;
+            }
 
             left := EditorPane {
                 horizontal-stretch: 1;
@@ -358,6 +409,9 @@ export component ProjectWindow inherits Window {
 
         StatusBar {
             notice: root.status-notice;
+            config-notice: root.status-config-notice;
+            problems: root.status-problems;
+            has-errors: root.status-has-errors;
             notice-action: root.status-notice-action;
             notice-action-clicked => {
                 root.notice-action();
@@ -369,6 +423,9 @@ export component ProjectWindow inherits Window {
             update: root.status-update;
             update-clicked => {
                 root.open-update();
+            }
+            show-problems => {
+                root.show-view(LeftView.problems);
             }
         }
     }

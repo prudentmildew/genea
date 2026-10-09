@@ -1,0 +1,76 @@
+// The Problems view in the left column (ticket #29): every error and warning
+// from every source (the config now; the toolchain, tsgo, Oxlint and the
+// project check later), by file. Clicking one opens its file at the problem.
+// Rows are set from Rust (src/window.rs) out of the core's ProjectView.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct ProblemRow {
+    // An error; otherwise a warning.
+    error: bool,
+    message: string,
+    // `path:line:column`, 1-based.
+    location: string,
+}
+
+export component ProblemsView inherits Rectangle {
+    in property <[ProblemRow]> problems;
+
+    callback clicked(int);
+
+    background: Theme.chrome-background;
+
+    if root.problems.length == 0: Text {
+        text: "No problems";
+        color: Theme.chrome-muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    ListView {
+        for problem[index] in root.problems: Rectangle {
+            height: 40px;
+            background: touch.has-hover ? Theme.chrome-highlight : transparent;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    padding-top: 4px;
+                    alignment: start;
+
+                    Text {
+                        text: "●";
+                        color: problem.error ? Theme.error : Theme.warning;
+                    }
+                }
+
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    Text {
+                        text: problem.message;
+                        color: Theme.chrome-foreground;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: problem.location;
+                        color: Theme.chrome-muted;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            touch := TouchArea {
+                clicked => {
+                    root.clicked(index);
+                }
+            }
+        }
+    }
+}

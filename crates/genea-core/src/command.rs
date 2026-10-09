@@ -6,6 +6,8 @@
 
 use std::path::PathBuf;
 
+use crate::{problems::TextPosition, view::LeftColumnView};
+
 /// Something the user does in a project's window.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -104,6 +106,16 @@ pub enum Command {
     /// ⌘S: writes the open file to disk in the background. `settle` (tests)
     /// or the change notification (the app) says when it is written.
     Save,
+    /// Shows a file with the caret at a place in it: a click on a Problems
+    /// item (and later a search result or a terminal link). A file that is
+    /// already open keeps its buffer; otherwise it is read like `OpenFile`.
+    OpenFileAt { path: PathBuf, at: TextPosition },
+    /// "Open config": opens the root `genea.jsonc`, creating it as `{}` if
+    /// it is missing.
+    OpenConfig,
+    /// A left-column view's shortcut (⌘6 for Problems): shows that view, or
+    /// collapses the column if it is already showing.
+    ToggleLeftColumn(LeftColumnView),
 
     // Tabs and the split (ticket #31). Panes are indexed left to right and
     // tabs left to right within a pane, as `ProjectView::panes` lists them.

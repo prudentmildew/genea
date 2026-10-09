@@ -714,6 +714,13 @@ impl Editor {
         self.line_len(line)
     }
 
+    /// The display column of a char column in `line`, both clamped to the
+    /// text (problems and other positions from outside the editor).
+    pub(crate) fn grid_column(&self, line: usize, char_column: usize) -> usize {
+        let line = line.min(self.text.len_lines() - 1);
+        display_columns(self.text.line(line).chars().take(char_column.min(self.line_len(line))))
+    }
+
     pub(crate) fn view(&self, viewport_rows: f64) -> EditorView {
         let line_count = self.text.len_lines();
         let first = (self.scroll_top.floor() as usize).min(line_count);
@@ -754,6 +761,7 @@ impl Editor {
             caret,
             carets,
             preedit,
+            problems: Vec::new(),
         }
     }
 

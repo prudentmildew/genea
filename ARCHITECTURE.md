@@ -45,7 +45,7 @@ use, and nothing else:
 | Commands in | `dispatch(id, Command)` | `Command` (`src/command.rs`) is plain data, one variant per user action. Commands apply synchronously on the main thread. |
 | View state out | `project(id) -> Option<ProjectView>` | Plain snapshots (`src/view.rs`) of what the window shows: user-visible text, 1-based labels, display columns. |
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
-| Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending (tests). |
+| Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
@@ -66,6 +66,27 @@ use, and nothing else:
 - **Effects outside the process** go through the host (`core.host`), never
   `std::process`, an HTTP client or `std::time` directly. The filesystem is
   used directly.
+- **Files changing on disk**: each project has one `notify` watcher
+  (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
+  batches at `Project::files_changed(FileChanges, jobs)`; react there (the
+  config does; the file index, open editors and review hook in beside it).
+  `settle` waits for the watcher by writing a cookie file into
+  `<support>/watch-sync`, which the same FSEvents stream watches: once its
+  event is back, every earlier change has been delivered. So a test writes a
+  file with `fixture.write(..)`, calls `settle()`, and asserts.
+- **Problems** (`src/problems.rs`): every source puts its errors and
+  warnings into the project's `Problems` store and owns them. A source that
+  reports for the whole project calls `replace(source, problems)`; one that
+  reports per file (tsgo, Oxlint) calls `replace_file(source, path,
+  problems)`. Add a `ProblemSource` variant for a new source. The Problems
+  view (`ProjectView::problems`), the status-bar counts and the editor's
+  underlines (`EditorView::problems`) all read from the store. Positions
+  are `TextPosition`s: 0-based line and char column.
+- **Config** (`src/config.rs`): `genea.jsonc` parses into `Config` (in
+  `ProjectView::config`), with defaults for anything missing or wrong. A
+  feature reads its key from the project's config; it applies live, so read
+  it when needed rather than copying it at open. A new key goes in
+  `Config`, its `Default`, and the `match` in `config::parse`.
 - **Tabs and the split** (`src/project/tabs.rs`): an open file has one
   `Editor` however many tabs show it; each tab keeps its own `Cursor`
   (caret, selection, scroll). `Project::editor` is always the *focused*
@@ -212,6 +233,16 @@ chrome, native menus via muda (Slint's `MenuBar`).
   (press ⌥ twice and hold, then ↑/↓). Secondary carets ride in each line
   slot (`Line.carets`), so they share its diff. `src/dialogs.rs`: native
   NSOpenPanels.
+- Themes: `ui/theme.slint`'s `Theme` global has light and dark colours,
+  chosen by `follow-system` (the system's appearance, through
+  `Palette.color-scheme`) or `pinned-dark`, which `WindowController::sync`
+  sets from the config's `theme`. Use `Theme` colours, never literals; a
+  `Run` with a transparent colour is drawn in `Theme.editor-foreground`.
+- The left column (`ui/left-column.slint`): a view switcher and the active
+  view, shown while the core's `left_column` is `Some`. A view's shortcut
+  is a menu item that dispatches `ToggleLeftColumn` (Problems is ⌘6). A new
+  view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
+  switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`
   (ADR 0004) whose `key-pressed` accepts every key; IME commits and the
   preedit go to the core as `InsertText` and `SetPreedit`. `src/blink.rs`
