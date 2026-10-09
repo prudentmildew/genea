@@ -38,7 +38,9 @@ fn paint_line(line: &[u8], paint: &mut [Paint]) {
         .then(|| line[value..end].windows(2).position(|w| w[0].is_ascii_whitespace() && w[1] == b'#'))
         .flatten()
         .map(|n| value + n + 1);
-    let value_end = comment.unwrap_or(end);
+    let value_end = comment.map_or(end, |comment| {
+        line[value..comment].iter().rposition(|b| !b.is_ascii_whitespace()).map_or(value, |n| value + n + 1)
+    });
     paint[value..value_end].fill(Highlight::String as Paint);
     if let Some(comment) = comment {
         paint[comment..end].fill(Highlight::Comment as Paint);

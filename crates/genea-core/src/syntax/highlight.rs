@@ -194,14 +194,15 @@ impl Spans {
 
     /// Shifts the spans over an edit, so they stay on the text they covered
     /// until the next parse replaces them. A span the edit falls inside
-    /// grows or shrinks with it; text inserted between spans is plain.
+    /// grows or shrinks with it; text inserted between spans, or at either
+    /// edge of one, is plain.
     pub(crate) fn edit(&mut self, edit: &InputEdit) {
         let (start, old_end, new_end) = (edit.start_byte as i64, edit.old_end_byte as i64, edit.new_end_byte as i64);
         let delta = new_end - old_end;
         let first = self.0.partition_point(|s| (s.end as i64) <= start);
         for span in &mut self.0[first..] {
             let (s, e) = (span.start as i64, span.end as i64);
-            let s = if s <= start { s } else if s >= old_end { s + delta } else { new_end };
+            let s = if s < start { s } else if s >= old_end { s + delta } else { new_end };
             let e = if e >= old_end && e > start { e + delta } else { e.min(start) };
             span.start = s as u32;
             span.end = e.max(s) as u32;
@@ -216,10 +217,9 @@ const MAX_INJECTION_DEPTH: usize = 3;
 /// Paints `root`'s highlights, and those of the languages embedded in it,
 /// into `paint` (one value per byte of `text`).
 ///
-/// Where captures overlap, the innermost node wins, and for the same node
-/// the pattern that comes last in the query wins, as the bundled queries
-/// expect (they list general patterns such as `(identifier) @variable`
-/// first).
+/// Where captures overlap, the innermost node wins. For the same node, the
+/// language's queries decide whether the first or the last pattern wins
+/// ([`LanguageConfig::last_pattern_wins`]).
 pub(super) fn paint_tree(config: &LanguageConfig, root: Node, text: &[u8], paint: &mut [Paint], depth: usize) {
     let mut captures = Vec::new();
     let mut cursor = QueryCursor::new();
@@ -228,10 +228,12 @@ pub(super) fn paint_tree(config: &LanguageConfig, root: Node, text: &[u8], paint
         let capture = found.captures()[*index];
         if let Some(value) = config.paints[capture.index as usize] {
             let node = capture.node;
-            captures.push((node.start_byte(), node.end_byte(), found.pattern_index, value));
+            let pattern = found.pattern_index;
+            let rank = if config.last_pattern_wins { pattern } else { usize::MAX - pattern };
+            captures.push((node.start_byte(), node.end_byte(), rank, value));
         }
     }
-    captures.sort_unstable_by_key(|&(start, end, pattern, _)| (start, Reverse(end), pattern));
+    captures.sort_unstable_by_key(|&(start, end, rank, _)| (start, Reverse(end), rank));
     for (start, end, _, value) in captures {
         let end = end.min(paint.len());
         paint[start..end].fill(value);

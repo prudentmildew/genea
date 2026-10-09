@@ -79,6 +79,12 @@ pub(crate) struct LanguageConfig {
     /// What each of `highlights`' captures paints, by capture index.
     pub(super) paints: Vec<Option<Paint>>,
     pub(super) injections: Option<Query>,
+    /// Whether, of several patterns capturing the same node, the last one
+    /// wins (as in Neovim) or the first (as in `tree-sitter-highlight`).
+    /// The bundled queries were written for one or the other: JavaScript
+    /// lists `(identifier) @variable` first and refines it later, while
+    /// JSON lists `@string.special.key` before `(string) @string`.
+    pub(super) last_pattern_wins: bool,
 }
 
 impl LanguageConfig {
@@ -122,6 +128,7 @@ impl LanguageConfig {
         let highlights = compile(&highlights)?;
         let paints = highlights.capture_names().iter().map(|name| capture_paint(name)).collect();
         let injections = injections.and_then(compile);
-        Some(LanguageConfig { language: grammar, highlights, paints, injections })
+        let last_pattern_wins = !matches!(language, Language::Json | Language::Css);
+        Some(LanguageConfig { language: grammar, highlights, paints, injections, last_pattern_wins })
     }
 }
