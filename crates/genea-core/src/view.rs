@@ -6,7 +6,7 @@
 //! freely. They are snapshots: re-read them after a command or a change
 //! notification.
 
-use std::{ops::Range, path::PathBuf};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{
     Highlight,
@@ -50,6 +50,31 @@ pub struct ProjectView {
     /// The open toolchain picker ("Set runtime…", "Set package manager…",
     /// "Update toolchain…"), if any.
     pub toolchain_picker: Option<ToolchainPicker>,
+    /// The Files view's tree: the rows it shows, top to bottom. Shared, so
+    /// a snapshot doesn't copy a large tree, and unchanged trees compare
+    /// equal at once.
+    pub files: Arc<[FileRow]>,
+}
+
+/// A row in the Files view: a file, or a folder the user can expand.
+/// Clicking a file opens it with `Command::OpenFile(path)`; clicking a
+/// folder toggles it with `Command::ToggleFolder(path)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRow {
+    /// Relative to the project root.
+    pub path: PathBuf,
+    /// The file or folder name.
+    pub name: String,
+    /// How deep it is: 0 for the root's entries.
+    pub depth: usize,
+    pub kind: FileRowKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileRowKind {
+    File,
+    /// A folder; its entries follow it, one level deeper, while expanded.
+    Folder { expanded: bool },
 }
 
 /// One side of the editor area: a tab strip and the active tab's editor.
@@ -86,6 +111,8 @@ pub struct ClosePrompt {
 /// collapses the column when it is already showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LeftColumnView {
+    /// ⌘1: the project's file tree. A project opens showing it.
+    Files,
     /// ⌘6.
     Problems,
 }

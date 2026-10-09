@@ -18,6 +18,7 @@ use crate::{
     config::{self, CONFIG_FILE, Config},
     editor::Editor,
     environment::{Environment, ProcessEnv},
+    files::FileIndex,
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
@@ -59,6 +60,8 @@ pub(crate) struct Project {
     problems: Problems,
     /// What the left column shows; `None` while it is collapsed.
     left_column: Option<LeftColumnView>,
+    /// The project's files, for the Files view (ticket #30).
+    pub(crate) files: FileIndex,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
@@ -69,6 +72,7 @@ impl Project {
     pub(crate) fn new(id: ProjectId, root: PathBuf) -> Self {
         Project {
             id,
+            files: FileIndex::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -83,7 +87,7 @@ impl Project {
             config_generation: 0,
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
-            left_column: None,
+            left_column: Some(LeftColumnView::Files),
         }
     }
 
@@ -99,6 +103,7 @@ impl Project {
         }
         self.load_config(jobs);
         self.find_nested_configs(jobs);
+        self.files.start(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -110,6 +115,7 @@ impl Project {
     /// Files changed on disk (from the watcher). Every area that follows
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
+        self.files.files_changed(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if let Some(toolchain) = &mut self.toolchain
             && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
@@ -165,6 +171,7 @@ impl Project {
                     };
                     (Config::default(), vec![problem])
                 });
+                project.files.set_exclude(&config.exclude);
                 project.config = config;
                 project.config_problems = problems;
                 project.update_config_problems();
@@ -281,6 +288,7 @@ impl Project {
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
+            Command::ToggleFolder(path) => self.files.toggle(&path),
             Command::SelectTab { .. }
             | Command::FocusPane(_)
             | Command::CloseTab { .. }
@@ -532,6 +540,7 @@ impl Project {
             problems: self.problems.items(),
             left_column: self.left_column,
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
+            files: self.files.rows(),
         }
     }
 

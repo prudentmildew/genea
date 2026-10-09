@@ -9,6 +9,7 @@ import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ProblemRow } from "problems-view.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
+import { FileEntry } from "files-view.slint";
 
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
@@ -24,6 +25,7 @@ export component ProjectWindow inherits Window {
     in property <bool> left-column-visible;
     in property <LeftView> left-view;
     in property <[ProblemRow]> problems;
+    in property <[FileEntry]> files;
     in property <string> status-encoding;
     in property <string> status-line-ending;
     in property <string> status-notice-action;
@@ -57,7 +59,6 @@ export component ProjectWindow inherits Window {
 
     // Menu commands.
     callback open-folder();
-    callback open-file();
     callback save();
     callback undo();
     callback redo();
@@ -81,6 +82,8 @@ export component ProjectWindow inherits Window {
     // Show a left-column view (a switcher tab, the status-bar notice).
     callback show-view(LeftView);
     callback problem-clicked(int);
+    // A Files view row: open the file, or expand or collapse the folder.
+    callback file-clicked(int);
     callback close-tab();
     callback split-right();
     callback move-tab();
@@ -137,14 +140,6 @@ export component ProjectWindow inherits Window {
                 shortcut: @keys(Control + O);
                 activated => {
                     root.open-folder();
-                }
-            }
-
-            // Temporary until the Files view (ticket #20 allows it).
-            MenuItem {
-                title: "Open File…";
-                activated => {
-                    root.open-file();
                 }
             }
 
@@ -277,6 +272,14 @@ export component ProjectWindow inherits Window {
         Menu {
             title: "View";
             MenuItem {
+                title: "Files";
+                shortcut: @keys(Control + "1");
+                activated => {
+                    root.toggle-view(LeftView.files);
+                }
+            }
+
+            MenuItem {
                 title: "Problems";
                 shortcut: @keys(Control + "6");
                 activated => {
@@ -349,11 +352,15 @@ export component ProjectWindow inherits Window {
                 width: 300px;
                 view: root.left-view;
                 problems: root.problems;
+                files: root.files;
                 show(view) => {
                     root.show-view(view);
                 }
                 problem-clicked(index) => {
                     root.problem-clicked(index);
+                }
+                file-clicked(index) => {
+                    root.file-clicked(index);
                 }
             }
 

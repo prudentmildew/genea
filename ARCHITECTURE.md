@@ -70,11 +70,21 @@ use, and nothing else:
 - **Files changing on disk**: each project has one `notify` watcher
   (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
   batches at `Project::files_changed(FileChanges, jobs)`; react there (the
-  config does; the file index, open editors and review hook in beside it).
+  config and the file index do; open editors and review hook in beside them).
   `settle` waits for the watcher by writing a cookie file into
   `<support>/watch-sync`, which the same FSEvents stream watches: once its
   event is back, every earlier change has been delivered. So a test writes a
   file with `fixture.write(..)`, calls `settle()`, and asserts.
+- **The file index** (`src/files.rs`, ticket #30): every file and folder
+  outside `node_modules` and `.git`, read once in the background at open and
+  then kept up to date from the watcher's batches (a changed path re-lists
+  its folder; a new folder is read with its contents), one read at a time.
+  The Files view's tree (`ProjectView::files`, flattened rows, shared as an
+  `Arc` so an unchanged tree costs nothing to snapshot) is built from it on
+  the main thread, minus the config's `exclude` (a `.gitignore` matcher
+  applied when the rows are built, so `exclude` changes need no disk read).
+  The finder and search should take their file list from here and hide the
+  same paths; hidden files still open with `OpenFile`.
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -277,7 +287,8 @@ chrome, native menus via muda (Slint's `MenuBar`).
   indexes them, and 0 is plain text.
 - The left column (`ui/left-column.slint`): a view switcher and the active
   view, shown while the core's `left_column` is `Some`. A view's shortcut
-  is a menu item that dispatches `ToggleLeftColumn` (Problems is ⌘6). A new
+  is a menu item that dispatches `ToggleLeftColumn` (Files is ⌘1, and a
+  project opens showing it; Problems is ⌘6). A new
   view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
   switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`

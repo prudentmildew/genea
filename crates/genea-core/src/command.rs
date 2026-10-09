@@ -142,6 +142,10 @@ pub enum Command {
     /// A left-column view's shortcut (⌘6 for Problems): shows that view, or
     /// collapses the column if it is already showing.
     ToggleLeftColumn(LeftColumnView),
+    /// A click on a folder in the Files view (a path relative to the
+    /// project root): expands it, or collapses it if it is expanded. A
+    /// folder keeps what was expanded inside it while it is collapsed.
+    ToggleFolder(PathBuf),
 
     // Tabs and the split (ticket #31). Panes are indexed left to right and
     // tabs left to right within a pane, as `ProjectView::panes` lists them.
