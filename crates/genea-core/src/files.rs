@@ -24,6 +24,7 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use crate::{
     jobs::Jobs,
     view::{FileRow, FileRowKind},
+    watcher::FileChanges,
     workbench::ProjectId,
 };
 
@@ -46,6 +47,8 @@ pub(crate) struct FileIndex {
     reading: bool,
     /// Changed paths (relative) waiting for the next read.
     changed: BTreeSet<PathBuf>,
+    /// New folders (relative) waiting to be read with their contents.
+    walks: BTreeSet<PathBuf>,
     /// Everything may have changed: read the whole project again.
     rescan: bool,
 }
@@ -80,6 +83,7 @@ impl FileIndex {
             rows: Arc::from([]),
             reading: false,
             changed: BTreeSet::new(),
+            walks: BTreeSet::new(),
             rescan: false,
         }
     }
@@ -87,6 +91,16 @@ impl FileIndex {
     /// Reads the whole project in the background.
     pub(crate) fn start(&mut self, jobs: &Jobs) {
         self.rescan = true;
+        self.read_next(jobs);
+    }
+
+    /// Files changed on disk (from the watcher): reads what changed, after
+    /// any read that is running.
+    pub(crate) fn files_changed(&mut self, changes: &FileChanges, jobs: &Jobs) {
+        self.rescan |= changes.rescan;
+        let relative = changes.paths.iter().filter_map(|path| path.strip_prefix(&self.root).ok());
+        let shown = relative.filter(|path| !path.components().any(|c| is_hidden_name(c.as_os_str())));
+        self.changed.extend(shown.map(Path::to_path_buf));
         self.read_next(jobs);
     }
 
@@ -113,8 +127,22 @@ impl FileIndex {
         let mut read = Read::default();
         if std::mem::take(&mut self.rescan) {
             self.changed.clear();
+            self.walks.clear();
             read.walks.insert(PathBuf::new());
         }
+        // A changed path is read by listing its folder again. A path in a
+        // folder the index doesn't know yet is new with its folder, which a
+        // listing further up finds.
+        for path in std::mem::take(&mut self.changed) {
+            let mut folder = path.parent().unwrap_or(Path::new(""));
+            while !self.folders.contains_key(folder)
+                && let Some(parent) = folder.parent()
+            {
+                folder = parent;
+            }
+            read.lists.insert(folder.to_owned());
+        }
+        read.walks.append(&mut self.walks);
         if read.lists.is_empty() && read.walks.is_empty() {
             return;
         }
@@ -139,11 +167,46 @@ impl FileIndex {
 
     /// Takes a read's result into the index.
     fn apply(&mut self, found: Found) {
-        let Some(folders) = found.folders else { return };
+        let Some(folders) = found.folders else {
+            // The folder is gone: its parent's listing drops it.
+            if found.folder != Path::new("") {
+                self.changed.insert(found.folder);
+            }
+            return;
+        };
         if found.recursive {
-            self.folders.retain(|folder, _| !folder.starts_with(&found.folder));
+            self.forget(&found.folder);
+            self.folders.extend(folders);
+            return;
         }
-        self.folders.extend(folders);
+        for (folder, entries) in folders {
+            let old = self.folders.insert(folder.clone(), entries);
+            let entries = &self.folders[&folder];
+            // Folders that went away (or became files) leave with their
+            // contents; new ones are read with theirs.
+            let gone: Vec<PathBuf> = old
+                .iter()
+                .flatten()
+                .filter(|(name, is_dir)| **is_dir && entries.get(*name) != Some(&true))
+                .map(|(name, _)| folder.join(name))
+                .collect();
+            let new: Vec<PathBuf> = entries
+                .iter()
+                .filter(|(_, is_dir)| **is_dir)
+                .map(|(name, _)| folder.join(name))
+                .filter(|path| !self.folders.contains_key(path))
+                .collect();
+            for path in gone {
+                self.forget(&path);
+            }
+            self.walks.extend(new);
+        }
+    }
+
+    /// Drops a folder and everything below it from the index.
+    fn forget(&mut self, folder: &Path) {
+        self.folders.retain(|path, _| !path.starts_with(folder));
+        self.expanded.retain(|path| !path.starts_with(folder));
     }
 
     /// Rebuilds the tree's rows: the root's entries, and the entries of

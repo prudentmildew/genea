@@ -115,6 +115,7 @@ impl Project {
     /// Files changed on disk (from the watcher). Every area that follows
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
+        self.files.files_changed(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if changes.rescan {
             self.load_config(jobs);
