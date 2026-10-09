@@ -13,13 +13,15 @@
 use std::{ops::Range, path::PathBuf, time::Instant};
 
 use ropey::Rope;
+use tree_sitter::{InputEdit, Point};
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
     command::CaretMove,
     history::{Change, Edit, EditKind, History, Selection},
+    syntax::{Highlight, ParseJob, Parsed, Syntax},
     text::{self, LineEnding},
-    view::{Caret, EditorView, Preedit, VisibleLine},
+    view::{Caret, EditorView, HighlightSpan, Preedit, VisibleLine},
 };
 
 /// Grid columns a tab advances to (the next multiple of this).
@@ -97,6 +99,8 @@ pub(crate) struct Editor {
     /// carets it left. While both still hold, occurrences match whole words
     /// only; any other caret change or edit ends that.
     whole_words: Option<(u64, Vec<CaretSelection>)>,
+    /// The tree and highlights, for files in a highlighted language.
+    syntax: Option<Syntax>,
 }
 
 /// The buffer as it was when a save started.
@@ -110,6 +114,7 @@ pub(crate) struct Snapshot {
 impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
         let line_ending = LineEnding::detect(&text);
+        let syntax = Syntax::for_file(&path, &text);
         Editor {
             path,
             text,
@@ -123,6 +128,7 @@ impl Editor {
             read_only: false,
             history: History::default(),
             whole_words: None,
+            syntax,
         }
     }
 
@@ -520,7 +526,7 @@ impl Editor {
             }
         }
         for change in &changes {
-            change.apply(&mut self.text);
+            self.apply(change);
         }
         if !changes.is_empty() {
             self.new_version();
@@ -589,18 +595,22 @@ impl Editor {
     /// it.
     pub(crate) fn undo(&mut self, viewport_rows: f64) {
         self.preedit.clear();
-        if let Some(restored) = self.history.undo(&mut self.text) {
+        let mut history = std::mem::take(&mut self.history);
+        if let Some(restored) = history.undo(|change| self.apply(change)) {
             self.restore(restored.selections, restored.version, viewport_rows);
         }
+        self.history = history;
     }
 
     /// ⌘⇧Z: makes the last undone step again and restores the carets from
     /// after it.
     pub(crate) fn redo(&mut self, viewport_rows: f64) {
         self.preedit.clear();
-        if let Some(restored) = self.history.redo(&mut self.text) {
+        let mut history = std::mem::take(&mut self.history);
+        if let Some(restored) = history.redo(|change| self.apply(change)) {
             self.restore(restored.selections, restored.version, viewport_rows);
         }
+        self.history = history;
     }
 
     fn restore(&mut self, selections: Vec<Selection>, version: u64, viewport_rows: f64) {
@@ -629,6 +639,52 @@ impl Editor {
             version_before,
             version_after: self.version,
         });
+    }
+
+    /// Replaces a char range of the text. Every change to the text goes
+    /// through here (`replace`, undo and redo, via `apply`): it moves the
+    /// syntax tree and highlights with the text.
+    fn splice(&mut self, chars: Range<usize>, text: &str) {
+        let start_byte = self.text.char_to_byte(chars.start);
+        let old_end_byte = self.text.char_to_byte(chars.end);
+        let start_position = self.point(start_byte);
+        let old_end_position = self.point(old_end_byte);
+        self.text.remove(chars.clone());
+        self.text.insert(chars.start, text);
+        let new_end_byte = start_byte + text.len();
+        let new_end_position = self.point(new_end_byte);
+        if let Some(syntax) = &mut self.syntax {
+            let edit =
+                InputEdit { start_byte, old_end_byte, new_end_byte, start_position, old_end_position, new_end_position };
+            syntax.edit(edit);
+        }
+    }
+
+    /// A byte offset as a tree-sitter point (row, byte column).
+    fn point(&self, byte: usize) -> Point {
+        let row = self.text.byte_to_line(byte);
+        Point { row, column: byte - self.text.line_to_byte(row) }
+    }
+
+    /// A background parse to start, if the syntax tree is behind the text
+    /// and none is running.
+    pub(crate) fn start_parse(&mut self) -> Option<ParseJob> {
+        self.syntax.as_mut()?.start_parse(&self.text)
+    }
+
+    /// Takes a finished background parse.
+    pub(crate) fn parsed(&mut self, parsed: Parsed) {
+        if let Some(syntax) = &mut self.syntax {
+            syntax.parsed(parsed);
+        }
+    }
+
+    /// Applies a change to the text: an edit's, or an undo or redo's.
+    fn apply(&mut self, change: &Change) {
+        match change {
+            Change::Insert { at, text } => self.splice(*at..*at, text),
+            Change::Remove { at, text } => self.splice(*at..*at + text.chars().count(), ""),
+        }
     }
 
     /// The selected text, or `None` with nothing selected. Several
@@ -729,10 +785,9 @@ impl Editor {
             self.carets.iter().map(|c| c.range()).filter(|r| !r.is_empty()).collect();
         ranges.sort_by_key(|r| r.start);
         let lines = (first..end)
-            .map(|index| VisibleLine {
-                index,
-                text: self.grid_text(index),
-                selections: self.selected_columns(index, &ranges),
+            .map(|index| {
+                let (text, highlights) = self.grid_line(index);
+                VisibleLine { index, text, selections: self.selected_columns(index, &ranges), highlights }
             })
             .collect();
         let caret = self.caret_at(self.primary().caret);
@@ -786,21 +841,34 @@ impl Editor {
 
     /// A line as laid out on the grid: tabs expanded, no line ending, cut
     /// at [`MAX_VISIBLE_COLUMNS`], with the preedit spliced in at the
-    /// primary caret.
-    fn grid_text(&self, line: usize) -> String {
-        let chars = self.text.line(line).chars();
+    /// primary caret (and left plain). Also its highlight spans, in display columns.
+    fn grid_line(&self, line: usize) -> (String, Vec<HighlightSpan>) {
+        let line_start = self.text.line_to_byte(line);
+        let slice = self.text.line(line);
+        let spans = self.syntax.as_ref().map_or(&[][..], |s| s.spans(line_start..line_start + slice.len_bytes()));
+        // Each char with its byte offset in the file; the preedit has none.
+        let chars = slice.chars().scan(line_start, |byte, c| {
+            let at = *byte;
+            *byte += c.len_utf8();
+            Some((Some(at), c))
+        });
         let (caret_line, caret_column) = self.line_column(self.primary().caret);
-        let chars: Box<dyn Iterator<Item = char>> = if line == caret_line && !self.preedit.is_empty() {
-            Box::new(chars.clone().take(caret_column).chain(self.preedit.chars()).chain(chars.skip(caret_column)))
+        let chars: Box<dyn Iterator<Item = (Option<usize>, char)>> = if line == caret_line && !self.preedit.is_empty() {
+            let preedit = self.preedit.chars().map(|c| (None, c));
+            Box::new(chars.clone().take(caret_column).chain(preedit).chain(chars.skip(caret_column)))
         } else {
             Box::new(chars)
         };
+
         let mut text = String::new();
+        let mut highlights: Vec<HighlightSpan> = Vec::new();
+        let mut spans = spans.iter().peekable();
         let mut column = 0;
-        for c in chars {
+        for (byte, c) in chars {
             if matches!(c, '\n' | '\r') || column >= MAX_VISIBLE_COLUMNS {
                 break;
             }
+            let start = column;
             if c == '\t' {
                 let next = (column / TAB_WIDTH + 1) * TAB_WIDTH;
                 text.extend(std::iter::repeat_n(' ', next - column));
@@ -809,8 +877,23 @@ impl Editor {
                 text.push(c);
                 column += c.width().unwrap_or(0);
             }
+            let highlight = byte.and_then(|byte| {
+                while spans.next_if(|s| (s.end as usize) <= byte).is_some() {}
+                spans.peek().filter(|s| (s.start as usize) <= byte).map(|s| s.highlight)
+            });
+            push_highlight(&mut highlights, highlight, start..column);
         }
-        text
+        (text, highlights)
+    }
+}
+
+/// Adds a char's columns to the line's highlight spans, extending the last
+/// span when it continues it.
+fn push_highlight(spans: &mut Vec<HighlightSpan>, highlight: Option<Highlight>, columns: Range<usize>) {
+    let Some(highlight) = highlight else { return };
+    match spans.last_mut() {
+        Some(last) if last.highlight == highlight && last.columns.end == columns.start => last.columns.end = columns.end,
+        _ => spans.push(HighlightSpan { columns, highlight }),
     }
 }
 

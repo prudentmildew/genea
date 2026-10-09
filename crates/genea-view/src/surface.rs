@@ -10,8 +10,9 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::{EditorView, Severity, grid_pieces};
-use slint::{Color, Model, ModelRc, VecModel};
+use genea_core::{EditorView, Highlight, HighlightSpan, Severity, grid_pieces};
+use slint::{Model, ModelRc, VecModel};
+use unicode_width::UnicodeWidthChar;
 
 use crate::{Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry};
 
@@ -23,10 +24,6 @@ pub const LINE_HEIGHT: f32 = 15.6;
 /// huge file. The base moves (and every slot is rebuilt) past this distance.
 const REBASE_LINES: usize = 10_000;
 
-/// A run colour that means `Theme.editor-foreground`, which follows the
-/// light or dark theme. Highlighting gives runs their own colours.
-const FOREGROUND: Color = Color::from_argb_encoded(0);
-
 #[derive(PartialEq)]
 struct SlotState {
     index: usize,
@@ -35,9 +32,10 @@ struct SlotState {
     selections: Vec<Range<usize>>,
     /// Problems underlined on the line: columns, and whether it's an error.
     problems: Vec<(Range<usize>, bool)>,
+    highlights: Vec<HighlightSpan>,
     /// Display columns of the carets on the line other than the primary.
     carets: Vec<usize>,
-    /// The cell width the selections were laid out with.
+    /// The cell width the runs, selections and carets were laid out with.
     char_width: f32,
 }
 
@@ -113,6 +111,7 @@ impl Surface {
                         .filter(|p| p.line == line.index)
                         .map(|p| (p.columns.clone(), p.severity == Severity::Error))
                         .collect(),
+                    highlights: line.highlights.clone(),
                     carets: editor
                         .carets
                         .iter()
@@ -137,7 +136,7 @@ impl Surface {
                     runs: if s.text.trim().is_empty() {
                         ModelRc::default()
                     } else {
-                        ModelRc::new(VecModel::from(grid_runs(&s.text, char_width)))
+                        ModelRc::new(VecModel::from(runs(&s.text, &s.highlights, char_width)))
                     },
                     selections: if s.selections.is_empty() {
                         ModelRc::default()
@@ -200,16 +199,71 @@ fn set_geometry(window: &ProjectWindow, pane: usize, geometry: SurfaceGeometry) 
     }
 }
 
-/// A line's runs, one per grid piece: wide characters (CJK, emoji) are
-/// drawn from fallback fonts whose advances aren't two Menlo cells, so each
-/// is placed at its own column to keep the rest of the line on the grid.
-fn grid_runs(text: &str, char_width: f32) -> Vec<Run> {
-    grid_pieces(text)
-        .into_iter()
-        .map(|piece| Run {
-            x: piece.column as f32 * char_width,
-            text: piece.text.into(),
-            color: FOREGROUND,
-        })
-        .collect()
+/// Splits a line's grid text into runs: one per highlight (and per plain
+/// stretch between them), each split further by `grid_pieces` so that every
+/// wide character (CJK, emoji), whose fallback font's advance isn't two
+/// Menlo cells, sits at its own column and the rest of the line stays on the
+/// grid. Blank runs are left out.
+fn runs(text: &str, highlights: &[HighlightSpan], char_width: f32) -> Vec<Run> {
+    let mut runs = Vec::new();
+    let mut push = |segment: &str, column: usize, highlight: i32| {
+        for piece in grid_pieces(segment) {
+            if !piece.text.trim().is_empty() {
+                let x = (column + piece.column) as f32 * char_width;
+                runs.push(Run { x, text: piece.text.into(), highlight });
+            }
+        }
+    };
+    let mut spans = highlights.iter().peekable();
+    let (mut start, mut start_column, mut highlight) = (0, 0, 0);
+    let mut column = 0;
+    for (index, c) in text.char_indices() {
+        let width = c.width().unwrap_or(0);
+        // A zero-width character stays with the one before it.
+        if width > 0 {
+            while spans.next_if(|s| s.columns.end <= column).is_some() {}
+            let here = spans.peek().filter(|s| s.columns.start <= column).map_or(0, |s| highlight_index(s.highlight));
+            if index > start && here != highlight {
+                push(&text[start..index], start_column, highlight);
+                (start, start_column) = (index, column);
+            }
+            if index == start {
+                highlight = here;
+            }
+        }
+        column += width;
+    }
+    push(&text[start..], start_column, highlight);
+    runs
+}
+
+/// A highlight's index into `Theme.syntax` (ui/theme.slint); 0 is plain.
+fn highlight_index(highlight: Highlight) -> i32 {
+    match highlight {
+        Highlight::Comment => 1,
+        Highlight::Keyword => 2,
+        Highlight::Operator => 3,
+        Highlight::Punctuation => 4,
+        Highlight::String => 5,
+        Highlight::StringSpecial => 6,
+        Highlight::Escape => 7,
+        Highlight::Number => 8,
+        Highlight::Constant => 9,
+        Highlight::Function => 10,
+        Highlight::Constructor => 11,
+        Highlight::Type => 12,
+        Highlight::TypeBuiltin => 13,
+        Highlight::Variable => 14,
+        Highlight::VariableBuiltin => 15,
+        Highlight::Parameter => 16,
+        Highlight::Property => 17,
+        Highlight::Tag => 18,
+        Highlight::Attribute => 19,
+        Highlight::Label => 20,
+        Highlight::Heading => 21,
+        Highlight::Emphasis => 22,
+        Highlight::Strong => 23,
+        Highlight::Link => 24,
+        Highlight::Literal => 25,
+    }
 }

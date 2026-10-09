@@ -1,6 +1,8 @@
 // Colours, fonts and metrics shared by every view: the built-in light and
-// dark themes (spec #19 story 57). A window follows the system's appearance
-// unless its project's config pins `theme` (ticket #29): Rust sets
+// dark themes (spec #19 story 57), each with its syntax highlight colours. A
+// window follows the system's appearance live (Slint's winit backend sets
+// `Palette.color-scheme` from the window's theme and updates it when macOS
+// switches) unless its project's config pins `theme` (ticket #29): Rust sets
 // `follow-system` and `pinned-dark` per window (src/window.rs). Each window
 // has its own instance of this global.
 //
@@ -21,21 +23,80 @@ export global Theme {
     out property <length> line-height: 15.6px;
     out property <length> gutter-width: 56px;
 
-    out property <color> editor-background: root.dark ? #1e2228 : #ffffff;
-    out property <color> editor-foreground: root.dark ? #d4d8de : #24292f;
-    out property <color> gutter-foreground: root.dark ? #6b7280 : #9a9a9a;
+    out property <color> editor-background: root.dark ? #0d1117 : #ffffff;
+    out property <color> editor-foreground: root.dark ? #e6edf3 : #24292f;
+    out property <color> gutter-foreground: root.dark ? #6e7681 : #9a9a9a;
     out property <color> caret: root.dark ? #58a6ff : #1f6feb;
     out property <color> selection: root.dark ? #264f78 : #b6d6fd;
     // Underlines and markers for problems.
     out property <color> error: root.dark ? #f85149 : #cf222e;
     out property <color> warning: root.dark ? #d29922 : #9a6700;
 
-    out property <color> chrome-background: root.dark ? #25292f : #f6f8fa;
-    out property <color> chrome-border: root.dark ? #3a3f47 : #d0d7de;
-    out property <color> chrome-foreground: root.dark ? #d4d8de : #24292f;
+    out property <color> chrome-background: root.dark ? #161b22 : #f6f8fa;
+    out property <color> chrome-border: root.dark ? #30363d : #d0d7de;
+    out property <color> chrome-foreground: root.dark ? #e6edf3 : #24292f;
     out property <color> chrome-muted: root.dark ? #8b949e : #57606a;
     // A selected or hovered row in a list.
-    out property <color> chrome-highlight: root.dark ? #2f353d : #eaeef2;
-    out property <color> link: root.dark ? #58a6ff : #0969da;
+    out property <color> chrome-highlight: root.dark ? #21262d : #eaeef2;
+    out property <color> link: root.dark ? #4493f8 : #0969da;
     out property <length> chrome-font-size: 12px;
+
+    // Highlight colours, indexed by `Run.highlight`. The order is
+    // `highlight_index` in src/surface.rs: 0 is plain text, then one entry per
+    // `genea_core::Highlight`.
+    out property <[color]> syntax: root.dark ? [
+        #e6edf3, // plain
+        #8b949e, // comment
+        #ff7b72, // keyword
+        #e6edf3, // operator
+        #c9d1d9, // punctuation
+        #a5d6ff, // string
+        #7ee787, // string special (regex, colour)
+        #79c0ff, // escape
+        #79c0ff, // number
+        #79c0ff, // constant
+        #d2a8ff, // function
+        #ffa657, // constructor
+        #ffa657, // type
+        #79c0ff, // built-in type
+        #e6edf3, // variable
+        #79c0ff, // built-in variable
+        #ffa657, // parameter
+        #79c0ff, // property
+        #7ee787, // tag
+        #79c0ff, // attribute
+        #ffa657, // label
+        #79c0ff, // heading
+        #d2a8ff, // emphasis
+        #ffa657, // strong
+        #a5d6ff, // link
+        #a5d6ff, // literal
+    ] : [
+        #24292f, // plain
+        #6e7781, // comment
+        #cf222e, // keyword
+        #24292f, // operator
+        #57606a, // punctuation
+        #0a3069, // string
+        #116329, // string special (regex, colour)
+        #0550ae, // escape
+        #0550ae, // number
+        #0550ae, // constant
+        #8250df, // function
+        #953800, // constructor
+        #953800, // type
+        #0550ae, // built-in type
+        #24292f, // variable
+        #0550ae, // built-in variable
+        #953800, // parameter
+        #0550ae, // property
+        #116329, // tag
+        #0550ae, // attribute
+        #953800, // label
+        #0550ae, // heading
+        #8250df, // emphasis
+        #953800, // strong
+        #0a3069, // link
+        #0a3069, // literal
+    ];
 }

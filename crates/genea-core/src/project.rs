@@ -21,6 +21,7 @@ use crate::{
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
+    syntax::ParseJob,
     text::Decoded,
     toolchain::{Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
@@ -420,7 +421,26 @@ impl Project {
                 }
             }
         }
+        self.reparse(jobs);
         self.refresh_views();
+    }
+
+    /// Starts a background parse of the focused file if its syntax tree is
+    /// behind its text and none is running. Only the focused file is edited.
+    fn reparse(&mut self, jobs: &Jobs) {
+        if let Some(editor) = &mut self.editor
+            && let Some(job) = editor.start_parse()
+        {
+            spawn_parse(self.id, editor.path().to_owned(), job, jobs);
+        }
+    }
+
+    /// Starts a background parse of an open file (focused or not) if its
+    /// syntax tree is behind its text and none is running.
+    fn reparse_file(&mut self, path: &Path, jobs: &Jobs) {
+        if let Some(job) = self.open_editor_mut(path).and_then(Editor::start_parse) {
+            spawn_parse(self.id, path.to_owned(), job, jobs);
+        }
     }
 
     pub(crate) fn view(&self) -> ProjectView {
@@ -599,13 +619,15 @@ impl Project {
         jobs.spawn("open file", move || {
             let read = std::fs::read(&absolute).map(Decoded::from_bytes);
             Box::new(move |core| {
+                let jobs = core.jobs.clone();
                 let Some(project) = core.project_mut(id) else { return };
                 if project.open_generation != generation {
                     return;
                 }
                 match read {
                     Ok(Decoded::Text(text)) => {
-                        project.open_tab(Editor::new(shown, Rope::from_str(&text)));
+                        project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)));
+                        project.reparse_file(&shown, &jobs);
                         if let Some(at) = at {
                             project.go_to(at);
                         }
@@ -615,7 +637,8 @@ impl Project {
                             message: format!("{} isn't valid UTF-8, so it's open read-only.", shown.display()),
                             action: None,
                         });
-                        project.open_tab(Editor::new(shown, Rope::from_str(&text)).read_only());
+                        project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)).read_only());
+                        project.reparse_file(&shown, &jobs);
                         if let Some(at) = at {
                             project.go_to(at);
                         }
@@ -636,4 +659,21 @@ impl Project {
 /// Folders the search for nested configs never looks in.
 fn is_skipped_dir(name: &OsStr) -> bool {
     name == "node_modules" || name == ".git"
+}
+
+/// Parses a file in the background. When the parse lands, the file (which
+/// may have moved to another tab or pane meanwhile) takes it, and the next
+/// parse starts if its text changed while this one ran.
+fn spawn_parse(id: ProjectId, path: PathBuf, job: ParseJob, jobs: &Jobs) {
+    jobs.spawn("parse", move || {
+        let parsed = job.run();
+        Box::new(move |core| {
+            let jobs = core.jobs.clone();
+            let Some(project) = core.project_mut(id) else { return };
+            if let Some(editor) = project.open_editor_mut(&path) {
+                editor.parsed(parsed);
+            }
+            project.reparse_file(&path, &jobs);
+        })
+    });
 }
