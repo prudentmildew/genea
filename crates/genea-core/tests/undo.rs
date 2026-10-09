@@ -67,3 +67,59 @@ fn a_pause_in_typing_ends_an_undo_step() {
     editing.run([Command::Undo]);
     assert_eq!(editing.lines(), ["", ""]);
 }
+
+#[test]
+fn typing_without_a_pause_is_one_undo_step() {
+    let mut editing = open("\n");
+
+    editing.type_text("hello world");
+
+    editing.run([Command::Undo]);
+    assert_eq!(editing.lines(), ["", ""]);
+}
+
+#[test]
+fn a_caret_jump_ends_an_undo_step() {
+    let mut editing = open("ab\n");
+
+    editing.run([Command::MoveCaret(LineEnd)]);
+    editing.type_text("1");
+    editing.run([Command::MoveCaret(LineStart)]);
+    editing.type_text("2");
+    assert_eq!(editing.lines(), ["2ab1", ""]);
+
+    editing.run([Command::Undo]);
+    assert_eq!(editing.lines(), ["ab1", ""]);
+}
+
+#[test]
+fn switching_from_typing_to_deleting_ends_an_undo_step() {
+    let mut editing = open("\n");
+
+    editing.type_text("abc");
+    editing.run([Command::Delete(Left)]);
+    editing.type_text("d");
+    assert_eq!(editing.lines(), ["abd", ""]);
+
+    editing.run([Command::Undo]);
+    assert_eq!(editing.lines(), ["ab", ""], "undoes the typing after the Backspace");
+    editing.run([Command::Undo]);
+    assert_eq!(editing.lines(), ["abc", ""], "undoes the Backspace");
+    editing.run([Command::Undo]);
+    assert_eq!(editing.lines(), ["", ""], "undoes the first typing");
+}
+
+#[test]
+fn backspacing_without_a_pause_is_one_undo_step() {
+    let mut editing = open("hello\n");
+
+    editing.run([Command::MoveCaret(LineEnd)]);
+    for _ in 0..3 {
+        editing.run([Command::Delete(Left)]);
+        editing.host.clock().advance(KEYSTROKE);
+    }
+    assert_eq!(editing.lines(), ["he", ""]);
+
+    editing.run([Command::Undo]);
+    assert_eq!(editing.lines(), ["hello", ""]);
+}
