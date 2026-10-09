@@ -9,6 +9,7 @@ use super::{CaretSelection, Editor};
 use crate::{
     history::{Change, EditKind},
     syntax::{Comment, Language, Syntax, structure},
+    view::Caret,
 };
 
 /// What ⌥↓ goes back through: the selections before each ⌥↑, valid while
@@ -140,6 +141,24 @@ impl Editor {
             }
         }
         self.edit_text(edits, EditKind::Other, now, viewport_rows);
+    }
+
+    /// The bracket at the primary caret (after it, else before it) and its
+    /// match, top to bottom, for the view to highlight.
+    pub(super) fn matched_brackets(&self) -> Vec<Caret> {
+        let Some(tree) = self.syntax.as_ref().and_then(Syntax::tree) else { return Vec::new() };
+        let caret = self.primary().caret;
+        let byte = self.text.char_to_byte(caret);
+        let after = structure::matching_bracket(tree, byte);
+        let before = || (caret > 0).then(|| structure::matching_bracket(tree, self.text.char_to_byte(caret - 1))).flatten();
+        let Some((bracket, matched)) = after.or_else(before) else { return Vec::new() };
+        let mut cells: Vec<Caret> = [bracket.start, matched.start]
+            .into_iter()
+            .filter(|&b| b <= self.text.len_bytes())
+            .map(|b| self.caret_at(self.text.byte_to_char(b)))
+            .collect();
+        cells.sort_by_key(|c| (c.line, c.column));
+        cells
     }
 
     /// ⌥↑: grows every selection to the smallest syntax node (or a block's

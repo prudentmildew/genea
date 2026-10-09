@@ -146,6 +146,11 @@ pub struct EditorView {
     /// Problems in this file on the visible lines, from every source, top
     /// to bottom. A problem spanning lines has one entry per line.
     pub problems: Vec<InlineProblem>,
+    /// The bracket at the primary caret (the one after it, else the one
+    /// before it) and the bracket that matches it, top to bottom; empty
+    /// when the caret isn't at a bracket or it has no match. Brackets in
+    /// strings and comments don't count.
+    pub brackets: Vec<Caret>,
 }
 
 /// Marked text from the IME (a dead key waiting for the next key), shown

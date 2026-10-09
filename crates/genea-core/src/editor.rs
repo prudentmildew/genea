@@ -844,6 +844,7 @@ impl Editor {
             carets,
             preedit,
             problems: Vec::new(),
+            brackets: self.matched_brackets(),
         }
     }
 
