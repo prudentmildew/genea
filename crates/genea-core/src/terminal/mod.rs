@@ -9,11 +9,14 @@
 //! Threads (spec #19, Threading): a reader thread reads the PTY and parses
 //! the output into the [`Term`] under a lock; a writer thread writes typed
 //! input and resizes the PTY. Neither the reads, the writes nor the parsing
-//! happen on the main thread. The reader posts an Apply only when none is
-//! pending, and that Apply copies the visible grid into view state, so a
-//! flood of output is copied at most once per main-thread turn.
+//! happen on the main thread. The visible grid is copied into view state
+//! only when view state is read after new output, so however much a
+//! program prints, it is copied at most once per read: the app reads once
+//! per frame. The reader wakes the main thread only when the last copy has
+//! been taken (or the program asked for something, like a new title).
 
 use std::{
+    cell::{Ref, RefCell},
     ffi::OsStr,
     io::{self, Read, Write},
     path::PathBuf,
@@ -66,8 +69,9 @@ pub(crate) struct Terminal {
     shell: Shell,
     /// Bumped by every start, so a stale session's results are dropped.
     generation: u64,
-    /// What the terminal showed when last copied from the session.
-    screen: Screen,
+    /// What the terminal showed when last copied from the session; copied
+    /// again when read after new output (see [`Terminal::screen`]).
+    screen: RefCell<Screen>,
     /// The running shell's file name, the title until the program sets one.
     shell_name: String,
     /// The title the program set.
@@ -95,7 +99,7 @@ struct Session {
     /// To the writer thread.
     to_pty: mpsc::Sender<ToPty>,
     control: Arc<dyn PtyControl>,
-    /// An Apply with new output is pending.
+    /// The emulator has changed since the screen was last copied.
     dirty: Arc<AtomicBool>,
     /// What the program asked of Genea while its output was parsed.
     requests: Arc<Mutex<Requests>>,
@@ -111,6 +115,12 @@ struct Requests {
     title: Option<Option<String>>,
     /// Text to put on the clipboard (OSC 52).
     copy: Option<String>,
+}
+
+impl Requests {
+    fn is_asked(&self) -> bool {
+        self.title.is_some() || self.copy.is_some()
+    }
 }
 
 impl Drop for Session {
@@ -228,7 +238,7 @@ impl Terminal {
             size: DEFAULT_SIZE,
             shell: Shell::Waiting,
             generation: 0,
-            screen,
+            screen: RefCell::new(screen),
             shell_name: String::new(),
             title: None,
             visible: true,
@@ -291,7 +301,7 @@ impl Terminal {
         let size = Arc::new(Mutex::new(self.size));
         let listener = Listener { to_pty: to_pty.clone(), requests: requests.clone(), size: size.clone() };
         let term = Arc::new(Mutex::new(Term::new(config, &self.size, listener)));
-        let dirty = Arc::new(AtomicBool::new(false));
+        let dirty = Arc::new(AtomicBool::new(true));
 
         let writer_control = control.clone();
         std::thread::Builder::new()
@@ -303,6 +313,7 @@ impl Terminal {
             term: term.clone(),
             control: control.clone(),
             dirty: dirty.clone(),
+            requests: requests.clone(),
             jobs: jobs.clone(),
             project: self.project,
             generation,
@@ -314,16 +325,14 @@ impl Terminal {
         self.shell_name = shell.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         self.title = None;
         self.shell = Shell::Running(Session { term, to_pty, control, dirty, requests, size });
-        self.refresh();
     }
 
-    /// New output was parsed: copy the visible grid, and do what the
-    /// program asked.
+    /// New output was parsed: do what the program asked. The grid is
+    /// copied when view state is next read.
     fn output_arrived(&mut self, generation: u64, host: &dyn Host) {
         if generation != self.generation {
             return;
         }
-        self.refresh();
         let Shell::Running(session) = &self.shell else { return };
         let requests = std::mem::take(&mut *session.requests.lock().unwrap());
         if let Some(title) = requests.title {
@@ -339,18 +348,31 @@ impl Terminal {
         if generation != self.generation {
             return;
         }
-        self.refresh();
+        // The last screen stays.
+        drop(self.screen());
         self.shell = Shell::Exited(exit);
-        self.screen.cursor = None;
+        self.screen.get_mut().cursor = None;
     }
 
-    /// Copies the visible grid from the session.
-    fn refresh(&mut self) {
-        let Shell::Running(session) = &self.shell else { return };
-        // Cleared before the copy: output parsed after it posts again.
-        session.dirty.store(false, Ordering::SeqCst);
-        let term = session.term.lock().unwrap();
-        self.screen = grid::snapshot(&term);
+    /// What the terminal shows, copied from the emulator if it changed
+    /// since the last copy.
+    fn screen(&self) -> Ref<'_, Screen> {
+        if let Shell::Running(session) = &self.shell
+            // Cleared before the copy: output parsed after it wakes the
+            // main thread again.
+            && session.dirty.swap(false, Ordering::SeqCst)
+        {
+            let term = session.term.lock().unwrap();
+            *self.screen.borrow_mut() = grid::snapshot(&term);
+        }
+        self.screen.borrow()
+    }
+
+    /// The emulator changed on the main thread (a resize, a scroll).
+    fn touched(&self) {
+        if let Shell::Running(session) = &self.shell {
+            session.dirty.store(true, Ordering::SeqCst);
+        }
     }
 
     /// A terminal command from the user.
@@ -420,8 +442,9 @@ impl Terminal {
     /// Clears the pane and waits to start a new shell.
     fn restart(&mut self) {
         self.shell = Shell::Waiting;
-        self.screen.lines = blank_lines(self.size);
-        self.screen.cursor = None;
+        let screen = self.screen.get_mut();
+        screen.lines = blank_lines(self.size);
+        screen.cursor = None;
         self.title = None;
     }
 
@@ -441,9 +464,9 @@ impl Terminal {
                 *session.size.lock().unwrap() = size;
                 session.term.lock().unwrap().resize(size);
                 let _ = session.to_pty.send(ToPty::Resize(size.into()));
-                self.refresh();
+                self.touched();
             }
-            _ => self.screen.lines.resize_with(size.rows, blank_line),
+            _ => self.screen.get_mut().lines.resize_with(size.rows, blank_line),
         }
     }
 
@@ -462,7 +485,7 @@ impl Terminal {
             self.send(input::key(key, Modifiers::default(), mode).repeat(count));
         } else if let Shell::Running(session) = &self.shell {
             session.term.lock().unwrap().scroll_display(Scroll::Delta(-rows));
-            self.refresh();
+            self.touched();
         }
     }
 
@@ -473,9 +496,9 @@ impl Terminal {
             return;
         }
         let _ = session.to_pty.send(ToPty::Input(bytes));
-        if self.screen.scrolled_back > 0 {
+        if self.screen().scrolled_back > 0 {
             session.term.lock().unwrap().scroll_display(Scroll::Bottom);
-            self.refresh();
+            self.touched();
         }
     }
 
@@ -486,7 +509,7 @@ impl Terminal {
             Shell::Exited(exit) => TerminalStatus::Exited { code: exit.code },
             Shell::Failed(message) => TerminalStatus::Failed(message.clone()),
         };
-        let screen = &self.screen;
+        let screen = self.screen();
         TerminalView {
             visible: self.visible,
             focused: self.focused,
@@ -511,6 +534,7 @@ struct Reader {
     term: Arc<Mutex<Term<Listener>>>,
     control: Arc<dyn PtyControl>,
     dirty: Arc<AtomicBool>,
+    requests: Arc<Mutex<Requests>>,
     jobs: Jobs,
     project: ProjectId,
     generation: u64,
@@ -532,7 +556,10 @@ impl Reader {
             for chunk in buffer[..n].chunks(PARSE_CHUNK) {
                 processor.advance(&mut *self.term.lock().unwrap(), chunk);
             }
-            if !self.dirty.swap(true, Ordering::SeqCst) {
+            // Wake the main thread if it has taken the last copy, or if the
+            // program asked for something.
+            let asked = self.requests.lock().unwrap().is_asked();
+            if !self.dirty.swap(true, Ordering::SeqCst) || asked {
                 self.jobs.busy().finish(Box::new(move |core| {
                     let host = core.host.clone();
                     if let Some(project) = core.project_mut(id) {
