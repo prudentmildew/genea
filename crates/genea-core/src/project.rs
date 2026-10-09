@@ -204,6 +204,7 @@ impl Project {
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
+        notices.extend(self.environment.iter().flat_map(Environment::notices));
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

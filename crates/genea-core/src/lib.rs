@@ -36,6 +36,7 @@ mod workbench;
 
 pub use command::{CaretMove, Command};
 pub use editor::MAX_VISIBLE_COLUMNS;
+pub use environment::LOGIN_SHELL_TIMEOUT;
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};

@@ -8,9 +8,9 @@
 //! would export. Processes are started through `Workbench::spawn`, the way
 //! the terminal, scripts and language servers start theirs.
 
-use std::{io::Read, path::Path};
+use std::{io::Read, path::Path, time::Duration};
 
-use genea_core::{ProcessSpec, ProjectId, Workbench};
+use genea_core::{LOGIN_SHELL_TIMEOUT, ProcessSpec, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 /// A host whose launch environment names `/bin/zsh` as the login shell,
@@ -67,6 +67,32 @@ fn a_process_sees_the_variables_of_the_login_shell() {
     assert_eq!(var(&vars, "PATH").as_deref(), Some("/opt/mine/bin:/usr/bin:/bin"));
     // The shell's environment replaces the one Genea was started with.
     assert_eq!(var(&vars, "FROM_LAUNCH"), None);
+}
+
+#[test]
+fn a_login_shell_that_hangs_times_out_to_the_launch_environment_with_a_notice() {
+    let host = host();
+    host.processes().script("zsh", |_, io| {
+        while !io.killed() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        1
+    });
+    let fixture = FixtureProject::new().file("src/main.ts", "").build();
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    host.clock().advance(LOGIN_SHELL_TIMEOUT);
+    workbench.settle().unwrap();
+
+    let notices = workbench.project(project).unwrap().notices;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(
+        notices[0].message,
+        "Your login shell (/bin/zsh) didn't finish within 5 s, so processes get the environment Genea was started with."
+    );
+    let vars = printenv(&workbench, project);
+    assert_eq!(var(&vars, "FROM_LAUNCH").as_deref(), Some("launch"));
 }
 
 #[test]
