@@ -527,6 +527,14 @@ fn wire(controller: &WindowController) {
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
+    window.on_install_dependencies(menu(Command::InstallDependencies));
+    window.on_terminal_tab_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.dispatch(&mut app.workbench, Command::SelectTerminalTab(index));
+        });
+    });
     window.on_structural(move |action| {
         let command = match action {
             StructuralAction::ToggleLineComment => Command::ToggleLineComment,

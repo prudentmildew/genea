@@ -49,7 +49,8 @@ use, and nothing else:
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
-| Terminal | `ProjectView::terminal` (`TerminalView`); `Command::ToggleTerminal`, `FocusTerminal`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | One shell per project (`src/terminal/`, below). |
+| Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | The shell tab, plus a tab per package-manager command (`src/terminal/`, below). |
+| Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
@@ -362,11 +363,30 @@ opening, after every command and after every background result.
 
 ## The terminal
 
-`genea-core/src/terminal/` (ticket #38): one shell per project, the
-user's `$SHELL -l` in the project root with the project environment,
-`TERM=xterm-256color` and `COLORTERM=truecolor`, on a PTY from
-`host.ptys()`, emulated by `alacritty_terminal` (only its `Term` and the
-`vte` parser; Genea runs the PTY itself). Scrollback is 10,000 lines.
+`genea-core/src/terminal/` (ticket #38): a pane of tabs. The first is
+the shell, the user's `$SHELL -l` in the project root; the others run a
+command (`Launch::PackageManager`, ticket #41). Every tab's program gets
+the project environment, `TERM=xterm-256color` and `COLORTERM=truecolor`,
+on a PTY from `host.ptys()`, emulated by `alacritty_terminal` (only its
+`Term` and the `vte` parser; Genea runs the PTY itself). Scrollback is
+10,000 lines. Commands act on the showing tab (`TerminalView::active_tab`);
+the size and focus are the pane's. A tab's programs start when
+`Project::start_terminal_when_ready` sees the environment ready, and each
+start takes a pane-wide generation, by which its session's Applies find
+their tab. Return restarts an ended shell; a command's tab stays as it
+ended until it is run again.
+
+- **Install dependencies** (ticket #41, ADR 0005): `src/dependencies.rs`
+  stats the root `node_modules` at open and whenever the watcher reports a
+  path at or under it. While it is missing (and the package manager is one
+  Genea runs, and no install is under way), a notice offers
+  `Command::InstallDependencies`, also in the File menu. It runs the
+  pinned package manager's executable from the store
+  (`Toolchain::package_manager_program`) with `install` in its own tab
+  (`Terminal::run_package_manager`): a running install is just shown, an
+  ended one runs again in its tab. Dispatched before `package.json` is
+  read (the new-project flow), it waits for it. #40's scripts can run the
+  same way, with their own arguments and folder.
 
 - Threads: a reader thread reads the PTY and parses into the `Term` under a
   mutex, at most 16 KB per lock hold; a writer thread writes input and
