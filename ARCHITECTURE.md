@@ -84,7 +84,22 @@ use, and nothing else:
   the main thread, minus the config's `exclude` (a `.gitignore` matcher
   applied when the rows are built, so `exclude` changes need no disk read).
   The finder and search should take their file list from here and hide the
-  same paths; hidden files still open with `OpenFile`.
+  same paths; hidden files still open with `OpenFile`. `FileIndex::file_list`
+  is that list (relative paths, `exclude` applied, cached until
+  `FileIndex::version` changes).
+- **The finder** (`src/finder.rs` for matching, `src/project/finder.rs` for
+  the project's side, ticket #33): `Command::OpenFinder(FinderMode)` opens
+  the overlay (`ProjectView::finder`); each `SetFinderQuery` starts a
+  background job that matches with `nucleo-matcher` (generation counter for
+  stale results). After every Apply, `Workbench::run` calls
+  `Project::refresh_finder`, which matches again if the file index's version
+  moved, so results follow files on disk and `exclude`. Recent files
+  (`Project::recent_files`, in memory) are recorded when a file opens or
+  its tab is selected. Actions (`src/action.rs`) are the commands a user
+  can run by name: a new menu item or shortcut that is a core command gets
+  an `Action` variant with its name and shortcut label (keep the labels in
+  step with `genea-view`'s menus and `src/keys.rs`). Symbols (#47) add a
+  `FinderItemKind` and a mode.
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
