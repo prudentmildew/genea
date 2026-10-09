@@ -69,6 +69,11 @@ impl RecentProjects {
         }
     }
 
+    /// The project roots, most recent first.
+    pub(crate) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
     pub(crate) fn view(&self) -> Vec<RecentProject> {
         self.roots
             .iter()

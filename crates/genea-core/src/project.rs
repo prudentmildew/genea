@@ -257,6 +257,11 @@ impl Project {
         &self.root
     }
 
+    /// Shows a message in the project's window.
+    pub(crate) fn notify(&mut self, message: String) {
+        self.notices.push(Notice { message, action: None });
+    }
+
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
         match command {

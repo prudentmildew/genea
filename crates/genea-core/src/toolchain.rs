@@ -15,7 +15,7 @@
 //! A folder without a root `package.json` has no toolchain and downloads
 //! nothing.
 
-use std::{fs, io, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, fs, io, path::PathBuf, sync::Arc};
 
 use genea_host::SharedHost;
 use genea_toolchain::{Installed, Pin, Pins, Progress, Request, Store, Tool, Version, pins};
@@ -577,6 +577,67 @@ impl Slot {
         let version = want.as_ref().map(|(_, request)| request.to_string()).unwrap_or_default();
         Slot { name: name.to_owned(), want, defaulted, version, state: SlotState::Resolving, generation: 0 }
     }
+}
+
+/// "Remove unused toolchains": deletes, in the background, every store
+/// version that no recent or open project uses, and tells project `id` what
+/// went. A project uses what its root `package.json` pins now: an exact
+/// version, the newest stored match of a range, or Genea's default for a
+/// role it doesn't pin. What an open project is running stays too.
+pub(crate) fn remove_unused(core: &mut Core, id: ProjectId) {
+    let mut roots: Vec<PathBuf> = core.recent_roots().to_vec();
+    let mut keep: HashSet<(Tool, Version)> = HashSet::new();
+    for project in core.open_projects() {
+        roots.push(project.root().to_owned());
+        let running = project.toolchain.iter().flat_map(Toolchain::installed);
+        keep.extend(running.map(|installed| (installed.tool, installed.version.clone())));
+    }
+    let store = core.toolchain.store.clone();
+    core.jobs.spawn("remove unused toolchains", move || {
+        for root in roots {
+            let Ok(text) = fs::read_to_string(root.join("package.json")) else { continue };
+            let Ok(pins) = pins::read(&text) else { continue };
+            for (pin, default) in [(pins.runtime, Tool::Node), (pins.package_manager, Tool::Pnpm)] {
+                match pin {
+                    Pin::Unpinned => {
+                        keep.insert((default, default.default_version()));
+                    }
+                    Pin::Pinned { tool, request } => {
+                        if let Some(version) = request.newest_match(&store.installed(tool)) {
+                            keep.insert((tool, version.clone()));
+                        }
+                    }
+                    Pin::Foreign(_) | Pin::Invalid(_) => {}
+                }
+            }
+        }
+        let (mut removed, mut failed) = (Vec::new(), Vec::new());
+        for tool in Tool::ALL {
+            let mut versions = store.installed(tool);
+            versions.sort();
+            for version in versions.into_iter().filter(|v| !keep.contains(&(tool, v.clone()))) {
+                match store.remove(tool, &version) {
+                    Ok(()) => removed.push(format!("{tool} {version}")),
+                    Err(error) => failed.push(format!("{tool} {version} ({error})")),
+                }
+            }
+        }
+        let mut message = match (removed.len(), failed.is_empty()) {
+            (0, true) => "There are no unused toolchain versions to remove.".to_owned(),
+            (0, false) => String::new(),
+            (1, _) => format!("Removed 1 unused toolchain version: {}. ", removed[0]),
+            (n, _) => format!("Removed {n} unused toolchain versions: {}. ", removed.join(", ")),
+        };
+        if !failed.is_empty() {
+            message.push_str(&format!("Couldn't remove {}.", failed.join(", ")));
+        }
+        let message = message.trim_end().to_owned();
+        Box::new(move |core| {
+            if let Some(project) = core.project_mut(id) {
+                project.notify(message);
+            }
+        })
+    });
 }
 
 fn toolchain_mut(core: &mut Core, id: ProjectId) -> Option<&mut Toolchain> {
