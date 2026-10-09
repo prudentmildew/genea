@@ -265,6 +265,9 @@ impl WindowController {
             self.surfaces[pane].sync(window, editor);
         }
         crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
+        if let Some(editor) = editor.filter(|e| !e.lines.is_empty()) {
+            crate::journal::mark_shown(&editor.path);
+        }
         if view.focused_pane != self.focused_pane {
             self.focused_pane = view.focused_pane;
             window.invoke_refocus();
