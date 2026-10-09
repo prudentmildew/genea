@@ -16,6 +16,9 @@ _Avoid_: supported language (ambiguous; basic file types are also "supported")
 
 **Language intelligence**: Understanding of code meaning: completions, diagnostics, go-to-definition, find references, rename and refactors. Distinct from syntax highlighting.
 
+**Project check**: A whole-project type check the user runs on demand. Its results are kept until the next project check; open files show live diagnostics instead.
+_Avoid_: build, compile
+
 **Toolchain**: The set of tools Genea uses to install, run, build, test, lint and format a project, one tool per toolchain role.
 
 **Toolchain role**: One job within the toolchain: runtime, package manager, bundler/dev server, test runner, linter/formatter.
