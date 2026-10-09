@@ -52,6 +52,7 @@ export component ProjectWindow inherits Window {
     in property <bool> search-status-error;
     in property <string> status-encoding;
     in property <string> status-line-ending;
+    in property <string> status-indentation;
     in property <string> status-notice-action;
     in property <string> status-toolchain;
     in property <string> status-update;
@@ -767,6 +768,7 @@ export component ProjectWindow inherits Window {
             caret: root.status-caret;
             encoding: root.status-encoding;
             line-ending: root.status-line-ending;
+            indentation: root.status-indentation;
             update: root.status-update;
             large-file: root.status-large-file;
             loading: root.status-loading;
