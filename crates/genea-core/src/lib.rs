@@ -26,6 +26,7 @@ mod disk;
 mod editor;
 mod environment;
 mod files;
+mod git;
 mod grid;
 mod history;
 mod jobs;
@@ -36,6 +37,7 @@ mod recent;
 mod review;
 mod syntax;
 mod templates;
+mod terminal;
 mod text;
 mod toolchain;
 mod update;
@@ -43,7 +45,7 @@ mod view;
 mod watcher;
 mod workbench;
 
-pub use command::{CaretMove, Command};
+pub use command::{CaretMove, Command, Modifiers, MouseAction, MouseButton, TerminalKey};
 pub use config::{Config, TerminalPosition, Theme};
 pub use command::{CloseChoice, ConflictChoice};
 pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
@@ -56,9 +58,12 @@ pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, HighlightSpan, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
-    ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
-    ToolchainView, VisibleLine, WelcomeView,
+    Caret, EditorView, Fold, GutterMark, HighlightSpan, HunkView, InlineProblem, LeftColumnView, LineChange, Notice,
+    NoticeAction, Preedit, ProblemItem, ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption,
+    ToolchainPicker, ToolchainPickerKind, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ChangeItem, ChangeKind, ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
+pub use view::{
+    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
+};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

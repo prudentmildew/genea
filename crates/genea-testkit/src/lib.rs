@@ -20,9 +20,11 @@
 mod download_server;
 mod fixture;
 mod host;
+mod pty;
 mod tools;
 
 pub use download_server::DownloadServer;
 pub use fixture::{FixtureBuilder, FixtureProject};
 pub use host::{FakeProcess, ManualClock, ScriptedDownloads, ScriptedProcesses, TestClipboard, TestHost};
+pub use pty::{FakePty, ScriptedPtys};
 pub use tools::FakeTools;

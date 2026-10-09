@@ -21,16 +21,29 @@ export global Theme {
     out property <string> editor-font: "Menlo";
     out property <length> editor-font-size: 13px;
     out property <length> line-height: 15.6px;
-    out property <length> gutter-width: 56px;
+    // Line numbers, then git markers (#56), then fold markers (#25).
+    out property <length> gutter-width: 64px;
 
     out property <color> editor-background: root.dark ? #0d1117 : #ffffff;
     out property <color> editor-foreground: root.dark ? #e6edf3 : #24292f;
     out property <color> gutter-foreground: root.dark ? #6e7681 : #9a9a9a;
     out property <color> caret: root.dark ? #58a6ff : #1f6feb;
     out property <color> selection: root.dark ? #264f78 : #b6d6fd;
+    // The bracket at the caret and its match (ticket #25).
+    out property <color> bracket-match: root.dark ? #3fb95033 : #2da44e26;
+    out property <color> bracket-match-border: root.dark ? #3fb950aa : #2da44e99;
+    // A collapsed fold's placeholder after its first line.
+    out property <color> fold-placeholder: root.dark ? #30363d : #eaeef2;
     // Underlines and markers for problems.
     out property <color> error: root.dark ? #f85149 : #cf222e;
     out property <color> warning: root.dark ? #d29922 : #9a6700;
+    // Git gutter markers (ticket #56): lines added, modified and deleted
+    // against HEAD.
+    out property <color> git-added: root.dark ? #3fb950 : #1a7f37;
+    out property <color> git-modified: root.dark ? #58a6ff : #0969da;
+    out property <color> git-deleted: root.dark ? #f85149 : #cf222e;
+    // The background of a change's lines at HEAD in its popover.
+    out property <color> git-head-background: root.dark ? #2d1517 : #ffebe9;
 
     out property <color> chrome-background: root.dark ? #161b22 : #f6f8fa;
     out property <color> chrome-border: root.dark ? #30363d : #d0d7de;
@@ -40,6 +53,22 @@ export global Theme {
     out property <color> chrome-highlight: root.dark ? #21262d : #eaeef2;
     out property <color> link: root.dark ? #4493f8 : #0969da;
     out property <length> chrome-font-size: 12px;
+
+    // The terminal (ticket #38), indexed by `TermRun.fg-index` and
+    // `bg-index` (src/terminal.rs): its foreground, its background, then
+    // the 16 ANSI colours (black, red, green, yellow, blue, magenta, cyan,
+    // white, then the bright ones).
+    out property <[color]> terminal-palette: root.dark ? [
+        #e6edf3, #0d1117,
+        #484f58, #ff7b72, #3fb950, #d29922, #58a6ff, #bc8cff, #39c5cf, #b1bac4,
+        #6e7681, #ffa198, #56d364, #e3b341, #79c0ff, #d2a8ff, #56d4dd, #ffffff,
+    ] : [
+        #24292f, #ffffff,
+        #24292f, #cf222e, #116329, #4d2d00, #0969da, #8250df, #1b7c83, #6e7781,
+        #57606a, #a40e26, #1a7f37, #633c01, #218bff, #a475f9, #3192aa, #8c959f,
+    ];
+    // The block cursor, see-through so the character under it shows.
+    out property <color> terminal-cursor: root.dark ? #58a6ff80 : #1f6feb66;
 
     // Highlight colours, indexed by `Run.highlight`. The order is
     // `highlight_index` in src/surface.rs: 0 is plain text, then one entry per

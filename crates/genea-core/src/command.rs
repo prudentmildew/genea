@@ -171,6 +171,47 @@ pub enum Command {
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
 
+    // Structural editing (ticket #25).
+    /// ⌘/: comments out the lines the carets and selections are on, or
+    /// uncomments them if every one that isn't blank is commented. Uses the
+    /// language's line comment (`//`, `#`), or wraps each line in its block
+    /// comment (`/* */` in CSS, `<!-- -->` in HTML and Markdown). A
+    /// selection that ends at the start of a line leaves that line out.
+    ToggleLineComment,
+    /// ⌥↑: grows each selection to the smallest syntax node around it (the
+    /// inside of a block comes before the block). An empty selection grows
+    /// to the node at its caret.
+    ExpandSelection,
+    /// ⌥↓: undoes the last `ExpandSelection`, step by step, as long as
+    /// nothing else changed the selection or the text in between.
+    ShrinkSelection,
+    /// A click on a fold marker in the gutter: collapses the fold region
+    /// that starts on `line` (0-based, in the file), or expands it if it is
+    /// collapsed. A collapsed region's lines are hidden, keeping its first
+    /// line and the line its closing bracket or tag starts.
+    ToggleFold { line: usize },
+    /// ⌥⌘−: collapses the region that starts on the primary caret's line,
+    /// or else the innermost expanded region around the caret. Carets in
+    /// the hidden lines move to the region's start.
+    CollapseFold,
+    /// ⌥⌘+: expands the collapsed regions on the primary caret's line.
+    ExpandFold,
+    /// Collapses every fold region in the file.
+    CollapseAllFolds,
+    /// Expands every collapsed region.
+    ExpandAllFolds,
+
+    // Git (ticket #56).
+    /// A click on a git gutter marker of the focused file: shows the change
+    /// on that line (`EditorView::hunk`) with its lines at HEAD. A line
+    /// without a marker shows nothing.
+    ShowHunk { line: usize },
+    /// Closes the shown change (Esc, a click outside it).
+    HideHunk,
+    /// The shown change's Rollback: puts its lines at HEAD back in the
+    /// buffer, as an edit that Undo reverts, and closes it. Does nothing
+    /// without a shown change.
+    RollbackHunk,
     /// Answers an open file's conflict bar (`EditorView::conflict`): its
     /// file changed on disk while it had unsaved edits. The path is as in
     /// `EditorView::path`.
@@ -188,6 +229,94 @@ pub enum Command {
     KeepAllChanges,
     /// Revert for every file in Changes that can be reverted.
     RevertAllChanges,
+
+    // The terminal pane (ticket #38).
+    /// ⌥F12: shows the terminal pane and focuses it; if it is showing and
+    /// focused, collapses it and gives the editor the focus back. The
+    /// shell keeps running while the pane is collapsed.
+    ToggleTerminal,
+    /// Gives the terminal the keyboard focus (a click in it). The editor
+    /// gets it back with `FocusPane` or `SelectTab`.
+    FocusTerminal,
+    /// Tells the core how many rows and columns of cells fit in the
+    /// terminal pane. The shell is told too (SIGWINCH), and the grid
+    /// reflows.
+    SetTerminalSize { rows: usize, columns: usize },
+    /// Types text into the terminal: a key press or an IME commit.
+    TerminalText(String),
+    /// The IME's marked text in the terminal while a dead key composes,
+    /// drawn at the cursor but not sent. An empty string ends it; the
+    /// composed text then arrives as `TerminalText`.
+    TerminalPreedit(String),
+    /// A key that isn't plain text, or one with ⌃ or ⌥ held: sent to the
+    /// program the way xterm sends it. Return after the shell has exited
+    /// (or failed to start) starts a new one.
+    TerminalKey(TerminalKey, Modifiers),
+    /// The scroll wheel over the terminal, in rows (negative is up, towards
+    /// older output), over the cell at `line` and `column`. It scrolls the
+    /// scrollback, unless the program takes it: a program that reports the
+    /// mouse gets wheel events, and a full-screen one gets ↑ and ↓.
+    ScrollTerminal { rows: i32, line: usize, column: usize },
+    /// ⌘V in the terminal: types the clipboard's text, as one bracketed
+    /// paste if the program asked for that (so a shell doesn't run each
+    /// line as it arrives).
+    TerminalPaste,
+    /// A mouse button or movement over the terminal's cell at `line` and
+    /// `column` (0-based visible row and grid column). Reported to a
+    /// program that asked for the mouse, in the encoding it chose;
+    /// otherwise nothing happens.
+    TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
+}
+
+/// A key for the terminal that [`Command::TerminalText`] can't carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalKey {
+    Enter,
+    Backspace,
+    Tab,
+    Escape,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+    /// F1 to F12.
+    F(u8),
+    /// A character key with ⌃ or ⌥ held (⌃C is `Char('c')` with `ctrl`).
+    Char(char),
+}
+
+/// What the mouse did over the terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseAction {
+    Press(MouseButton),
+    Release(MouseButton),
+    /// Moved with the button down.
+    Drag(MouseButton),
+    /// Moved with no button down.
+    Move,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// Modifier keys held with a terminal key or mouse event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    /// ⌥, which the terminal treats as Meta.
+    pub alt: bool,
+    /// ⌃.
+    pub ctrl: bool,
 }
 
 /// What to do when an open file with unsaved edits changed on disk.

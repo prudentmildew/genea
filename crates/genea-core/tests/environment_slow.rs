@@ -14,7 +14,7 @@ use std::{
 };
 
 use genea_core::{ProcessSpec, Workbench};
-use genea_host::{Clipboard, Clock, Downloads, Host, Processes, RealHost};
+use genea_host::{Clipboard, Clock, Downloads, Host, Processes, Ptys, RealHost};
 use genea_testkit::FixtureProject;
 
 /// The real host, but with its own support folder so the test leaves the
@@ -31,6 +31,10 @@ impl Host for RealShellHost {
 
     fn processes(&self) -> &dyn Processes {
         self.real.processes()
+    }
+
+    fn ptys(&self) -> &dyn Ptys {
+        self.real.ptys()
     }
 
     fn downloads(&self) -> &dyn Downloads {
