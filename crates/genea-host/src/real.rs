@@ -6,7 +6,7 @@ use std::{
     io::{self, Write},
     process::Stdio,
     sync::{Arc, Condvar, Mutex, OnceLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::{
@@ -89,6 +89,10 @@ impl Clock for SystemClock {
         queue.heap.push(Reverse((Instant::now() + delay, id)));
         queue.callbacks.insert(id, fire);
         timers.changed.notify_one();
+    }
+
+    fn system_time(&self) -> SystemTime {
+        SystemTime::now()
     }
 }
 

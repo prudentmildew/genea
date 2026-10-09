@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use genea_host::{
@@ -77,6 +77,8 @@ impl Host for TestHost {
 ///
 /// Pending timers are not background work: `Workbench::settle` doesn't wait
 /// for them. Advance the clock, then settle.
+///
+/// Its wall-clock time starts at [`ManualClock::epoch`] and moves with it.
 pub struct ManualClock {
     start: Instant,
     state: Mutex<ClockState>,
@@ -96,6 +98,11 @@ impl Default for ManualClock {
 }
 
 impl ManualClock {
+    /// The wall-clock time a new manual clock starts at: 2026-01-01 00:00 UTC.
+    pub fn epoch() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_767_225_600)
+    }
+
     /// Moves time forward, firing every timer that comes due, in deadline
     /// order and on this thread.
     pub fn advance(&self, by: Duration) {
@@ -146,6 +153,10 @@ impl Clock for ManualClock {
         state.next_id += 1;
         let at = state.elapsed + delay;
         state.timers.push((at, id, fire));
+    }
+
+    fn system_time(&self) -> SystemTime {
+        Self::epoch() + self.state.lock().unwrap().elapsed
     }
 }
 
@@ -326,6 +337,15 @@ mod tests {
 
         host.clock().advance(Duration::from_millis(50));
         assert_eq!(*fired.lock().unwrap(), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn the_manual_clocks_wall_time_starts_at_its_epoch_and_moves_with_it() {
+        let host = TestHost::new();
+        assert_eq!(Host::clock(&host).system_time(), ManualClock::epoch());
+
+        host.clock().advance(Duration::from_secs(90));
+        assert_eq!(Host::clock(&host).system_time(), ManualClock::epoch() + Duration::from_secs(90));
     }
 
     #[test]

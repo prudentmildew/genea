@@ -137,3 +137,48 @@ fn a_running_genea_checks_at_most_once_a_day() {
     assert_eq!(host.downloads().requests().len(), 2);
     assert_eq!(workbench.update_notice().map(|n| n.version), Some("0.2.0".into()));
 }
+
+#[test]
+fn a_restart_within_a_day_doesnt_check_again_but_keeps_the_notice() {
+    let host = TestHost::new();
+    host.downloads().serve(RELEASES_URL, release("v0.2.0"));
+    let state = state_dir();
+    let mut first_run = Workbench::new(host.shared());
+    first_run.start_update_checks(check("0.1.0", &state));
+    host.clock().advance(MINUTE);
+    first_run.settle().unwrap();
+    drop(first_run);
+
+    host.clock().advance(HOUR);
+    let mut second_run = Workbench::new(host.shared());
+    second_run.start_update_checks(check("0.1.0", &state));
+    host.clock().advance(MINUTE);
+    second_run.settle().unwrap();
+
+    assert_eq!(host.downloads().requests().len(), 1);
+    assert_eq!(second_run.update_notice().map(|n| n.version), Some("0.2.0".into()));
+
+    host.clock().advance(23 * HOUR);
+    second_run.settle().unwrap();
+    assert_eq!(host.downloads().requests().len(), 2);
+}
+
+#[test]
+fn a_restart_after_updating_drops_the_notice() {
+    let host = TestHost::new();
+    host.downloads().serve(RELEASES_URL, release("v0.2.0"));
+    let state = state_dir();
+    let mut first_run = Workbench::new(host.shared());
+    first_run.start_update_checks(check("0.1.0", &state));
+    host.clock().advance(MINUTE);
+    first_run.settle().unwrap();
+    drop(first_run);
+
+    let mut updated = Workbench::new(host.shared());
+    updated.start_update_checks(check("0.2.0", &state));
+    host.clock().advance(MINUTE);
+    updated.settle().unwrap();
+
+    assert_eq!(host.downloads().requests().len(), 1);
+    assert_eq!(updated.update_notice(), None);
+}
