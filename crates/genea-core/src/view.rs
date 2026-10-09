@@ -6,7 +6,7 @@
 //! freely. They are snapshots: re-read them after a command or a change
 //! notification.
 
-use std::path::PathBuf;
+use std::{ops::Range, path::PathBuf};
 
 /// One open project, as its window shows it.
 #[derive(Clone, Debug, PartialEq)]
@@ -52,6 +52,10 @@ pub struct VisibleLine {
     /// The text as laid out on the grid: no line ending, tabs expanded to
     /// spaces, cut off after [`crate::MAX_VISIBLE_COLUMNS`] columns.
     pub text: String,
+    /// Selected display columns, left to right. When a selection goes on
+    /// past the end of the line, its range takes one more column for the
+    /// line break.
+    pub selections: Vec<Range<usize>>,
 }
 
 /// The caret's grid cell.

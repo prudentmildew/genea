@@ -19,8 +19,14 @@ pub enum Command {
     /// Scrolls the editor by a number of rows (fractional for smooth
     /// trackpad scrolling; positive is down). The caret doesn't move.
     ScrollBy { rows: f64 },
-    /// Moves the caret, scrolling it into view.
+    /// Moves the caret, scrolling it into view. A selection collapses:
+    /// `Left` and `Right` go to its start and end.
     MoveCaret(CaretMove),
+    /// Moves the caret and extends the selection to it (the movement with
+    /// ⇧ held).
+    Select(CaretMove),
+    /// ⌘A: selects the whole file, with the caret at its end.
+    SelectAll,
     /// Puts the caret at a grid cell (0-based line and display column), as a
     /// click does: at the last text position at or before the cell, so the
     /// view rounds a click to the nearest cell boundary first. Cells past the
@@ -40,7 +46,7 @@ pub enum Command {
     Save,
 }
 
-/// Caret movements without a selection.
+/// Caret movements, for moving, selecting and deleting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaretMove {
     Left,

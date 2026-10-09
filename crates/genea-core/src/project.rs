@@ -64,6 +64,16 @@ impl Project {
                     editor.move_caret(movement, false, self.viewport_rows);
                 }
             }
+            Command::Select(movement) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.move_caret(movement, true, self.viewport_rows);
+                }
+            }
+            Command::SelectAll => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_all(self.viewport_rows);
+                }
+            }
             Command::PlaceCaret { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, self.viewport_rows);

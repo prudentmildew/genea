@@ -3,7 +3,7 @@
 //! Read-only for now (ticket #20). The editing tickets add the edit path,
 //! undo, selections and syntax here or in crates next to it.
 
-use std::path::PathBuf;
+use std::{ops::Range, path::PathBuf};
 
 use ropey::Rope;
 use unicode_width::UnicodeWidthChar;
@@ -60,10 +60,22 @@ impl Editor {
     /// Moves the caret. With `extend`, the selection's anchor stays put, so
     /// the selection grows or shrinks; without, the selection collapses.
     pub(crate) fn move_caret(&mut self, movement: CaretMove, extend: bool, viewport_rows: f64) {
-        self.move_head(movement, viewport_rows);
+        let (start, end) = self.selection();
+        match movement {
+            CaretMove::Left if !extend && start != end => (self.caret, self.goal_column) = (start, None),
+            CaretMove::Right if !extend && start != end => (self.caret, self.goal_column) = (end, None),
+            _ => self.move_head(movement, viewport_rows),
+        }
         if !extend {
             self.anchor = self.caret;
         }
+        self.reveal_caret(viewport_rows);
+    }
+
+    pub(crate) fn select_all(&mut self, viewport_rows: f64) {
+        self.anchor = 0;
+        self.caret = self.text.len_chars();
+        self.goal_column = None;
         self.reveal_caret(viewport_rows);
     }
 
@@ -224,7 +236,13 @@ impl Editor {
         let line_count = self.text.len_lines();
         let first = (self.scroll_top.floor() as usize).min(line_count);
         let end = ((self.scroll_top + viewport_rows).ceil() as usize).min(line_count);
-        let lines = (first..end).map(|index| VisibleLine { index, text: self.grid_text(index) }).collect();
+        let lines = (first..end)
+            .map(|index| VisibleLine {
+                index,
+                text: self.grid_text(index),
+                selections: self.selected_columns(index).into_iter().collect(),
+            })
+            .collect();
         let caret = Caret { line: self.text.char_to_line(self.caret), column: self.caret_display_column() };
         EditorView {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -236,6 +254,21 @@ impl Editor {
             lines,
             caret,
         }
+    }
+
+    /// The display columns of `line` the selection covers, if any.
+    fn selected_columns(&self, line: usize) -> Option<Range<usize>> {
+        let (start, end) = self.selection();
+        let line_start = self.text.line_to_char(line);
+        let text_end = line_start + self.line_len(line);
+        let next_line = line_start + self.text.line(line).len_chars();
+        if start == end || end <= line_start || start >= next_line {
+            return None;
+        }
+        let columns = |to: usize| display_columns(self.text.slice(line_start..to).chars());
+        let from = columns(start.max(line_start));
+        let to = columns(end.min(text_end)) + usize::from(end > text_end);
+        Some(from..to)
     }
 
     /// A line as laid out on the grid: tabs expanded, no line ending, cut
