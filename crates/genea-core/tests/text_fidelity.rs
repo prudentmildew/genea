@@ -110,6 +110,25 @@ fn a_valid_utf8_file_is_editable() {
     assert_eq!(editor.lines[0].text, "let café = 1;");
 }
 
+#[test]
+fn a_shell_script_and_a_dockerfile_open_as_editable_plain_text() {
+    for (path, text, first_line) in [
+        ("scripts/build.sh", "#!/bin/sh\nset -eu\n", "#!/bin/sh"),
+        ("Dockerfile", "FROM node:24\nRUN pnpm install\n", "FROM node:24"),
+    ] {
+        let (fixture, mut workbench, project) = open(path, text);
+
+        let editor = view(&workbench, project).editor.unwrap_or_else(|| panic!("{path} opens"));
+        assert!(!editor.read_only, "{path}");
+        assert_eq!(editor.lines[0].text, first_line);
+
+        workbench.dispatch(project, Command::InsertText("# ".into()));
+        workbench.dispatch(project, Command::Save);
+        workbench.settle().unwrap();
+        assert_eq!(fixture.read(path), format!("# {text}"));
+    }
+}
+
 /// The start of a PNG: binary, with NUL bytes early on.
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x10\x00\x00\x00\x10\x08\x06\x00\x00\x00";
 
