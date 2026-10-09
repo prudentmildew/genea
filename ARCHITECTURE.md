@@ -64,11 +64,16 @@ use, and nothing else:
 
 ## The host boundary
 
-`genea_host::Host` provides `clock()`, `processes()` and `downloads()`.
+`genea_host::Host` provides `clock()`, `processes()`, `downloads()` and
+`clipboard()`.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
   idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
   stack.
+- The clipboard is the one effect the core uses on the main thread (Cut,
+  Copy and Paste are synchronous edits). The pasteboard lives in AppKit,
+  which no core crate may link, so `genea-view` supplies it through
+  `RealHost::with_clipboard` (`src/pasteboard.rs`).
 - `genea_testkit::TestHost`: `ManualClock::advance` fires due timers;
   `ScriptedProcesses::script("tsc", |spec, io| …)` plays a program on a
   thread with real pipes (unscripted programs fail with `NotFound`) and
@@ -121,6 +126,11 @@ chrome, native menus via muda (Slint's `MenuBar`).
   precision.
 - `src/keys.rs`: the keymap (WebStorm macOS). `src/dialogs.rs`: native
   NSOpenPanels.
+- Keys and text reach the surface through a hidden, focused `TextInput`
+  (ADR 0004) whose `key-pressed` accepts every key; IME commits and the
+  preedit go to the core as `InsertText` and `SetPreedit`. `src/blink.rs`
+  stops that `TextInput`'s cursor-blink timer, which would otherwise repaint
+  an idle window twice a second.
 
 Rules: push to Slint only on change. Use no repeating timers (the caret is
 steady). Install no rendering notifier or run-loop observer unless the

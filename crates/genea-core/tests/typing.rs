@@ -44,6 +44,26 @@ fn typing_inserts_text_at_the_caret() {
 }
 
 #[test]
+fn typing_nothing_leaves_the_file_unmodified() {
+    let (_fixture, mut workbench, project) = open("abc\n");
+
+    run(&mut workbench, project, [type_text("")]);
+
+    assert!(!workbench.project(project).unwrap().editor.unwrap().modified);
+}
+
+#[test]
+fn typing_past_the_bottom_of_the_viewport_scrolls_the_caret_into_view() {
+    let (_fixture, mut workbench, project) = open("\n");
+
+    run(&mut workbench, project, std::iter::repeat_n(Command::NewLine, 15));
+
+    let editor = workbench.project(project).unwrap().editor.unwrap();
+    assert_eq!(editor.caret.line, 15);
+    assert_eq!(editor.lines[0].index, 6, "line 16 is the last fully visible row of 10");
+}
+
+#[test]
 fn backspace_deletes_the_character_before_the_caret() {
     let (_fixture, mut workbench, project) = open("let ab = 1;\n");
 

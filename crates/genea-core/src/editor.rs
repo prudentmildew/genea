@@ -1,7 +1,9 @@
-//! One open file on the editor surface: its text, caret and scroll position.
+//! One open file on the editor surface: its text, selection, scroll position
+//! and saved state.
 //!
-//! Read-only for now (ticket #20). The editing tickets add the edit path,
-//! undo, selections and syntax here or in crates next to it.
+//! Every edit goes through `insert` or `delete_selection`, which bump the
+//! version that `modified` compares with the saved one. Undo, multi-caret
+//! and syntax build on those two (tickets #22, #52, #24).
 
 use std::{ops::Range, path::PathBuf};
 
@@ -56,7 +58,18 @@ pub(crate) struct Snapshot {
 impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
         let line_ending = LineEnding::detect(&text);
-        Editor { path, text, caret: 0, anchor: 0, goal_column: None, scroll_top: 0.0, line_ending, preedit: String::new(), version: 0, saved_version: 0 }
+        Editor {
+            path,
+            text,
+            caret: 0,
+            anchor: 0,
+            goal_column: None,
+            scroll_top: 0.0,
+            line_ending,
+            preedit: String::new(),
+            version: 0,
+            saved_version: 0,
+        }
     }
 
     /// Moves the caret. With `extend`, the selection's anchor stays put, so
@@ -176,8 +189,11 @@ impl Editor {
     /// Inserts `text` at the caret, replacing the selection, and puts the
     /// caret after it. Line breaks become the file's line ending.
     pub(crate) fn insert(&mut self, text: &str, viewport_rows: f64) {
-        let text = self.line_ending.normalize(text);
         self.preedit.clear();
+        if text.is_empty() && self.anchor == self.caret {
+            return;
+        }
+        let text = self.line_ending.normalize(text);
         self.delete_selection();
         self.text.insert(self.caret, &text);
         self.version += 1;
