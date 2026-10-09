@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use genea_core::{
-    NewProjectCommand, NewProjectDialog, PackageManagerPin, ProjectId, RuntimePin, Template, Workbench,
+    NewProjectCommand, NewProjectDialog, NewProjectOption, PackageManagerPin, ProjectId, RuntimePin, Template, Workbench,
 };
 use genea_testkit::{FixtureProject, TestHost};
 use serde_json::{Value, json};
@@ -205,6 +205,82 @@ fn a_refused_create_doesnt_change_the_remembered_folder() {
     workbench.dispatch_new_project(NewProjectCommand::Cancel);
 
     assert_eq!(open_dialog(&mut workbench).parent.as_deref(), Some(used.root()));
+}
+
+/// `(label, detail)` of each option.
+fn labels<P>(options: &[NewProjectOption<P>]) -> Vec<(&str, &str)> {
+    options.iter().map(|o| (o.label.as_str(), o.detail.as_str())).collect()
+}
+
+#[test]
+fn the_pickers_offer_the_newest_release_of_each_major_version_with_the_defaults_chosen() {
+    let host = host();
+    host.tools().node("26.11.1");
+    host.tools().node("26.10.0");
+    host.tools().node("24.22.0");
+    host.tools().node("22.20.0");
+    host.tools().bun("1.5.0");
+    host.tools().bun("1.3.0");
+    host.tools().pnpm("11.4.0");
+    let mut workbench = Workbench::new(host.shared());
+
+    let dialog = open_dialog(&mut workbench);
+
+    assert!(!dialog.listing);
+    assert_eq!(dialog.message, None);
+    assert_eq!(dialog.runtime, RuntimePin::Node("24.21.0".into()));
+    assert_eq!(dialog.package_manager, PackageManagerPin::Pnpm("12.10.1".into()));
+    assert_eq!(
+        labels(&dialog.runtimes),
+        [
+            ("Node 26.11.1", ""),
+            ("Node 24.22.0", ""),
+            ("Node 24.21.0", "default"),
+            ("Node 22.20.0", ""),
+            ("Bun 1.5.0", ""),
+            ("Bun 1.4.2", "default"),
+        ]
+    );
+    assert_eq!(labels(&dialog.package_managers), [("pnpm 12.10.1", "default"), ("pnpm 11.4.0", ""), ("Bun 1.5.0", ""), ("Bun 1.4.2", "default")]);
+    assert_eq!(dialog.runtimes[4].pin, RuntimePin::Bun("1.5.0".into()));
+    assert_eq!(dialog.package_managers[1].pin, PackageManagerPin::Pnpm("11.4.0".into()));
+}
+
+#[test]
+fn offline_the_pickers_offer_genea_s_defaults() {
+    // No versions are published: every list fails.
+    let mut workbench = Workbench::new(TestHost::new().shared());
+
+    let dialog = open_dialog(&mut workbench);
+
+    assert_eq!(labels(&dialog.runtimes), [("Node 24.21.0", "default"), ("Bun 1.4.2", "default")]);
+    assert_eq!(labels(&dialog.package_managers), [("pnpm 12.10.1", "default"), ("Bun 1.4.2", "default")]);
+    assert!(dialog.message.is_some_and(|m| m.contains("Couldn't list the Node versions")));
+}
+
+#[test]
+fn the_chosen_template_and_pins_are_what_is_created_and_installed() {
+    let host = host();
+    let parent = FixtureProject::new().build();
+    let mut workbench = Workbench::new(host.shared());
+    open_dialog(&mut workbench);
+
+    workbench.dispatch_new_project(NewProjectCommand::SetTemplate(Template::FullStack));
+    workbench.dispatch_new_project(NewProjectCommand::SetRuntime(RuntimePin::Bun("1.4.2".into())));
+    workbench.dispatch_new_project(NewProjectCommand::SetPackageManager(PackageManagerPin::Bun("1.4.2".into())));
+    let dialog = workbench.new_project_dialog().unwrap();
+    assert_eq!(dialog.template, Template::FullStack);
+    assert_eq!(dialog.runtime, RuntimePin::Bun("1.4.2".into()));
+    create(&mut workbench, "shop", parent.root());
+
+    let folder = parent.root().canonicalize().unwrap().join("shop");
+    let package = package_json(&folder);
+    assert_eq!(package["packageManager"], "bun@1.4.2");
+    assert_eq!(package["devEngines"]["runtime"], json!({ "name": "bun", "version": "1.4.2" }));
+    assert_eq!(package_json(&folder.join("apps/web"))["name"], "@shop/web");
+    let install = install_spec(&host);
+    assert_eq!(version_of(&install.program), "1.4.2");
+    assert_eq!(install.cwd.as_deref(), Some(folder.as_path()));
 }
 
 #[test]

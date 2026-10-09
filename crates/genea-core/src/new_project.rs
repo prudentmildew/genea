@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use genea_toolchain::Tool;
+use genea_toolchain::{Tool, Version};
 
 use crate::{
     command::Command,
@@ -59,11 +59,32 @@ pub struct NewProjectDialog {
     /// The parent folder, if one is chosen.
     pub parent: Option<PathBuf>,
     pub runtime: RuntimePin,
+    /// What the runtime picker offers: Node, then Bun, each newest first.
+    pub runtimes: Vec<NewProjectOption<RuntimePin>>,
     pub package_manager: PackageManagerPin,
+    /// What the package-manager picker offers: pnpm, then Bun.
+    pub package_managers: Vec<NewProjectOption<PackageManagerPin>>,
+    /// The published versions are being listed; until then the pickers
+    /// offer Genea's defaults.
+    pub listing: bool,
+    /// Why a version list is missing (offline, say), if one is.
+    pub message: Option<String>,
     /// The project is being generated; the dialog closes once it opens.
     pub creating: bool,
     /// Why the last Create was refused, if it was.
     pub error: Option<String>,
+}
+
+/// A choice in one of the dialog's toolchain pickers: the newest release of
+/// each major version, and Genea's default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewProjectOption<P> {
+    /// `Node 24.21.0`.
+    pub label: String,
+    /// `default` for Genea's default version, else empty.
+    pub detail: String,
+    /// What choosing it sets (`SetRuntime` / `SetPackageManager`).
+    pub pin: P,
 }
 
 /// The dialog's state in the workbench.
@@ -73,6 +94,9 @@ pub(crate) struct NewProjectFlow {
     /// Bumped by every Create, so an older creation can't touch a newer
     /// dialog.
     generation: u64,
+    /// Bumped by every dialog opened, so a slow listing can't fill a newer
+    /// dialog.
+    list_generation: u64,
     /// The parent folder of the last project created, once read from the
     /// support folder (`Some(None)`: there is none).
     last_parent: Option<Option<PathBuf>>,
@@ -91,22 +115,104 @@ struct Dialog {
     /// The generation of the Create under way, if any.
     creating: Option<u64>,
     error: Option<String>,
+    /// Per tool, the published versions; `None` while they are listed.
+    listed: Option<Listed>,
+}
+
+struct Listed {
+    versions: Vec<(Tool, Vec<Version>)>,
+    /// Lists that couldn't be fetched.
+    errors: Vec<String>,
+}
+
+impl Listed {
+    /// What a picker offers of `tool`: the newest release of each major
+    /// version, plus the default, newest first. Prereleases aren't offered.
+    fn offered(&self, tool: Tool) -> Vec<Version> {
+        let default = tool.default_version();
+        let published = self.versions.iter().find(|(t, _)| *t == tool).map(|(_, v)| v.as_slice()).unwrap_or_default();
+        let mut versions: Vec<Version> = published.iter().filter(|v| !v.is_prerelease()).cloned().collect();
+        versions.push(default.clone());
+        versions.sort_by(|a, b| b.cmp(a));
+        versions.dedup();
+        let mut offered: Vec<Version> = Vec::new();
+        for version in versions {
+            let newest_of_major = offered.last().is_none_or(|newer| newer.major() != version.major());
+            if newest_of_major || version == default {
+                offered.push(version);
+            }
+        }
+        offered
+    }
 }
 
 impl NewProjectFlow {
     pub(crate) fn view(&self) -> Option<NewProjectDialog> {
         let dialog = self.dialog.as_ref()?;
+        let none = Listed { versions: Vec::new(), errors: Vec::new() };
+        let listed = dialog.listed.as_ref().unwrap_or(&none);
+        let options = |tools: [Tool; 2]| {
+            tools.into_iter().flat_map(|tool| listed.offered(tool).into_iter().map(move |version| (tool, version)))
+        };
+        let option = |tool: Tool, version: &Version| {
+            let detail = if *version == tool.default_version() { "default" } else { "" };
+            (format!("{tool} {version}"), detail.to_owned(), version.to_string())
+        };
+        let runtimes = options([Tool::Node, Tool::Bun])
+            .map(|(tool, version)| {
+                let (label, detail, version) = option(tool, &version);
+                let pin = if tool == Tool::Bun { RuntimePin::Bun(version) } else { RuntimePin::Node(version) };
+                NewProjectOption { label, detail, pin }
+            })
+            .collect();
+        let package_managers = options([Tool::Pnpm, Tool::Bun])
+            .map(|(tool, version)| {
+                let (label, detail, version) = option(tool, &version);
+                let pin =
+                    if tool == Tool::Bun { PackageManagerPin::Bun(version) } else { PackageManagerPin::Pnpm(version) };
+                NewProjectOption { label, detail, pin }
+            })
+            .collect();
         Some(NewProjectDialog {
             template: dialog.template,
             name: dialog.name.clone(),
             name_problem: (!dialog.name.is_empty()).then(|| check_name(&dialog.name).err()).flatten(),
             parent: dialog.parent.clone(),
             runtime: dialog.runtime.clone(),
+            runtimes,
             package_manager: dialog.package_manager.clone(),
+            package_managers,
+            listing: dialog.listed.is_none(),
+            message: (!listed.errors.is_empty()).then(|| listed.errors.join(" ")),
             creating: dialog.creating.is_some(),
             error: dialog.error.clone(),
         })
     }
+}
+
+/// Lists the published versions for the pickers in the background.
+fn list_versions(core: &mut Core) {
+    let flow = &mut core.new_project;
+    flow.list_generation += 1;
+    let generation = flow.list_generation;
+    let host = core.host.clone();
+    core.jobs.spawn("list versions for a new project", move || {
+        let mut listed = Listed { versions: Vec::new(), errors: Vec::new() };
+        for tool in Tool::ALL {
+            match genea_toolchain::published(host.downloads(), tool) {
+                Ok(versions) => listed.versions.push((tool, versions)),
+                Err(error) => listed.errors.push(format!("Couldn't list the {tool} versions: {error}")),
+            }
+        }
+        Box::new(move |core: &mut Core| {
+            let flow = &mut core.new_project;
+            if flow.list_generation == generation
+                && let Some(dialog) = &mut flow.dialog
+            {
+                dialog.listed = Some(listed);
+            }
+        })
+    });
 }
 
 /// Applies a dialog command.
@@ -123,7 +229,9 @@ pub(crate) fn dispatch(core: &mut Core, command: NewProjectCommand) {
                 package_manager: PackageManagerPin::Pnpm(Tool::Pnpm.default_version().to_string()),
                 creating: None,
                 error: None,
+                listed: None,
             });
+            list_versions(core);
         }
         return;
     }
