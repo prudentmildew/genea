@@ -6,7 +6,7 @@
 
 use std::{path::Path, process};
 
-use genea_core::{Command, LineChange, ProjectId, Workbench};
+use genea_core::{CaretMove, Command, LineChange, ProjectId, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 /// Runs `git` in `root`, isolated from the user's and the system's config.
@@ -83,6 +83,12 @@ fn markers(workbench: &Workbench, project: ProjectId) -> Vec<(usize, LineChange)
     editor.gutter.iter().map(|marker| (marker.line, marker.change)).collect()
 }
 
+/// The buffer's text, from its visible lines.
+fn text(workbench: &Workbench, project: ProjectId) -> String {
+    let editor = workbench.project(project).unwrap().editor.unwrap();
+    editor.lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>().join("\n")
+}
+
 fn type_at(workbench: &mut Workbench, project: ProjectId, line: usize, column: usize, text: &str) {
     workbench.dispatch(project, Command::PlaceCaret { line, column });
     workbench.dispatch(project, Command::InsertText(text.into()));
@@ -100,4 +106,89 @@ fn typing_in_a_line_marks_it_modified() {
     type_at(&mut workbench, project, 1, 3, "!");
     workbench.settle().unwrap();
     assert_eq!(markers(&workbench, project), [(1, LineChange::Modified)]);
+}
+
+#[test]
+fn new_lines_are_marked_added() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 2, 0, "two and a half\nnearly three\n");
+    workbench.settle().unwrap();
+    assert_eq!(markers(&workbench, project), [(2, LineChange::Added), (3, LineChange::Added)]);
+}
+
+#[test]
+fn deleted_lines_are_marked_on_the_line_below_them() {
+    let (_fixture, mut workbench, project) = editing_main();
+    workbench.dispatch(project, Command::SelectLine { line: 1 });
+    workbench.dispatch(project, Command::Select(CaretMove::Down));
+    workbench.dispatch(project, Command::Delete(CaretMove::Left));
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "one\nfour\n");
+    assert_eq!(markers(&workbench, project), [(1, LineChange::Deleted)]);
+
+    // At the end of the file, the empty last line is below them.
+    workbench.dispatch(project, Command::SelectLine { line: 1 });
+    workbench.dispatch(project, Command::Delete(CaretMove::Left));
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "one\n");
+    assert_eq!(markers(&workbench, project), [(1, LineChange::Deleted)]);
+}
+
+#[test]
+fn committing_in_the_terminal_clears_the_markers_of_what_was_committed() {
+    let (fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 1, 3, "!");
+    workbench.dispatch(project, Command::Save);
+    workbench.settle().unwrap();
+    assert_eq!(markers(&workbench, project), [(1, LineChange::Modified)]);
+
+    git(fixture.root(), &["commit", "--quiet", "--all", "--message", "Exclaim"]);
+    workbench.settle().unwrap();
+    assert_eq!(markers(&workbench, project), []);
+}
+
+#[test]
+fn a_project_without_a_repository_has_no_branch_no_markers_and_no_errors() {
+    let fixture = FixtureProject::new().file("src/main.ts", MAIN).build();
+    let (mut workbench, project) = open(&fixture);
+    workbench.dispatch(project, Command::OpenFile("src/main.ts".into()));
+    workbench.settle().unwrap();
+    type_at(&mut workbench, project, 1, 3, "!");
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.status.branch, None);
+    assert_eq!(markers(&workbench, project), []);
+    assert_eq!(view.notices, []);
+    assert_eq!(view.problems, []);
+}
+
+#[test]
+fn a_file_that_isnt_in_head_has_no_markers() {
+    let (fixture, mut workbench, project) = editing_main();
+    fixture.write("src/new.ts", "let b = 2;\n");
+    workbench.dispatch(project, Command::OpenFile("src/new.ts".into()));
+    workbench.settle().unwrap();
+    type_at(&mut workbench, project, 0, 0, "// New\n");
+    workbench.settle().unwrap();
+    assert_eq!(markers(&workbench, project), []);
+}
+
+#[test]
+fn git_init_in_the_terminal_shows_the_branch() {
+    let fixture = FixtureProject::new().file("src/main.ts", MAIN).build();
+    let (mut workbench, project) = open(&fixture);
+    git(fixture.root(), &["init", "--quiet", "--initial-branch", "trunk"]);
+    workbench.settle().unwrap();
+    assert_eq!(branch(&workbench, project).as_deref(), Some("trunk"));
+}
+
+#[test]
+fn every_change_in_the_file_has_its_markers() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 0, 0, "zero\n");
+    type_at(&mut workbench, project, 4, 4, "!");
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "zero\none\ntwo\nthree\nfour!\n");
+    assert_eq!(markers(&workbench, project), [(0, LineChange::Added), (4, LineChange::Modified)]);
 }
