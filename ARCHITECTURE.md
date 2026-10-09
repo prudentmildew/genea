@@ -135,7 +135,8 @@ shifts the spans, so a keystroke never waits on a parse. Don't edit the
 rope anywhere else. One background parse per file runs at a time
 (`Project::reparse`, `spawn_parse`): it reparses incrementally and
 recomputes the highlights, edits made meanwhile are replayed onto its result,
-and the next parse starts if the text moved on. Files over 5 MB get no syntax.
+and the next parse starts if the text moved on. Large files get no syntax
+(below).
 
 - View state: `VisibleLine::highlights`, a list of `HighlightSpan`
   (display columns + `genea_core::Highlight`). The view colours each
@@ -146,6 +147,23 @@ and the next parse starts if the text moved on. Files over 5 MB get no syntax.
   grammars' injection queries. `.env` has no grammar: `syntax/dotenv.rs`.
 - Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
   tokens over `Syntax::spans()` in `Editor::grid_line`.
+
+### Large files
+
+A file over `LARGE_FILE_BYTES` (5 MB, ticket #27) is a *large file*: it
+opens with no syntax tree, no highlighting and no language intelligence, and
+`StatusBar::large_file` says why. It is decided once, from the size read at
+open. **Anything that starts per-file language work (language servers,
+semantic tokens, …) checks `Editor::is_large` and skips large files.**
+
+Opening reads in the background (`src/reading.rs`), and the main thread only
+swaps the finished rope in. A file that may be large (over 5 MB, or of
+unknown size, like a pipe) opens as soon as its first screen of lines is
+read: `Editor::loading` shows those lines read-only (`EditorView::loading`),
+and `Editor::finish_loading` swaps the whole file in when it is read,
+keeping each tab's carets and scroll, which the first screen (a prefix of
+the whole text) leaves valid. The benchmark harness's `open-1mb` and
+`open-100mb` scenarios measure it.
 
 ## The host boundary
 
@@ -200,6 +218,19 @@ package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it 
 in a job when a project with a root `package.json` opens, starts one job per
 role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
 whose `NoticeAction` carries the `Command` a click dispatches.
+
+Pins change only through commands (ticket #37). `OpenToolchainPicker(kind)`
+lists versions in a job (`genea_toolchain::published` plus what the store
+has, so it works offline) into `ProjectView::toolchain_picker`; each
+`ToolchainOption` carries the `SetRuntime` / `SetPackageManager` command a
+pick dispatches, which writes the exact pin (`pins::write`) and restarts that
+role's download. `RemoveUnusedToolchains` is handled by the workbench (it
+needs the recent projects): it keeps what each recent or open project's
+`package.json` resolves to (exact pins, the newest stored match of a range,
+the defaults for an unpinned role) and `Store::remove`s the rest. The
+lockfile cross-check (root `pnpm-lock.yaml`, `bun.lock`, `bun.lockb` against
+the package-manager role) reports as `ProblemSource::Toolchain` and is
+re-run when the watcher sees a root lockfile change.
 
 ## The project environment
 

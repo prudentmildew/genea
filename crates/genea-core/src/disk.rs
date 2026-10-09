@@ -51,9 +51,15 @@ pub(crate) struct Splice {
 }
 
 impl DiskCheck {
-    /// Reads the file and compares it. Runs on a background thread.
+    /// Reads the file and compares it. Runs on a background thread. Only a
+    /// regular file is read: opening a pipe would block until it has a
+    /// writer.
     pub(crate) fn run(self, absolute: &Path) -> Checked {
-        let changed = match std::fs::read(absolute).map(Decoded::from_bytes) {
+        let read = match std::fs::metadata(absolute) {
+            Ok(metadata) if metadata.is_file() => std::fs::read(absolute),
+            _ => Err(std::io::ErrorKind::Unsupported.into()),
+        };
+        let changed = match read.map(Decoded::from_bytes) {
             Ok(Decoded::Text(read)) if self.disk != read => {
                 let text = Rope::from_str(&read);
                 let edit = splice(&self.text, &text);

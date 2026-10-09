@@ -20,6 +20,8 @@
 //! | `scroll PX MS` | scrolls PX points per presented frame for MS ms, bouncing at the ends |
 //! | `resize WIDTH HEIGHT` | after asking for a window size in points |
 //! | `caret-line` | the caret's line as the editor shows it, and the caret |
+//! | `open PATH` | once a frame showing the file (relative to the project root) is presented |
+//! | `editor` | the focused file: path, line count, whether it is still loading or large |
 //! | `quit` | exits |
 //!
 //! `key` takes a virtual key code and `CGEventFlags` (⇧ `1<<17`, ⌥ `1<<19`).
@@ -120,6 +122,26 @@ fn handle(line: &str) {
                 editor.caret.column,
                 quote(text),
                 editor.preedit.is_some()
+            ));
+        }),
+        ["open", ..] => {
+            let path = std::path::PathBuf::from(line["open".len()..].trim());
+            journal::open_requested(path.clone(), || reply(r#"{"shown":true}"#));
+            app::with_app(move |app| match app.first_window() {
+                Some((controller, workbench)) => controller.dispatch(workbench, Command::OpenFile(path)),
+                None => error("no project window"),
+            });
+        }
+        ["editor"] => app::with_app(|app| {
+            let Some((controller, workbench)) = app.first_window() else { return error("no project window") };
+            let Some(view) = workbench.project(controller.project) else { return error("no project") };
+            let Some(editor) = view.editor else { return error("no editor") };
+            reply(&format!(
+                r#"{{"path":{},"line_count":{},"loading":{},"large_file":{}}}"#,
+                quote(&editor.path.to_string_lossy()),
+                editor.line_count,
+                editor.loading,
+                view.status.large_file.is_some()
             ));
         }),
         ["quit"] => {

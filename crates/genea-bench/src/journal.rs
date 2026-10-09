@@ -21,6 +21,8 @@
 //!   occlusion, …), to tell an idle window disturbed from outside.
 //! - **Milestones**: the first sync with file content in it, and AppKit
 //!   first reporting the window visible.
+//! - **Opens**: each file the harness asked to open (`open`), and the first
+//!   sync that showed it.
 
 use serde_json::Value;
 
@@ -65,6 +67,23 @@ pub struct Journal {
     pub content: Option<u64>,
     /// AppKit first reported a window visible.
     pub visible: Option<u64>,
+    /// Each file the harness asked to open, in order: when it asked, and
+    /// the first sync that showed the file's lines.
+    pub opens: Vec<(u64, Option<u64>)>,
+}
+
+/// A file open, from the harness's request to the end of the first frame
+/// showing the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Open {
+    pub requested: u64,
+    pub presented: u64,
+}
+
+impl Open {
+    pub fn ms(&self) -> f64 {
+        ms(self.presented - self.requested)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,6 +198,18 @@ impl Journal {
                 .ok_or("journal: bad activity")?,
             Some(_) => return Err("journal: activities is not a list".into()),
         };
+        let opens = match dump.get("opens") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|v| match v.as_array().map(Vec::as_slice) {
+                    Some([requested, shown]) => Some((requested.as_u64()?, shown.as_u64())),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or("journal: bad open")?,
+            Some(_) => return Err("journal: opens is not a list".into()),
+        };
         Ok(Journal {
             process_start: time("process_start").unwrap_or(0),
             started: time("started").unwrap_or(0),
@@ -190,6 +221,7 @@ impl Journal {
             events: times("events")?,
             content: time("content"),
             visible: time("visible"),
+            opens,
         })
     }
 
@@ -287,6 +319,15 @@ impl Journal {
         let content = self.content?;
         let frame = self.frames().into_iter().find(|f| f.before >= content)?;
         Some(frame.end.max(self.visible?))
+    }
+
+    /// The `index`th file open, once a frame showing the file has
+    /// presented.
+    pub fn open(&self, index: usize) -> Option<Open> {
+        let (requested, shown) = *self.opens.get(index)?;
+        let shown = shown?;
+        let frame = self.frames().into_iter().find(|f| f.before >= shown)?;
+        Some(Open { requested, presented: frame.end })
     }
 
     /// How many window events arrived in `window`.
