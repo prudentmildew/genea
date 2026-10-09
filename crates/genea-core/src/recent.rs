@@ -22,6 +22,9 @@ use crate::{jobs::Jobs, view::RecentProject};
 
 const FILE_NAME: &str = "recent-projects.txt";
 
+/// How many projects the list keeps.
+const MAX_RECENT: usize = 10;
+
 /// The pause between the last change and the save.
 const SAVE_DELAY: Duration = Duration::from_secs(1);
 
@@ -44,7 +47,8 @@ impl RecentProjects {
     /// empty list.
     pub(crate) fn load(support_dir: &Path) -> Self {
         let file = support_dir.join(FILE_NAME);
-        let roots = fs::read(&file).map(|bytes| parse(&bytes)).unwrap_or_default();
+        let mut roots = fs::read(&file).map(|bytes| parse(&bytes)).unwrap_or_default();
+        roots.truncate(MAX_RECENT);
         RecentProjects { roots, file, save: Arc::default() }
     }
 
@@ -52,7 +56,17 @@ impl RecentProjects {
     pub(crate) fn opened(&mut self, root: &Path, jobs: &Jobs, clock: &dyn Clock) {
         self.roots.retain(|r| r != root);
         self.roots.insert(0, root.to_owned());
+        self.roots.truncate(MAX_RECENT);
         self.changed(jobs, clock);
+    }
+
+    /// Removes `root`, e.g. when its folder is gone.
+    pub(crate) fn forget(&mut self, root: &Path, jobs: &Jobs, clock: &dyn Clock) {
+        let before = self.roots.len();
+        self.roots.retain(|r| r != root);
+        if self.roots.len() != before {
+            self.changed(jobs, clock);
+        }
     }
 
     pub(crate) fn view(&self) -> Vec<RecentProject> {

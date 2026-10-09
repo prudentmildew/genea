@@ -73,15 +73,25 @@ impl Workbench {
         self.core.jobs.set_notifier(Some(Arc::new(notify)));
     }
 
-    /// Opens the folder at `root` as a project. Opening a folder that is
-    /// already open returns its existing id.
+    /// Opens the folder at `root` as a project and puts it first in the
+    /// recent projects. Opening a folder that is already open returns its
+    /// existing id; the app then focuses that project's window. A folder
+    /// that can't be opened leaves the recent projects.
     pub fn open_project(&mut self, root: impl AsRef<Path>) -> Result<ProjectId, OpenProjectError> {
         let root = root.as_ref();
         let error = |reason| OpenProjectError { path: root.to_owned(), reason };
-        let root = root.canonicalize().map_err(|e| error(e.to_string()))?;
-        if !root.is_dir() {
-            return Err(error("it isn't a folder".into()));
-        }
+        let checked = root.canonicalize().map_err(|e| e.to_string()).and_then(|canonical| {
+            if canonical.is_dir() { Ok(canonical) } else { Err("it isn't a folder".into()) }
+        });
+        let root = match checked {
+            Ok(root) => root,
+            Err(reason) => {
+                // A recent project that can't be opened any more leaves the list.
+                let Core { recent, jobs, host, .. } = &mut self.core;
+                recent.forget(root, jobs, host.clock());
+                return Err(error(reason));
+            }
+        };
         let Core { recent, jobs, host, .. } = &mut self.core;
         recent.opened(&root, jobs, host.clock());
         if let Some((id, _)) = self.core.projects.iter().find(|(_, p)| p.root() == root) {
