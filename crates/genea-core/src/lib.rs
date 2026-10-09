@@ -29,6 +29,7 @@ mod history;
 mod jobs;
 mod problems;
 mod project;
+mod reading;
 mod recent;
 mod syntax;
 mod templates;

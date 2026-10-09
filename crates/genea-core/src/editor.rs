@@ -112,6 +112,9 @@ pub(crate) struct Editor {
     /// Over [`LARGE_FILE_BYTES`] when opened: no syntax, no language
     /// intelligence.
     large: bool,
+    /// Only the file's first screen is in (ticket #27): the OpenFile with
+    /// this generation is still reading the rest. Read-only meanwhile.
+    loading: Option<u64>,
 }
 
 /// The buffer as it was when a save started.
@@ -142,7 +145,39 @@ impl Editor {
             whole_words: None,
             syntax,
             large,
+            loading: None,
         }
+    }
+
+    /// An editor showing the first screen of a file that is still being
+    /// read by the OpenFile with this `generation`; `size` is the file's
+    /// size on disk, if known. Read-only, without syntax, until
+    /// [`Editor::finish_loading`].
+    pub(crate) fn loading(path: PathBuf, first_screen: Rope, size: Option<u64>, generation: u64) -> Self {
+        let mut editor = Editor::new(path, first_screen).read_only();
+        editor.syntax = None;
+        editor.large = size.is_some_and(|size| size > LARGE_FILE_BYTES as u64);
+        editor.loading = Some(generation);
+        editor
+    }
+
+    /// Whether this editor is waiting for the rest of its file from the
+    /// OpenFile with this generation.
+    pub(crate) fn is_loading(&self, generation: u64) -> bool {
+        self.loading == Some(generation)
+    }
+
+    /// Reading the rest of the file failed: stays as it is, read-only.
+    pub(crate) fn stop_loading(&mut self) {
+        self.loading = None;
+    }
+
+    /// The whole file is in: becomes `loaded` (an editor of the whole
+    /// file), keeping this editor's carets and scroll position, which the
+    /// first screen's text leaves valid (it is a prefix of the whole).
+    pub(crate) fn finish_loading(&mut self, mut loaded: Editor, viewport_rows: f64) {
+        loaded.set_cursor(&self.cursor(), viewport_rows);
+        *self = loaded;
     }
 
     /// The same editor, refusing edits and saves.
@@ -828,6 +863,7 @@ impl Editor {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: self.path.clone(),
             read_only: self.read_only,
+            loading: self.loading.is_some(),
             modified: self.version != self.saved_version,
             line_count,
             scroll_top: self.scroll_top,

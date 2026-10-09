@@ -16,7 +16,7 @@ pub(crate) enum Decoded {
 
 /// How far into a file to look for a NUL byte, the sign of a binary file
 /// (git's heuristic). Text in UTF-8 never has one.
-const BINARY_SNIFF_BYTES: usize = 8000;
+pub(crate) const BINARY_SNIFF_BYTES: usize = 8000;
 
 impl Decoded {
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {

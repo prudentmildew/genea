@@ -11,7 +11,6 @@ use std::{
 };
 
 use genea_host::{Host, SharedHost};
-use ropey::Rope;
 
 use crate::{
     command::Command,
@@ -21,8 +20,8 @@ use crate::{
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
+    reading::{self, Contents, FirstScreen},
     syntax::ParseJob,
-    text::Decoded,
     toolchain::{Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
@@ -608,6 +607,9 @@ impl Project {
     /// is read; a failed read or a binary file leaves it and adds a notice.
     /// A file that isn't valid UTF-8 opens read-only. A file that is
     /// already open just has its tab focused, keeping its buffer.
+    ///
+    /// A file that may be large opens as soon as its first screen is read,
+    /// read-only until the rest is in (ticket #27, `reading`).
     fn open_file(&mut self, path: PathBuf, at: Option<TextPosition>, jobs: &Jobs) {
         let absolute = self.root.join(&path);
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
@@ -620,43 +622,76 @@ impl Project {
         }
         let generation = self.open_generation;
         let id = self.id;
+        let rows = self.viewport_rows.ceil() as usize;
+        let first_screen_jobs = jobs.clone();
         jobs.spawn("open file", move || {
-            let read = std::fs::read(&absolute).map(Decoded::from_bytes);
+            let read = reading::read(&absolute, rows, |first_screen| {
+                let shown = shown.clone();
+                first_screen_jobs.busy().finish(Box::new(move |core| {
+                    let Some(project) = core.project_mut(id) else { return };
+                    if project.open_generation == generation {
+                        let FirstScreen { text, size } = first_screen;
+                        project.open_tab(Editor::loading(shown, text, size, generation));
+                    }
+                }));
+            });
             Box::new(move |core| {
                 let jobs = core.jobs.clone();
                 let Some(project) = core.project_mut(id) else { return };
-                if project.open_generation != generation {
-                    return;
-                }
-                match read {
-                    Ok(Decoded::Text(text)) => {
-                        project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)));
-                        project.reparse_file(&shown, &jobs);
-                        if let Some(at) = at {
-                            project.go_to(at);
-                        }
-                    }
-                    Ok(Decoded::Invalid(text)) => {
-                        project.notices.push(Notice {
-                            message: format!("{} isn't valid UTF-8, so it's open read-only.", shown.display()),
-                            action: None,
-                        });
-                        project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)).read_only());
-                        project.reparse_file(&shown, &jobs);
-                        if let Some(at) = at {
-                            project.go_to(at);
-                        }
-                    }
-                    Ok(Decoded::Binary) => project.notices.push(Notice {
-                        message: format!("{} is a binary file, so Genea doesn't open it in the editor.", shown.display()),
-                        action: None,
-                    }),
-                    Err(error) => project
-                        .notices
-                        .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()), action: None }),
-                }
+                project.file_read(shown, generation, at, read, &jobs);
             })
         });
+    }
+
+    /// The OpenFile with this generation has read its file: shows it in a
+    /// new tab, or in the tab already showing its first screen.
+    fn file_read(
+        &mut self,
+        path: PathBuf,
+        generation: u64,
+        at: Option<TextPosition>,
+        read: io::Result<Contents>,
+        jobs: &Jobs,
+    ) {
+        let loading = self.open_editor(&path).is_some_and(|e| e.is_loading(generation));
+        if !loading && self.open_generation != generation {
+            return;
+        }
+        let editor = match read {
+            Ok(Contents::Text(text)) => Editor::new(path.clone(), text),
+            Ok(Contents::Invalid(text)) => {
+                self.notices.push(Notice {
+                    message: format!("{} isn't valid UTF-8, so it's open read-only.", path.display()),
+                    action: None,
+                });
+                Editor::new(path.clone(), text).read_only()
+            }
+            Ok(Contents::Binary) => {
+                let message = format!("{} is a binary file, so Genea doesn't open it in the editor.", path.display());
+                return self.open_failed(&path, generation, message);
+            }
+            Err(error) => return self.open_failed(&path, generation, format!("Couldn't open {}: {error}", path.display())),
+        };
+        let rows = self.viewport_rows;
+        match self.open_editor_mut(&path).filter(|e| e.is_loading(generation)) {
+            Some(first_screen) => first_screen.finish_loading(editor, rows),
+            None => self.open_tab(editor),
+        }
+        if let Some(at) = at
+            && self.editor.as_ref().is_some_and(|e| e.path() == path)
+        {
+            self.go_to(at);
+        }
+        self.reparse_file(&path, jobs);
+    }
+
+    /// Reading a file failed: a notice says why. A tab showing its first
+    /// screen keeps that, read-only.
+    fn open_failed(&mut self, path: &Path, generation: u64, message: String) {
+        if let Some(first_screen) = self.open_editor_mut(path).filter(|e| e.is_loading(generation)) {
+            first_screen.stop_loading();
+        }
+        self.notices.push(Notice { message, action: None });
     }
 }
 

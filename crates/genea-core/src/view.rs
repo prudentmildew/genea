@@ -122,6 +122,9 @@ pub struct EditorView {
     /// The tab title: the file name.
     pub title: String,
     pub read_only: bool,
+    /// Only the file's beginning is in: the rest is still being read
+    /// (ticket #27). Read-only until it is.
+    pub loading: bool,
     /// The buffer has edits that aren't on disk yet: the tab and window
     /// show it as unsaved.
     pub modified: bool,
