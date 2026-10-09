@@ -105,6 +105,17 @@ fn expanding_at_the_caret_unfolds_the_block_on_its_line() {
 }
 
 #[test]
+fn collapsing_with_a_selection_inside_moves_the_caret_to_the_block_start() {
+    let (_fixture, mut workbench, project) = open_file("main.ts", FUNCTION, 20.0);
+    run(&mut workbench, project, [Command::PlaceCaret { line: 2, column: 5 }, Command::ExpandSelection]);
+
+    run(&mut workbench, project, [Command::CollapseFold]);
+
+    assert_eq!(caret(&workbench, project), "2:10");
+    assert_eq!(shown(&workbench, project), [0, 1, 3, 4, 5, 6]);
+}
+
+#[test]
 fn up_and_down_skip_folded_lines() {
     let (_fixture, mut workbench, project) = open_file("main.ts", FUNCTION, 20.0);
     run(&mut workbench, project, [Command::ToggleFold { line: 1 }, Command::PlaceCaret { line: 1, column: 2 }]);
