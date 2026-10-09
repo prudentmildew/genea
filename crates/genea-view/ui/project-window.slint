@@ -8,6 +8,7 @@ import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ProblemRow } from "problems-view.slint";
+import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
@@ -28,6 +29,13 @@ export component ProjectWindow inherits Window {
     in property <string> status-notice-action;
     in property <string> status-toolchain;
     in property <string> status-update;
+
+    // The toolchain picker (ticket #37), shown while `picker-visible`.
+    in property <bool> picker-visible;
+    in property <string> picker-title;
+    in property <string> picker-message;
+    in property <bool> picker-loading;
+    in property <[PickerRow]> picker-options;
 
     // The editor area (ticket #31): the left pane, and the right one while
     // split. `focused-pane` is 0 (left) or 1 (right).
@@ -58,6 +66,14 @@ export component ProjectWindow inherits Window {
     callback paste();
     callback select-all();
     callback reload-environment();
+    // Toolchain commands (ticket #37).
+    callback set-runtime();
+    callback set-package-manager();
+    callback update-toolchain();
+    callback remove-unused-toolchains();
+    callback picker-filter-edited(string);
+    callback picker-picked(int);
+    callback picker-cancelled();
     callback show-about();
     callback open-config();
     // A left-column view's shortcut: show it, or collapse the column.
@@ -164,6 +180,37 @@ export component ProjectWindow inherits Window {
                 title: "Reload Environment";
                 activated => {
                     root.reload-environment();
+                }
+            }
+
+            MenuSeparator { }
+
+            // The toolchain pickers and upkeep (ticket #37, ADR 0005).
+            MenuItem {
+                title: "Set Runtime…";
+                activated => {
+                    root.set-runtime();
+                }
+            }
+
+            MenuItem {
+                title: "Set Package Manager…";
+                activated => {
+                    root.set-package-manager();
+                }
+            }
+
+            MenuItem {
+                title: "Update Toolchain…";
+                activated => {
+                    root.update-toolchain();
+                }
+            }
+
+            MenuItem {
+                title: "Remove Unused Toolchains";
+                activated => {
+                    root.remove-unused-toolchains();
                 }
             }
         }
@@ -427,6 +474,36 @@ export component ProjectWindow inherits Window {
             show-problems => {
                 root.show-view(LeftView.problems);
             }
+        }
+    }
+
+    // A click outside the picker closes it.
+    if root.picker-visible: TouchArea {
+        clicked => {
+            root.picker-cancelled();
+        }
+    }
+
+    if root.picker-visible: ToolchainPicker {
+        x: (root.width - self.width) / 2;
+        y: 40px;
+        width: min(440px, root.width - 32px);
+        height: min(440px, root.height - 80px);
+        title: root.picker-title;
+        message: root.picker-message;
+        loading: root.picker-loading;
+        options: root.picker-options;
+        init => {
+            self.focus-filter();
+        }
+        filter-edited(text) => {
+            root.picker-filter-edited(text);
+        }
+        picked(index) => {
+            root.picker-picked(index);
+        }
+        cancelled => {
+            root.picker-cancelled();
         }
     }
 }
