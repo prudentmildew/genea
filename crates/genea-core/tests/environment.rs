@@ -8,7 +8,7 @@
 //! would export. Processes are started through `Workbench::spawn`, the way
 //! the terminal, scripts and language servers start theirs.
 
-use std::io::Read;
+use std::{io::Read, path::Path};
 
 use genea_core::{ProcessSpec, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
@@ -67,4 +67,63 @@ fn a_process_sees_the_variables_of_the_login_shell() {
     assert_eq!(var(&vars, "PATH").as_deref(), Some("/opt/mine/bin:/usr/bin:/bin"));
     // The shell's environment replaces the one Genea was started with.
     assert_eq!(var(&vars, "FROM_LAUNCH"), None);
+}
+
+#[test]
+fn the_login_shell_runs_once_per_open_in_the_project_root() {
+    let host = host();
+    host.processes().script_shell("zsh", [("GREETING", "hello")]);
+    let fixture = FixtureProject::new().file("src/main.ts", "").build();
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    printenv(&workbench, project);
+    printenv(&workbench, project);
+
+    let shells: Vec<ProcessSpec> =
+        host.processes().spawned().into_iter().filter(|spec| spec.program_name() == "zsh").collect();
+    assert_eq!(shells.len(), 1, "{shells:?}");
+    assert_eq!(shells[0].program, Path::new("/bin/zsh"));
+    assert_eq!(shells[0].cwd.as_deref(), Some(fixture.root().canonicalize().unwrap().as_path()));
+}
+
+/// A project that pins Node 24.18.0 and pnpm 11.13.0, both published on the
+/// test host's download server.
+fn pinned_project(host: &TestHost) -> FixtureProject {
+    host.tools().node("24.18.0");
+    host.tools().pnpm("11.13.0");
+    let package_json = r#"{
+  "name": "app",
+  "devEngines": { "runtime": { "name": "node", "version": "24.18.0" } },
+  "packageManager": "pnpm@11.13.0"
+}
+"#;
+    FixtureProject::new().file("package.json", package_json).build()
+}
+
+/// Runs `tool` from a PATH entry and returns what it prints: the fake tools
+/// print their version.
+fn run_from(dir: &str, tool: &str) -> String {
+    let path = Path::new(dir).join(tool);
+    let output = std::process::Command::new(&path).output().unwrap_or_else(|e| panic!("run {}: {e}", path.display()));
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+#[test]
+fn the_pinned_runtime_and_package_manager_come_first_on_path() {
+    let host = host();
+    host.processes().script_shell("zsh", [("PATH", "/opt/mine/bin:/usr/bin:/bin")]);
+    let fixture = pinned_project(&host);
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let path = var(&printenv(&workbench, project), "PATH").unwrap();
+    let entries: Vec<&str> = path.split(':').collect();
+    assert_eq!(entries.len(), 5, "{path}");
+    assert_eq!(run_from(entries[0], "node"), "v24.18.0");
+    assert_eq!(run_from(entries[1], "pnpm"), "11.13.0");
+    assert_eq!(entries[2..], ["/opt/mine/bin", "/usr/bin", "/bin"]);
 }

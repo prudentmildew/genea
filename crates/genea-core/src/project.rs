@@ -63,7 +63,8 @@ impl Project {
     /// one way the terminal, scripts and language servers start processes.
     pub(crate) fn process_env(&self) -> ProcessEnv {
         let environment = self.environment.as_ref().expect("the environment starts when the project opens");
-        environment.process_env()
+        let tools = self.toolchain.iter().flat_map(Toolchain::installed);
+        environment.process_env(tools.map(|installed| installed.bin_dir.as_path()))
     }
 
     /// Reads the toolchain pins and starts the downloads, in the background.

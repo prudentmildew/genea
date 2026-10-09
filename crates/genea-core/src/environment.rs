@@ -18,7 +18,7 @@
 use std::{
     ffi::{OsStr, OsString},
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use genea_host::{ProcessSpec, SharedHost};
@@ -94,8 +94,25 @@ impl Environment {
         });
     }
 
-    pub(crate) fn process_env(&self) -> ProcessEnv {
-        ProcessEnv { root: self.root.clone(), vars: self.vars.clone() }
+    /// The environment with `first` (the pinned tools' folders) put first
+    /// on PATH.
+    pub(crate) fn process_env<'a>(&self, first: impl IntoIterator<Item = &'a Path>) -> ProcessEnv {
+        let mut path: Vec<PathBuf> = Vec::new();
+        for dir in first {
+            if !path.iter().any(|seen| seen == dir) {
+                path.push(dir.to_owned());
+            }
+        }
+        let mut vars = self.vars.clone();
+        if !path.is_empty() {
+            path.extend(value(&vars, "PATH").into_iter().flat_map(std::env::split_paths));
+            // A PATH entry can't contain ':' (the store's folders never do).
+            if let Ok(joined) = std::env::join_paths(path) {
+                vars.retain(|(key, _)| key != "PATH");
+                vars.push(("PATH".into(), joined));
+            }
+        }
+        ProcessEnv { root: self.root.clone(), vars }
     }
 }
 
