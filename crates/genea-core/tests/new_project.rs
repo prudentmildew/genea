@@ -136,6 +136,37 @@ fn invalid_names_are_refused_with_a_clear_message() {
 }
 
 #[test]
+fn a_non_empty_folder_is_refused_and_left_alone() {
+    let parent = FixtureProject::new().file("my-app/notes.txt", "mine\n").build();
+    let mut workbench = Workbench::new(host().shared());
+    open_dialog(&mut workbench);
+
+    create(&mut workbench, "my-app", parent.root());
+
+    let dialog = workbench.new_project_dialog().expect("the dialog stays open");
+    let folder = parent.path("my-app");
+    assert_eq!(dialog.error, Some(format!("{} isn't empty. Choose a new or empty folder.", folder.display())));
+    assert!(!dialog.creating);
+    assert_eq!(workbench.projects(), []);
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+    assert_eq!(parent.read("my-app/notes.txt"), "mine\n");
+}
+
+#[test]
+fn create_needs_a_parent_folder() {
+    let mut workbench = Workbench::new(host().shared());
+    open_dialog(&mut workbench);
+
+    workbench.dispatch_new_project(NewProjectCommand::SetName("my-app".into()));
+    workbench.dispatch_new_project(NewProjectCommand::Create);
+    workbench.settle().unwrap();
+
+    let dialog = workbench.new_project_dialog().unwrap();
+    assert_eq!(dialog.error.as_deref(), Some("Choose a folder to create the project in."));
+    assert_eq!(workbench.projects(), []);
+}
+
+#[test]
 fn the_dialog_says_whats_wrong_with_the_name_while_typing() {
     let mut workbench = Workbench::new(host().shared());
     open_dialog(&mut workbench);
