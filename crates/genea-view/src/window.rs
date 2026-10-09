@@ -13,15 +13,18 @@ use std::{
 };
 
 use genea_core::{
-    CloseChoice, Command, FileRow, FileRowKind, LeftColumnView, PaneView, ProblemItem, ProjectId, Severity,
-    Theme as ConfigTheme, Workbench,
+    CloseChoice, Command, FileRow, FileRowKind, FinderItem, FinderMode, FinderView, LeftColumnView, PaneView,
+    ProblemItem, ProjectId, Severity, Theme as ConfigTheme, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::{FileEntry, LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts, surface::Surface};
+use crate::{
+    FileEntry, FinderRow, LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts,
+    surface::Surface,
+};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -54,6 +57,10 @@ pub struct WindowController {
     /// The button went down with ⌥ (adding a caret), so a drag doesn't
     /// select.
     option_press: bool,
+    /// The finder's mode while it is open, and its results as last pushed.
+    finder_mode: Option<FinderMode>,
+    finder_items: Vec<FinderItem>,
+    finder_rows: Rc<VecModel<FinderRow>>,
 }
 
 /// A press this soon after a double-click on the same line is a triple-click.
@@ -68,6 +75,8 @@ impl WindowController {
         window.set_problems(ModelRc::from(problem_rows.clone()));
         let file_rows = Rc::new(VecModel::default());
         window.set_files(ModelRc::from(file_rows.clone()));
+        let finder_rows = Rc::new(VecModel::default());
+        window.set_finder_items(ModelRc::from(finder_rows.clone()));
         Ok(WindowController {
             key,
             window,
@@ -84,6 +93,9 @@ impl WindowController {
             files: Arc::from([]),
             file_rows,
             option_press: false,
+            finder_mode: None,
+            finder_items: Vec::new(),
+            finder_rows,
         })
     }
 
@@ -292,9 +304,10 @@ impl WindowController {
             self.surfaces[pane].sync(window, editor);
         }
         crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
-        if view.focused_pane != self.focused_pane {
+        let finder_closed = self.sync_finder(view.finder.as_ref());
+        if view.focused_pane != self.focused_pane || finder_closed {
             self.focused_pane = view.focused_pane;
-            window.invoke_refocus();
+            self.window.invoke_refocus();
         }
 
         if let Some(prompt) = &view.close_prompt
@@ -306,6 +319,52 @@ impl WindowController {
                 with_app(move |app| app.resolve_close(key, choice))
             });
         }
+    }
+
+    /// Shows the finder overlay as the core has it. Returns whether it just
+    /// closed, so the editor takes the keyboard back.
+    fn sync_finder(&mut self, finder: Option<&FinderView>) -> bool {
+        let window = &self.window;
+        let Some(finder) = finder else {
+            window.set_finder_open(false);
+            return self.finder_mode.take().is_some();
+        };
+        window.set_finder_open(true);
+        window.set_finder_title(finder_title(finder.mode).into());
+        // The query is the TextInput's own text; set it only when the core's
+        // differs, i.e. when a finder (re)opens empty.
+        if window.get_finder_query() != finder.query.as_str() {
+            window.set_finder_query(finder.query.as_str().into());
+        }
+        if self.finder_mode != Some(finder.mode) {
+            self.finder_mode = Some(finder.mode);
+            window.invoke_focus_finder();
+        }
+        if finder.items != self.finder_items {
+            let rows: Vec<FinderRow> = finder
+                .items
+                .iter()
+                .map(|item| FinderRow {
+                    label: item.label.as_str().into(),
+                    detail: item.detail.as_str().into(),
+                    shortcut: item.shortcut.as_deref().unwrap_or_default().into(),
+                })
+                .collect();
+            for row in &rows {
+                fonts::prepare(&row.label);
+                fonts::prepare(&row.detail);
+            }
+            self.finder_rows.set_vec(rows);
+            self.finder_items = finder.items.clone();
+        }
+        window.set_finder_selected(finder.selected.map_or(-1, |i| i as i32));
+        false
+    }
+
+    /// A finder result was clicked: choose it.
+    pub fn click_finder_item(&mut self, workbench: &mut Workbench, index: usize) {
+        workbench.dispatch(self.project, Command::SelectFinderItem(index));
+        self.dispatch(workbench, Command::AcceptFinder);
     }
 
     /// The close prompt was answered.
@@ -337,6 +396,16 @@ impl WindowController {
         if workbench.project(self.project).is_some_and(|p| p.left_column != Some(view)) {
             self.dispatch(workbench, Command::ToggleLeftColumn(view));
         }
+    }
+}
+
+/// The finder's heading.
+fn finder_title(mode: FinderMode) -> &'static str {
+    match mode {
+        FinderMode::Files => "Go to File",
+        FinderMode::RecentFiles => "Recent Files",
+        FinderMode::Actions => "Find Action",
+        FinderMode::Everywhere => "Search Everywhere",
     }
 }
 

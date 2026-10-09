@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use genea_core::{CaretMove, Command};
+use genea_core::{CaretMove, Command, FinderMode};
 use slint::{SharedString, platform::Key};
 
 /// Modifier state of a key press. `cmd` is ⌘.
@@ -108,8 +108,33 @@ fn is_typed_text(text: &str) -> bool {
     !text.is_empty() && text.chars().all(|c| !c.is_control() && !('\u{E000}'..='\u{F8FF}').contains(&c))
 }
 
-/// Two ⌥ presses at most this far apart start the clone-caret gesture.
+/// Two ⌥ presses at most this far apart start the clone-caret gesture, and
+/// two ⇧ presses open Search Everywhere.
 const DOUBLE_PRESS: Duration = Duration::from_millis(400);
+
+/// ⇧⇧: Search Everywhere. Two presses of ⇧ alone, with no other key
+/// between them. Watches every key press, since it needs the ⇧ presses
+/// themselves.
+#[derive(Default)]
+pub struct DoubleShift {
+    last_shift: Option<Instant>,
+}
+
+impl DoubleShift {
+    /// The command for this key press, if it completes a ⇧⇧.
+    pub fn command_for(&mut self, text: &str) -> Option<Command> {
+        if text != SharedString::from(Key::Shift).as_str() && text != SharedString::from(Key::ShiftR).as_str() {
+            self.last_shift = None;
+            return None;
+        }
+        let now = Instant::now();
+        if self.last_shift.take().is_some_and(|at| now.duration_since(at) < DOUBLE_PRESS) {
+            return Some(Command::OpenFinder(FinderMode::Everywhere));
+        }
+        self.last_shift = Some(now);
+        None
+    }
+}
 
 /// WebStorm's Clone Caret Above and Below: press ⌥ twice and keep it held,
 /// then ↑ or ↓ (each press adds a caret). Watches every key press, since it
