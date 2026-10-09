@@ -68,7 +68,7 @@ fn version_of(program: &Path) -> String {
 }
 
 fn tab(title: &str, status: TerminalStatus) -> TerminalTab {
-    TerminalTab { title: title.into(), status }
+    TerminalTab { title: title.into(), status, shell: title == "zsh" }
 }
 
 #[test]

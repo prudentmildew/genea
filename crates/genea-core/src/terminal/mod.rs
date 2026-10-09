@@ -647,7 +647,11 @@ impl Terminal {
             focused: self.focused,
             status: tab.status(),
             title: tab.title(),
-            tabs: self.tabs.iter().map(|tab| TerminalTab { title: tab.title(), status: tab.status() }).collect(),
+            tabs: self
+                .tabs
+                .iter()
+                .map(|tab| TerminalTab { title: tab.title(), status: tab.status(), shell: tab.launch == Launch::Shell })
+                .collect(),
             active_tab: self.active,
             rows: self.size.rows,
             columns: self.size.columns,

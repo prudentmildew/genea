@@ -9,7 +9,7 @@ import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ProblemRow } from "problems-view.slint";
-import { TerminalPane, TermRow, TermCursor } from "terminal-pane.slint";
+import { TerminalPane, TermRow, TermCursor, TermTab } from "terminal-pane.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
 
@@ -84,7 +84,7 @@ export component ProjectWindow inherits Window {
     // splitter drags it.
     in property <bool> terminal-visible: true;
     in property <bool> terminal-focused;
-    in property <string> terminal-title;
+    in property <[TermTab]> terminal-tabs;
     in property <string> terminal-message;
     in property <[TermRow]> terminal-rows;
     in property <TermCursor> terminal-cursor;
@@ -104,6 +104,7 @@ export component ProjectWindow inherits Window {
     callback paste();
     callback select-all();
     callback reload-environment();
+    callback install-dependencies();
     // The Code menu's structural editing items (ticket #25).
     callback structural(StructuralAction);
     // Toolchain commands (ticket #37).
@@ -136,6 +137,7 @@ export component ProjectWindow inherits Window {
     // The terminal pane.
     callback toggle-terminal();
     callback terminal-focus();
+    callback terminal-tab-clicked(index: int);
     callback terminal-key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
     callback terminal-committed(text: string);
     callback terminal-preedit-changed(text: string);
@@ -237,6 +239,14 @@ export component ProjectWindow inherits Window {
                 title: "Reload Environment";
                 activated => {
                     root.reload-environment();
+                }
+            }
+
+            // The pinned package manager's install, in a terminal tab (#41).
+            MenuItem {
+                title: "Install Dependencies";
+                activated => {
+                    root.install-dependencies();
                 }
             }
 
@@ -633,7 +643,7 @@ export component ProjectWindow inherits Window {
             terminal := TerminalPane {
                 width: root.terminal-visible ? root.terminal-width : 0px;
                 visible: root.terminal-visible;
-                title: root.terminal-title;
+                tabs: root.terminal-tabs;
                 message: root.terminal-message;
                 focused: root.terminal-focused;
                 rows: root.terminal-rows;
@@ -641,6 +651,9 @@ export component ProjectWindow inherits Window {
                 mouse-reporting: root.terminal-mouse-reporting;
                 focus-requested => {
                     root.terminal-focus();
+                }
+                tab-clicked(index) => {
+                    root.terminal-tab-clicked(index);
                 }
                 key(text, shift, cmd, alt, ctrl) => {
                     root.terminal-key(text, shift, cmd, alt, ctrl);

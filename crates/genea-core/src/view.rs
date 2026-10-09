@@ -484,6 +484,9 @@ pub struct TerminalView {
 pub struct TerminalTab {
     pub title: String,
     pub status: TerminalStatus,
+    /// It runs the user's shell, which Return starts again once it ended;
+    /// else a command (`pnpm install`), which ends with its program.
+    pub shell: bool,
 }
 
 /// Whether a terminal tab's program runs.

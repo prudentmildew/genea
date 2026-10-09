@@ -41,8 +41,16 @@ export struct TermCursor {
     preedit-width: length,
 }
 
+// A terminal tab: the shell, or a command like `pnpm install` (#41).
+export struct TermTab {
+    title: string,
+    active: bool,
+    // Its program has exited or couldn't start.
+    ended: bool,
+}
+
 export component TerminalPane inherits Rectangle {
-    in property <string> title;
+    in property <[TermTab]> tabs;
     // Shown over the grid while the shell isn't running ("Starting…").
     in property <string> message;
     in property <bool> focused;
@@ -56,6 +64,7 @@ export component TerminalPane inherits Rectangle {
     out property <length> grid-height: grid.height;
 
     callback focus-requested();
+    callback tab-clicked(index: int);
     callback key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
     callback committed(text: string);
     callback preedit-changed(text: string);
@@ -90,21 +99,48 @@ export component TerminalPane inherits Rectangle {
                 background: Theme.chrome-border;
             }
 
-            // The focused pane's marker, as on the editor's tabs.
-            Rectangle {
-                y: 0px;
-                height: 2px;
-                background: Theme.caret;
-                visible: root.focused;
-            }
+            // One tab shows as the pane's title; several as a strip, like
+            // the editor's.
+            HorizontalLayout {
+                alignment: start;
 
-            Text {
-                x: 12px;
-                width: parent.width - 24px;
-                text: root.title;
-                color: root.focused ? Theme.chrome-foreground : Theme.chrome-muted;
-                vertical-alignment: center;
-                overflow: elide;
+                for tab[index] in root.tabs: Rectangle {
+                    background: tab.active && root.tabs.length > 1 ? Theme.terminal-palette[1] : transparent;
+
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        background: Theme.chrome-border;
+                        visible: root.tabs.length > 1;
+                    }
+
+                    // The focused pane's marker, as on the editor's tabs.
+                    Rectangle {
+                        y: 0px;
+                        height: 2px;
+                        background: Theme.caret;
+                        visible: tab.active && root.focused;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            root.tab-clicked(index);
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+
+                        Text {
+                            text: tab.title;
+                            color: tab.active && root.focused ? Theme.chrome-foreground : Theme.chrome-muted;
+                            opacity: tab.ended ? 0.6 : 1;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
             }
         }
 
