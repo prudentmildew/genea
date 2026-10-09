@@ -1,0 +1,49 @@
+# Genea's Cargo workspace. ARCHITECTURE.md describes the crate layout and the
+# rules that keep the core framework-free.
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# patches/ holds vendored crates.io sources used by [patch.crates-io]. They are
+# not workspace members.
+exclude = ["patches"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+# Genea's own crates.
+genea-core = { path = "crates/genea-core" }
+genea-host = { path = "crates/genea-host" }
+genea-testkit = { path = "crates/genea-testkit" }
+
+# Core building blocks (spec #19, "Building blocks").
+ropey = "1.6.1"
+unicode-width = "0.2.2"
+
+# Host boundary (genea-host's RealHost). The system TLS stack, so no C crypto
+# library is built.
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls-no-default", "gzip"] }
+
+# Test support.
+tempfile = "3.27.0"
+
+# GUI (ADR 0004), used by genea-view only. Exact pin: a bump is deliberate,
+# must pass the benchmark harness, and re-applies the i-slint-common patch
+# below (patches/README.md).
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia"] }
+slint-build = "=1.18.1"
+
+[patch.crates-io]
+# ADR 0004: Genea's one Slint patch. It turns off the system-font scan and
+# registers Menlo and Apple Symbols explicitly. Re-apply it on every Slint pin
+# bump with scripts/reapply-slint-patch.sh (patches/README.md).
+i-slint-common = { path = "patches/i-slint-common" }
+
+[profile.release]
+debug = "limited"
+lto = "thin"
+codegen-units = 1

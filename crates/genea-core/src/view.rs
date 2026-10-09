@@ -1,0 +1,74 @@
+//! View state: what a project's window shows, as plain data.
+//!
+//! The Slint view binds its models to these structs and tests assert on
+//! them. They hold what the user sees (grid text, 1-based labels, display
+//! columns), not internal representations, so the internals can change
+//! freely. They are snapshots: re-read them after a command or a change
+//! notification.
+
+use std::path::PathBuf;
+
+/// One open project, as its window shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectView {
+    /// The project folder.
+    pub root: PathBuf,
+    /// The folder's name, for the window title.
+    pub name: String,
+    /// The open file, if any.
+    pub editor: Option<EditorView>,
+    pub status: StatusBar,
+    /// Messages for the user, oldest first.
+    pub notices: Vec<Notice>,
+}
+
+/// The editor surface: a grid of visible lines plus the caret.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditorView {
+    /// The file, relative to the project root when it is inside it.
+    pub path: PathBuf,
+    /// The tab title: the file name.
+    pub title: String,
+    pub read_only: bool,
+    /// Lines in the file. A file ending in a newline has an empty last line.
+    pub line_count: usize,
+    /// The first visible row, fractional while scrolling smoothly. The view
+    /// offsets the grid by `scroll_top - lines[0].index` rows.
+    pub scroll_top: f64,
+    /// The lines in the viewport, top to bottom, including a partly visible
+    /// last one.
+    pub lines: Vec<VisibleLine>,
+    pub caret: Caret,
+}
+
+/// A line in the viewport.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisibleLine {
+    /// 0-based line index in the file (the gutter shows `index + 1`).
+    pub index: usize,
+    /// The text as laid out on the grid: no line ending, tabs expanded to
+    /// spaces, cut off after [`crate::MAX_VISIBLE_COLUMNS`] columns.
+    pub text: String,
+}
+
+/// The caret's grid cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Caret {
+    /// 0-based line index.
+    pub line: usize,
+    /// 0-based display column: tabs and wide characters take several.
+    pub column: usize,
+}
+
+/// The status bar's items.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StatusBar {
+    /// The caret position as `line:column`, 1-based, or `None` with no editor.
+    pub caret: Option<String>,
+}
+
+/// A message for the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub message: String,
+}

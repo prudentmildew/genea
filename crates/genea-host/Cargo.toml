@@ -1,0 +1,10 @@
+[package]
+name = "genea-host"
+description = "The host boundary: every effect outside the process and the project folder (processes, downloads, the clock)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ureq.workspace = true

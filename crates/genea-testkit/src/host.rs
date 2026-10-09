@@ -1,0 +1,303 @@
+//! The test host: a manual clock, scripted processes and scripted downloads.
+
+use std::{
+    collections::HashMap,
+    ffi::{OsStr, OsString},
+    io::{self, PipeReader, PipeWriter, Write},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    time::{Duration, Instant},
+};
+
+use genea_host::{
+    Child, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
+    TimerCallback,
+};
+
+/// A host whose effects are scripted by the test.
+///
+/// It is a cheap handle: clone it, give [`shared`](Self::shared) to the
+/// workbench and keep a clone to script processes, serve downloads and
+/// advance the clock.
+#[derive(Clone, Default)]
+pub struct TestHost {
+    inner: Arc<Inner>,
+}
+
+#[derive(Default)]
+struct Inner {
+    clock: ManualClock,
+    processes: ScriptedProcesses,
+    downloads: ScriptedDownloads,
+}
+
+impl TestHost {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The host to hand to `Workbench::new`.
+    pub fn shared(&self) -> SharedHost {
+        Arc::new(self.clone())
+    }
+
+    pub fn clock(&self) -> &ManualClock {
+        &self.inner.clock
+    }
+
+    pub fn processes(&self) -> &ScriptedProcesses {
+        &self.inner.processes
+    }
+
+    pub fn downloads(&self) -> &ScriptedDownloads {
+        &self.inner.downloads
+    }
+}
+
+impl Host for TestHost {
+    fn clock(&self) -> &dyn Clock {
+        &self.inner.clock
+    }
+
+    fn processes(&self) -> &dyn Processes {
+        &self.inner.processes
+    }
+
+    fn downloads(&self) -> &dyn Downloads {
+        &self.inner.downloads
+    }
+}
+
+// --- Clock -------------------------------------------------------------------
+
+/// A clock that only moves when the test calls [`advance`](Self::advance).
+///
+/// Pending timers are not background work: `Workbench::settle` doesn't wait
+/// for them. Advance the clock, then settle.
+pub struct ManualClock {
+    start: Instant,
+    state: Mutex<ClockState>,
+}
+
+#[derive(Default)]
+struct ClockState {
+    elapsed: Duration,
+    timers: Vec<(Duration, u64, TimerCallback)>,
+    next_id: u64,
+}
+
+impl Default for ManualClock {
+    fn default() -> Self {
+        ManualClock { start: Instant::now(), state: Mutex::default() }
+    }
+}
+
+impl ManualClock {
+    /// Moves time forward, firing every timer that comes due, in deadline
+    /// order and on this thread.
+    pub fn advance(&self, by: Duration) {
+        let target = self.state.lock().unwrap().elapsed + by;
+        loop {
+            let due = {
+                let mut state = self.state.lock().unwrap();
+                let next = state
+                    .timers
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (at, _, _))| *at <= target)
+                    .min_by_key(|(_, (at, id, _))| (*at, *id))
+                    .map(|(i, _)| i);
+                match next {
+                    Some(i) => {
+                        let (at, _, fire) = state.timers.remove(i);
+                        state.elapsed = state.elapsed.max(at);
+                        Some(fire)
+                    }
+                    None => {
+                        state.elapsed = target;
+                        None
+                    }
+                }
+            };
+            match due {
+                Some(fire) => fire(),
+                None => break,
+            }
+        }
+    }
+
+    /// How many timers are waiting to fire.
+    pub fn pending_timers(&self) -> usize {
+        self.state.lock().unwrap().timers.len()
+    }
+}
+
+impl Clock for ManualClock {
+    fn now(&self) -> Instant {
+        self.start + self.state.lock().unwrap().elapsed
+    }
+
+    fn after(&self, delay: Duration, fire: TimerCallback) {
+        let mut state = self.state.lock().unwrap();
+        let id = state.next_id;
+        state.next_id += 1;
+        let at = state.elapsed + delay;
+        state.timers.push((at, id, fire));
+    }
+}
+
+// --- Processes ---------------------------------------------------------------
+
+type Script = Arc<dyn Fn(&ProcessSpec, FakeProcess) -> i32 + Send + Sync>;
+
+/// Child processes played by closures.
+///
+/// [`script`](Self::script) a program by file name; each spawn of it runs
+/// the closure on its own thread with the process's pipes, and the closure's
+/// return value is the exit code. Spawning an unscripted program fails with
+/// `NotFound`, like a missing binary.
+#[derive(Default)]
+pub struct ScriptedProcesses {
+    scripts: Mutex<HashMap<OsString, Script>>,
+    spawned: Mutex<Vec<ProcessSpec>>,
+}
+
+/// The process side of a scripted child: read what Genea writes, write what
+/// it should read.
+pub struct FakeProcess {
+    pub stdin: PipeReader,
+    pub stdout: PipeWriter,
+    pub stderr: PipeWriter,
+    killed: Arc<AtomicBool>,
+}
+
+impl FakeProcess {
+    /// Whether Genea has killed this process. A long-running script should
+    /// stop when this turns true.
+    pub fn killed(&self) -> bool {
+        self.killed.load(Ordering::SeqCst)
+    }
+}
+
+impl ScriptedProcesses {
+    /// Plays every spawn of `program` (matched on its file name) with `script`.
+    pub fn script(
+        &self,
+        program: impl AsRef<OsStr>,
+        script: impl Fn(&ProcessSpec, FakeProcess) -> i32 + Send + Sync + 'static,
+    ) {
+        self.scripts.lock().unwrap().insert(program.as_ref().to_owned(), Arc::new(script));
+    }
+
+    /// Every spawn so far, scripted or not, in order.
+    pub fn spawned(&self) -> Vec<ProcessSpec> {
+        self.spawned.lock().unwrap().clone()
+    }
+}
+
+impl Processes for ScriptedProcesses {
+    fn spawn(&self, spec: &ProcessSpec) -> io::Result<Child> {
+        self.spawned.lock().unwrap().push(spec.clone());
+        let script = self.scripts.lock().unwrap().get(spec.program_name()).cloned().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, format!("no scripted process for {}", spec.program.display()))
+        })?;
+        let (stdin_r, stdin_w) = io::pipe()?;
+        let (stdout_r, stdout_w) = io::pipe()?;
+        let (stderr_r, stderr_w) = io::pipe()?;
+        let killed = Arc::new(AtomicBool::new(false));
+        let fake = FakeProcess { stdin: stdin_r, stdout: stdout_w, stderr: stderr_w, killed: killed.clone() };
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let spec = spec.clone();
+        std::thread::Builder::new().name(format!("fake {}", spec.program.display())).spawn(move || {
+            let code = script(&spec, fake);
+            let _ = exit_tx.send(Exit::code(code));
+        })?;
+        Ok(Child {
+            stdin: Some(Box::new(stdin_w) as Box<dyn Write + Send>),
+            stdout: Some(Box::new(stdout_r)),
+            stderr: Some(Box::new(stderr_r)),
+            control: Box::new(FakeControl { exit: exit_rx, killed, exited: None }),
+        })
+    }
+}
+
+struct FakeControl {
+    exit: mpsc::Receiver<Exit>,
+    killed: Arc<AtomicBool>,
+    exited: Option<Exit>,
+}
+
+const SIGKILL: i32 = 9;
+
+impl ProcessControl for FakeControl {
+    fn id(&self) -> Option<u32> {
+        None
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        self.killed.store(true, Ordering::SeqCst);
+        if self.exited.is_none() {
+            self.exited = Some(Exit { code: None, signal: Some(SIGKILL) });
+        }
+        Ok(())
+    }
+
+    fn wait(&mut self) -> io::Result<Exit> {
+        if let Some(exit) = self.exited {
+            return Ok(exit);
+        }
+        let exit = self.exit.recv().unwrap_or(Exit { code: None, signal: Some(SIGKILL) });
+        self.exited = Some(exit);
+        Ok(exit)
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<Exit>> {
+        if self.exited.is_none() {
+            self.exited = self.exit.try_recv().ok();
+        }
+        Ok(self.exited)
+    }
+}
+
+// --- Downloads ---------------------------------------------------------------
+
+/// Downloads answered from a table. Unknown URLs answer HTTP 404.
+#[derive(Default)]
+pub struct ScriptedDownloads {
+    table: Mutex<HashMap<String, Result<Vec<u8>, u16>>>,
+    requests: Mutex<Vec<String>>,
+}
+
+impl ScriptedDownloads {
+    /// Answers `url` with these bytes.
+    pub fn serve(&self, url: impl Into<String>, body: impl Into<Vec<u8>>) {
+        self.table.lock().unwrap().insert(url.into(), Ok(body.into()));
+    }
+
+    /// Answers `url` with an HTTP error status.
+    pub fn fail(&self, url: impl Into<String>, status: u16) {
+        self.table.lock().unwrap().insert(url.into(), Err(status));
+    }
+
+    /// Every URL fetched so far, in order.
+    pub fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+impl Downloads for ScriptedDownloads {
+    fn fetch(&self, url: &str, sink: &mut dyn Write) -> Result<u64, DownloadError> {
+        self.requests.lock().unwrap().push(url.to_owned());
+        let answer = self.table.lock().unwrap().get(url).cloned().unwrap_or(Err(404));
+        match answer {
+            Ok(body) => {
+                sink.write_all(&body)?;
+                Ok(body.len() as u64)
+            }
+            Err(status) => Err(DownloadError::Status(status)),
+        }
+    }
+}
