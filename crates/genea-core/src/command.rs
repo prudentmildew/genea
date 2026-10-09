@@ -50,6 +50,15 @@ pub enum Command {
     /// ⌃⌘G: selects every occurrence of the selection, or of the word at
     /// the caret (whole words), with a caret at each.
     SelectAllOccurrences,
+    /// Adds a caret on the line above the primary caret, at the same
+    /// column (or the line's end), as the new primary. If the caret before
+    /// the primary is on that line, so the primary was cloned below it,
+    /// removes the primary instead.
+    CloneCaretAbove,
+    /// Like [`CloneCaretAbove`](Self::CloneCaretAbove), on the line below.
+    CloneCaretBelow,
+    /// Esc: drops every caret but the primary, which keeps its selection.
+    CollapseCarets,
     /// Double-click: selects the word (or punctuation or space run) at a
     /// grid cell.
     SelectWord { line: usize, column: usize },

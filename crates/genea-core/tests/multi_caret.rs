@@ -259,3 +259,51 @@ fn control_command_g_selects_every_occurrence() {
     assert_eq!(editing.selections(), [vec![4..5, 10..11], vec![10..11], vec![]]);
     assert_eq!(editing.primary(), (0, 5));
 }
+
+#[test]
+fn cloning_the_caret_above_keeps_its_column_across_short_lines() {
+    let mut editing = open("abcd\nab\nabcd\nabcd\n");
+    editing.run([Command::PlaceCaret { line: 3, column: 3 }]);
+
+    editing.run([Command::CloneCaretAbove]);
+    assert_eq!(editing.carets(), [(2, 3), (3, 3)]);
+    assert_eq!(editing.primary(), (2, 3));
+
+    editing.run([Command::CloneCaretAbove, Command::CloneCaretAbove]);
+    assert_eq!(editing.carets(), [(0, 3), (1, 2), (2, 3), (3, 3)]);
+
+    // Nothing above the first line.
+    editing.run([Command::CloneCaretAbove]);
+    assert_eq!(editing.carets(), [(0, 3), (1, 2), (2, 3), (3, 3)]);
+
+    editing.type_text("X");
+    assert_eq!(editing.lines(), ["abcXd", "abX", "abcXd", "abcXd", ""]);
+}
+
+#[test]
+fn cloning_back_the_other_way_removes_the_last_clone() {
+    let mut editing = open("a\nb\nc\nd\n");
+    editing.run([Command::PlaceCaret { line: 1, column: 1 }]);
+
+    editing.run([Command::CloneCaretBelow, Command::CloneCaretBelow]);
+    assert_eq!(editing.carets(), [(1, 1), (2, 1), (3, 1)]);
+    assert_eq!(editing.primary(), (3, 1));
+
+    editing.run([Command::CloneCaretAbove]);
+    assert_eq!(editing.carets(), [(1, 1), (2, 1)]);
+    assert_eq!(editing.primary(), (2, 1));
+}
+
+#[test]
+fn escape_collapses_to_the_primary_caret() {
+    let mut editing = open("foo\nfoo\nfoo\n");
+    // ⌃⌘G keeps the first "foo" primary; ⌃⇧G drops it, so the last one
+    // added becomes primary.
+    editing.run([Command::SelectAllOccurrences, Command::UnselectLastOccurrence]);
+    assert_eq!(editing.carets(), [(1, 3), (2, 3)]);
+
+    editing.run([Command::CollapseCarets]);
+
+    assert_eq!(editing.carets(), [(2, 3)]);
+    assert_eq!(editing.selections(), [vec![], vec![], vec![0..3], vec![]]);
+}

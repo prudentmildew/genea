@@ -284,6 +284,34 @@ impl Editor {
         self.reveal_caret(viewport_rows);
     }
 
+    /// Adds a caret on the line above (`up`) or below the primary one, at
+    /// its goal column, as the new primary; or removes the primary if the
+    /// caret before it is on that line (it was cloned the other way).
+    pub(crate) fn clone_caret(&mut self, up: bool, viewport_rows: f64) {
+        let primary = self.primary();
+        let line = self.text.char_to_line(primary.caret);
+        let target = if up { line.checked_sub(1) } else { Some(line + 1).filter(|&l| l < self.text.len_lines()) };
+        let Some(target) = target else { return };
+        let previous = self.cursors.len().checked_sub(2).map(|i| self.cursors[i]);
+        if primary.goal.is_some() && previous.is_some_and(|p| self.text.char_to_line(p.caret) == target) {
+            self.cursors.pop();
+        } else {
+            let mut clone = Cursor::at(primary.caret);
+            clone.goal = primary.goal;
+            self.move_vertically(&mut clone, target);
+            clone.collapse();
+            self.cursors.push(clone);
+            self.merge_cursors();
+        }
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Esc: keeps only the primary caret, with its selection.
+    pub(crate) fn collapse_carets(&mut self, viewport_rows: f64) {
+        self.set_cursor(self.primary());
+        self.reveal_caret(viewport_rows);
+    }
+
     /// Selects the word touching the primary caret, if any, and starts a
     /// whole-word occurrence search.
     fn select_word_at_primary(&mut self) {

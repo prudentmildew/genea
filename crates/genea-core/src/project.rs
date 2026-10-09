@@ -107,6 +107,16 @@ impl Project {
                     editor.select_all_occurrences(self.viewport_rows);
                 }
             }
+            Command::CloneCaretAbove | Command::CloneCaretBelow => {
+                if let Some(editor) = &mut self.editor {
+                    editor.clone_caret(command == Command::CloneCaretAbove, self.viewport_rows);
+                }
+            }
+            Command::CollapseCarets => {
+                if let Some(editor) = &mut self.editor {
+                    editor.collapse_carets(self.viewport_rows);
+                }
+            }
             Command::SelectWord { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.select_word(line, column, self.viewport_rows);
