@@ -113,6 +113,8 @@ impl WindowController {
         if let Some(rows) = self.surface.take_viewport_change(window) {
             workbench.dispatch(self.project, Command::SetViewport { rows });
         }
+        let update = workbench.update_notice().map(|notice| notice.message).unwrap_or_default();
+        window.set_status_update(update.into());
         // The project closes with its window, so this is always there.
         let Some(view) = workbench.project(self.project) else { return };
 

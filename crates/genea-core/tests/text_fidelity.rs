@@ -72,6 +72,8 @@ fn editing_a_file_with_invalid_utf8_is_refused() {
         Command::SelectAll,
         Command::Cut,
         Command::Paste,
+        Command::Undo,
+        Command::Redo,
         Command::Save,
     ] {
         workbench.dispatch(project, command);

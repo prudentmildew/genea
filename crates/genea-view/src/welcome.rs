@@ -48,6 +48,8 @@ impl WelcomeController {
             self.recent = welcome.recent_projects;
         }
         self.window.set_notice(self.notice.clone().unwrap_or_default().into());
+        let update = workbench.update_notice().map(|notice| notice.message).unwrap_or_default();
+        self.window.set_update(update.into());
         if !self.visible {
             self.visible = true;
             if let Err(error) = self.window.show() {
