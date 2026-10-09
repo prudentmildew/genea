@@ -4,6 +4,7 @@ use std::{
     collections::BinaryHeap,
     cmp::Reverse,
     io::{self, Write},
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Condvar, Mutex, OnceLock},
     time::{Duration, Instant},
@@ -15,12 +16,27 @@ use crate::{
 };
 
 /// The host the app runs on.
-#[derive(Default)]
 pub struct RealHost {
     clock: SystemClock,
     processes: OsProcesses,
     downloads: HttpDownloads,
+    support_dir: PathBuf,
     clipboard: ClipboardSlot,
+}
+
+impl Default for RealHost {
+    fn default() -> Self {
+        // Without a home folder (never on a normal login) fall back to a
+        // folder that is at least writable.
+        let home = std::env::home_dir().unwrap_or_else(std::env::temp_dir);
+        RealHost {
+            clock: SystemClock::default(),
+            processes: OsProcesses::default(),
+            downloads: HttpDownloads::default(),
+            support_dir: home.join("Library/Application Support/Genea"),
+            clipboard: ClipboardSlot::default(),
+        }
+    }
 }
 
 impl RealHost {
@@ -52,6 +68,10 @@ impl Host for RealHost {
 
     fn downloads(&self) -> &dyn Downloads {
         &self.downloads
+    }
+
+    fn support_dir(&self) -> &Path {
+        &self.support_dir
     }
 
     fn clipboard(&self) -> &dyn Clipboard {

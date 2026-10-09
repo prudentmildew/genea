@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
     io::{self, PipeReader, PipeWriter, Write},
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -22,17 +23,33 @@ use genea_host::{
 /// It is a cheap handle: clone it, give [`shared`](Self::shared) to the
 /// workbench and keep a clone to script processes, serve downloads and
 /// advance the clock.
+///
+/// Each test host has its own application-support folder in a temp dir,
+/// deleted with the last clone. Two workbenches on clones of one host share
+/// it, which is how a test restarts Genea.
 #[derive(Clone, Default)]
 pub struct TestHost {
     inner: Arc<Inner>,
 }
 
-#[derive(Default)]
 struct Inner {
     clock: ManualClock,
     processes: ScriptedProcesses,
     downloads: ScriptedDownloads,
+    support: tempfile::TempDir,
     clipboard: TestClipboard,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        Inner {
+            clock: ManualClock::default(),
+            processes: ScriptedProcesses::default(),
+            downloads: ScriptedDownloads::default(),
+            support: tempfile::Builder::new().prefix("genea-support-").tempdir().expect("create a temp dir"),
+            clipboard: TestClipboard::default(),
+        }
+    }
 }
 
 impl TestHost {
@@ -73,6 +90,10 @@ impl Host for TestHost {
 
     fn downloads(&self) -> &dyn Downloads {
         &self.inner.downloads
+    }
+
+    fn support_dir(&self) -> &Path {
+        self.inner.support.path()
     }
 
     fn clipboard(&self) -> &dyn Clipboard {

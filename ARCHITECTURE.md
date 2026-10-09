@@ -39,7 +39,8 @@ use, and nothing else:
 
 | Part | API | Notes |
 |---|---|---|
-| Projects | `open_project(root) -> ProjectId`, `close_project(id)`, `projects()` | Opening an already-open folder returns its id. |
+| Projects | `open_project(root) -> ProjectId`, `close_project(id)`, `projects()` | Opening an already-open folder returns its id (the app focuses its window). Opening puts the folder first in the recent projects. |
+| Welcome | `welcome() -> Option<WelcomeView>` | `Some` exactly while no project is open; lists the recent projects, most recent first (kept in `recent-projects.txt` in the application-support folder, saved in the background 1 s after a change). |
 | Commands in | `dispatch(id, Command)` | `Command` (`src/command.rs`) is plain data, one variant per user action. Commands apply synchronously on the main thread. |
 | View state out | `project(id) -> Option<ProjectView>` | Plain snapshots (`src/view.rs`) of what the window shows: user-visible text, 1-based labels, display columns. |
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
@@ -64,8 +65,11 @@ use, and nothing else:
 
 ## The host boundary
 
-`genea_host::Host` provides `clock()`, `processes()`, `downloads()` and
-`clipboard()`.
+`genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
+`clipboard()` (below), and `support_dir()`, Genea's application-support
+folder, where the core keeps its own files (recent projects; session state,
+review baselines, …). The folder is used through the real filesystem; the
+host only says where it is, so tests never touch the user's.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
   idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
@@ -78,7 +82,9 @@ use, and nothing else:
   `ScriptedProcesses::script("tsc", |spec, io| …)` plays a program on a
   thread with real pipes (unscripted programs fail with `NotFound`) and
   records every spawn; `ScriptedDownloads::serve/fail` answers URLs from a
-  table (unknown URLs answer 404) and records every request.
+  table (unknown URLs answer 404) and records every request. Each test host
+  has its own temp support folder; a second workbench on a clone of the same
+  host is a restart.
 
 A new kind of effect (a PTY, say) gets a trait in `genea-host`, an accessor on
 `Host`, a real implementation in `genea-host/src/real.rs` and a scripted one
@@ -118,9 +124,14 @@ chrome, native menus via muda (Slint's `MenuBar`).
   instantiates. `theme.slint` holds colours, fonts and metrics.
 - `src/app.rs`: the `App` (workbench + windows) in a main-thread
   `thread_local`, reached through `with_app`; callback wiring; the notifier,
-  which coalesces wake-ups into one `pump` per event-loop turn.
+  which coalesces wake-ups into one `pump` per event-loop turn. One window
+  per open project: `App::open_project(from, folder)` opens a folder in a new
+  window (or focuses its existing one). The welcome window shows while no
+  project is open; closing it quits. The event loop runs with
+  `run_event_loop_until_quit`, so closing the last project window doesn't.
 - `src/window.rs`: `WindowController::sync`, the only place view state flows
-  into Slint.
+  into Slint. `WindowController::focus` brings a window to the front.
+  `src/welcome.rs`: the welcome window's sync.
 - `src/surface.rs`: the editor surface, a ring of line slots (line L in slot
   L % slots) with a per-slot diff, plus base-line rebasing for `f32`
   precision.

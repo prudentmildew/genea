@@ -14,7 +14,8 @@ use crate::{
     command::Command,
     jobs::{self, Inbox, Jobs},
     project::Project,
-    view::ProjectView,
+    recent::RecentProjects,
+    view::{ProjectView, WelcomeView},
 };
 
 /// How long `settle` waits for background work before giving up. Real time,
@@ -47,6 +48,7 @@ pub(crate) struct Core {
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
+    recent: RecentProjects,
 }
 
 impl Core {
@@ -58,7 +60,8 @@ impl Core {
 impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
-        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0 }, inbox }
+        let recent = RecentProjects::load(host.support_dir());
+        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0, recent }, inbox }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -69,15 +72,27 @@ impl Workbench {
         self.core.jobs.set_notifier(Some(Arc::new(notify)));
     }
 
-    /// Opens the folder at `root` as a project. Opening a folder that is
-    /// already open returns its existing id.
+    /// Opens the folder at `root` as a project and puts it first in the
+    /// recent projects. Opening a folder that is already open returns its
+    /// existing id; the app then focuses that project's window. A folder
+    /// that can't be opened leaves the recent projects.
     pub fn open_project(&mut self, root: impl AsRef<Path>) -> Result<ProjectId, OpenProjectError> {
         let root = root.as_ref();
         let error = |reason| OpenProjectError { path: root.to_owned(), reason };
-        let root = root.canonicalize().map_err(|e| error(e.to_string()))?;
-        if !root.is_dir() {
-            return Err(error("it isn't a folder".into()));
-        }
+        let checked = root.canonicalize().map_err(|e| e.to_string()).and_then(|canonical| {
+            if canonical.is_dir() { Ok(canonical) } else { Err("it isn't a folder".into()) }
+        });
+        let root = match checked {
+            Ok(root) => root,
+            Err(reason) => {
+                // A recent project that can't be opened any more leaves the list.
+                let Core { recent, jobs, host, .. } = &mut self.core;
+                recent.forget(root, jobs, host.clock());
+                return Err(error(reason));
+            }
+        };
+        let Core { recent, jobs, host, .. } = &mut self.core;
+        recent.opened(&root, jobs, host.clock());
         if let Some((id, _)) = self.core.projects.iter().find(|(_, p)| p.root() == root) {
             return Ok(*id);
         }
@@ -95,6 +110,12 @@ impl Workbench {
     /// The open projects, oldest first.
     pub fn projects(&self) -> Vec<ProjectId> {
         self.core.projects.keys().copied().collect()
+    }
+
+    /// What the welcome shows, or `None` while a project is open: the app
+    /// shows the welcome exactly when this is `Some`.
+    pub fn welcome(&self) -> Option<WelcomeView> {
+        self.core.projects.is_empty().then(|| WelcomeView { recent_projects: self.core.recent.view() })
     }
 
     /// Applies a command to a project. Commands for a closed project are

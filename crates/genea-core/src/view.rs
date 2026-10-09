@@ -96,3 +96,20 @@ pub struct StatusBar {
 pub struct Notice {
     pub message: String,
 }
+
+/// The welcome, shown while no project is open: Open…, New Project… and the
+/// recent projects.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WelcomeView {
+    /// Projects opened before, most recent first.
+    pub recent_projects: Vec<RecentProject>,
+}
+
+/// A project in the recent-projects list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentProject {
+    /// The project folder, as it was opened.
+    pub root: PathBuf,
+    /// The folder's name.
+    pub name: String,
+}

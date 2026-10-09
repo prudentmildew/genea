@@ -10,7 +10,9 @@
 //!   and deterministic.
 //!
 //! The filesystem and the file watcher are *not* behind the host: they are
-//! real in both hosts, and tests use temp-dir fixture projects instead.
+//! real in both hosts, and tests use temp-dir fixture projects instead. The
+//! host only says *where* Genea keeps its own files
+//! ([`Host::support_dir`]), so that tests never touch the user's.
 //!
 //! ## Extending the boundary
 //!
@@ -25,7 +27,7 @@ mod downloads;
 mod processes;
 pub mod real;
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 pub use clipboard::Clipboard;
 pub use clock::{Clock, TimerCallback};
@@ -45,6 +47,11 @@ pub trait Host: Send + Sync + 'static {
     fn downloads(&self) -> &dyn Downloads;
     /// The system clipboard, for Cut, Copy and Paste.
     fn clipboard(&self) -> &dyn Clipboard;
+    /// Genea's application-support folder, where it keeps its own files
+    /// (recent projects, session state, review baselines). It may not exist
+    /// yet: whoever writes into it creates it. The real host uses
+    /// `~/Library/Application Support/Genea`; the test host a temp dir.
+    fn support_dir(&self) -> &Path;
 }
 
 /// How the core holds its host.
