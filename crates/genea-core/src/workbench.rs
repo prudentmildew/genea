@@ -14,6 +14,7 @@ use crate::{
     command::Command,
     jobs::{self, Inbox, Jobs},
     project::Project,
+    templates::{self, Creations, NewProject, ProjectCreation},
     view::ProjectView,
 };
 
@@ -48,6 +49,7 @@ pub(crate) struct Core {
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
+    pub(crate) creations: Creations,
 }
 
 impl Core {
@@ -59,7 +61,7 @@ impl Core {
 impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
-        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0 }, inbox }
+        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0, creations: Creations::default() }, inbox }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -111,6 +113,21 @@ impl Workbench {
     /// project isn't open.
     pub fn project(&self, project: ProjectId) -> Option<ProjectView> {
         self.core.projects.get(&project).map(Project::view)
+    }
+
+    /// Creates a project from a template in the background: writes its
+    /// files into `request.folder` and initialises a git repository there.
+    /// It refuses a folder that isn't empty. The outcome shows in
+    /// [`project_creation`](Self::project_creation); a new request replaces
+    /// the last one's state.
+    pub fn create_project(&mut self, request: NewProject) {
+        templates::create(&mut self.core, request);
+    }
+
+    /// The state of the last [`create_project`](Self::create_project), if
+    /// any.
+    pub fn project_creation(&self) -> Option<ProjectCreation> {
+        self.core.creations.view()
     }
 
     /// Applies finished background work without waiting. Returns whether

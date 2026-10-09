@@ -23,6 +23,10 @@ genea-testkit = { path = "crates/genea-testkit" }
 # Core building blocks (spec #19, "Building blocks").
 ropey = "1.6.1"
 unicode-width = "0.2.2"
+# Git, in-process (ADR 0005): pure Rust, so no `git` binary or C toolchain is
+# needed. Each crate turns on the features it uses.
+gix = { version = "0.89.0", default-features = false }
+serde_json = "1.0.151"
 
 # Host boundary (genea-host's RealHost). The system TLS stack, so no C crypto
 # library is built.

@@ -11,6 +11,10 @@ publish.workspace = true
 genea-host.workspace = true
 ropey.workspace = true
 unicode-width.workspace = true
+# Templates: `git init` (ticket #60).
+gix = { workspace = true, features = ["sha1"] }
+# Templates write package.json with its keys in the conventional order.
+serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]
 genea-testkit.workspace = true
