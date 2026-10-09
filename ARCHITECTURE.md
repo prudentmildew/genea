@@ -114,7 +114,8 @@ shifts the spans, so a keystroke never waits on a parse. Don't edit the
 rope anywhere else. One background parse per file runs at a time
 (`Project::reparse`, `spawn_parse`): it reparses incrementally and
 recomputes the highlights, edits made meanwhile are replayed onto its result,
-and the next parse starts if the text moved on. Files over 5 MB get no syntax.
+and the next parse starts if the text moved on. Large files get no syntax
+(below).
 
 - View state: `VisibleLine::highlights`, a list of `HighlightSpan`
   (display columns + `genea_core::Highlight`). The view colours each
@@ -125,6 +126,23 @@ and the next parse starts if the text moved on. Files over 5 MB get no syntax.
   grammars' injection queries. `.env` has no grammar: `syntax/dotenv.rs`.
 - Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
   tokens over `Syntax::spans()` in `Editor::grid_line`.
+
+### Large files
+
+A file over `LARGE_FILE_BYTES` (5 MB, ticket #27) is a *large file*: it
+opens with no syntax tree, no highlighting and no language intelligence, and
+`StatusBar::large_file` says why. It is decided once, from the size read at
+open. **Anything that starts per-file language work (language servers,
+semantic tokens, …) checks `Editor::is_large` and skips large files.**
+
+Opening reads in the background (`src/reading.rs`), and the main thread only
+swaps the finished rope in. A file that may be large (over 5 MB, or of
+unknown size, like a pipe) opens as soon as its first screen of lines is
+read: `Editor::loading` shows those lines read-only (`EditorView::loading`),
+and `Editor::finish_loading` swaps the whole file in when it is read,
+keeping each tab's carets and scroll, which the first screen (a prefix of
+the whole text) leaves valid. The benchmark harness's `open-1mb` and
+`open-100mb` scenarios measure it.
 
 ## The host boundary
 
