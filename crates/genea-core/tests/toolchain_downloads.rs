@@ -296,3 +296,134 @@ fn a_range_nothing_matches_fails_with_a_notice() {
     assert!(view.notices[0].message.contains("no published Node version matches ^30"), "{:?}", view.notices);
     assert_eq!(installed(&host), ["pnpm/12.10.1"]);
 }
+
+// --- Unpinned projects -------------------------------------------------------
+
+/// Genea's built-in defaults as of this release: Node's active LTS and the
+/// latest pnpm (research digest, 2026-10-09).
+const DEFAULT_NODE: &str = "24.21.0";
+const DEFAULT_PNPM: &str = "12.10.1";
+
+#[test]
+fn an_unpinned_project_gets_the_defaults_and_a_notice_offering_to_pin_them() {
+    let host = TestHost::new();
+    host.tools().node(DEFAULT_NODE);
+    host.tools().node("26.11.1");
+    host.tools().pnpm(DEFAULT_PNPM);
+    let package_json = "{\n  \"name\": \"app\"\n}\n";
+    let fixture = project(package_json);
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.runtime, ready("Node", DEFAULT_NODE));
+    assert_eq!(view.toolchain.package_manager, ready("pnpm", DEFAULT_PNPM));
+    assert_eq!(view.notices.len(), 1, "{:?}", view.notices);
+    assert_eq!(
+        view.notices[0].message,
+        "This project doesn't pin its runtime or package manager, so Genea uses Node 24.21.0 and pnpm 12.10.1."
+    );
+    // Genea never writes package.json without a click.
+    assert_eq!(fixture.read("package.json"), package_json);
+
+    let pin = view.notices[0].action.clone().expect("an action that pins the defaults");
+    assert_eq!(pin.label, "Pin these versions");
+    workbench.dispatch(project, pin.command);
+    workbench.settle().unwrap();
+
+    assert_eq!(
+        fixture.read("package.json"),
+        r#"{
+  "name": "app",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.21.0"
+    }
+  },
+  "packageManager": "pnpm@12.10.1"
+}
+"#
+    );
+    let view = workbench.project(project).unwrap();
+    assert!(view.notices.is_empty(), "{:?}", view.notices);
+    assert_eq!(view.toolchain.runtime, ready("Node", DEFAULT_NODE));
+    assert_eq!(installed(&host), ["node/24.21.0", "pnpm/12.10.1"]);
+}
+
+#[test]
+fn pinning_the_defaults_writes_only_the_unpinned_role_and_keeps_the_rest_of_the_file() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().node(DEFAULT_NODE);
+    host.tools().pnpm(DEFAULT_PNPM);
+    let fixture = project(
+        "{\n\t\"name\": \"app\",\n\t\"devEngines\": { \"runtime\": { \"name\": \"node\", \"version\": \"^24.0.0\" } },\n\t\"scripts\": { \"dev\": \"vite\" }\n}",
+    );
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.notices.len(), 1, "{:?}", view.notices);
+    assert_eq!(
+        view.notices[0].message,
+        "This project doesn't pin its package manager, so Genea uses pnpm 12.10.1."
+    );
+
+    workbench.dispatch(project, view.notices[0].action.clone().unwrap().command);
+    workbench.settle().unwrap();
+
+    // The range pin stays as written (Genea never moves a pin by itself),
+    // and the file keeps its tab indentation and its missing final newline.
+    let expected = [
+        "{",
+        "\t\"name\": \"app\",",
+        "\t\"devEngines\": {",
+        "\t\t\"runtime\": {",
+        "\t\t\t\"name\": \"node\",",
+        "\t\t\t\"version\": \"^24.0.0\"",
+        "\t\t}",
+        "\t},",
+        "\t\"scripts\": {",
+        "\t\t\"dev\": \"vite\"",
+        "\t},",
+        "\t\"packageManager\": \"pnpm@12.10.1\"",
+        "}",
+    ];
+    assert_eq!(fixture.read("package.json"), expected.join("\n"));
+    assert!(workbench.project(project).unwrap().notices.is_empty());
+}
+
+#[test]
+fn a_folder_without_package_json_has_no_toolchain() {
+    let host = TestHost::new();
+    let fixture = FixtureProject::new().file("main.ts", "").build();
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.runtime, None);
+    assert_eq!(view.toolchain.package_manager, None);
+    assert!(view.notices.is_empty());
+    assert!(host.downloads().requests().is_empty());
+}
+
+#[test]
+fn a_foreign_package_manager_is_off_and_nothing_is_downloaded_for_it() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    let fixture = project(&pins("node", "24.18.0", "npm@11.0.0"));
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.runtime, ready("Node", "24.18.0"));
+    assert_eq!(view.toolchain.package_manager.unwrap().state, ToolState::Off);
+    assert_eq!(installed(&host), ["node/24.18.0"]);
+}
