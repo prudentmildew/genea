@@ -180,6 +180,19 @@ in a job when a project with a root `package.json` opens, starts one job per
 role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
 whose `NoticeAction` carries the `Command` a click dispatches.
 
+Pins change only through commands (ticket #37). `OpenToolchainPicker(kind)`
+lists versions in a job (`genea_toolchain::published` plus what the store
+has, so it works offline) into `ProjectView::toolchain_picker`; each
+`ToolchainOption` carries the `SetRuntime` / `SetPackageManager` command a
+pick dispatches, which writes the exact pin (`pins::write`) and restarts that
+role's download. `RemoveUnusedToolchains` is handled by the workbench (it
+needs the recent projects): it keeps what each recent or open project's
+`package.json` resolves to (exact pins, the newest stored match of a range,
+the defaults for an unpinned role) and `Store::remove`s the rest. The
+lockfile cross-check (root `pnpm-lock.yaml`, `bun.lock`, `bun.lockb` against
+the package-manager role) reports as `ProblemSource::Toolchain` and is
+re-run when the watcher sees a root lockfile change.
+
 ## The project environment
 
 Every process Genea starts for a project (terminal shells, scripts,
