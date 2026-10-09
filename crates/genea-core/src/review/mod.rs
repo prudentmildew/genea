@@ -96,6 +96,8 @@ enum Finished {
     Kept { kept: Vec<(PathBuf, Option<FileState>)>, failed: Vec<String> },
     Reverted { reverted: Vec<(PathBuf, Option<FileState>)>, failed: Vec<String> },
     Persisted,
+    /// A check found that the scope may have changed.
+    NeedsRescan,
 }
 
 /// What the project does after an op: reload open editors of reverted
@@ -232,7 +234,7 @@ impl Review {
                     let mut check = Checker { root: &root, store: &store, own: &own, budget: &mut budget, observed: Vec::new() };
                     match check.paths(&scope, paths) {
                         Some(()) => Finished::Observed { observed: check.observed },
-                        None => check.rescan(Vec::new()),
+                        None => Finished::NeedsRescan,
                     }
                 })
             }
@@ -330,6 +332,8 @@ impl Review {
                 outcome.errors = failed;
             }
             Finished::Persisted => {}
+            // Before anything queued after the check.
+            Finished::NeedsRescan => self.ops.push_front(Op::Rescan),
         }
         if std::mem::take(&mut self.dirty) {
             self.ops.push_back(Op::Persist);

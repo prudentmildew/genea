@@ -276,6 +276,80 @@ fn revert_under_unsaved_edits_shows_the_conflict_bar() {
     assert_eq!(fixture.read("main.ts"), "mine\n");
 }
 
+#[test]
+fn gitignored_files_node_modules_and_git_are_never_listed() {
+    let (fixture, mut workbench, project) = open(&[
+        (".gitignore", "dist/\n*.log\n!keep.log\n"),
+        ("web/.gitignore", "generated.ts\n"),
+        ("genea.jsonc", r#"{ "exclude": ["src/"] }"#),
+        ("src/main.ts", "a\n"),
+    ]);
+
+    fixture.write("dist/bundle.js", "x\n");
+    fixture.write("debug.log", "x\n");
+    fixture.write("keep.log", "x\n");
+    fixture.write("web/generated.ts", "x\n");
+    fixture.write("web/app.ts", "x\n");
+    fixture.write("generated.ts", "x\n");
+    fixture.write("node_modules/pkg/index.js", "x\n");
+    fixture.write("web/node_modules/pkg/index.js", "x\n");
+    fixture.write(".git/HEAD", "ref: refs/heads/main\n");
+    fixture.write("src/main.ts", "b\n");
+    workbench.settle().unwrap();
+
+    assert_eq!(
+        changes(&workbench, project),
+        [
+            ("generated.ts".into(), ChangeKind::Created),
+            ("keep.log".into(), ChangeKind::Created),
+            ("src/main.ts".into(), ChangeKind::Modified),
+            ("web/app.ts".into(), ChangeKind::Created),
+        ],
+        "the config's `exclude` doesn't affect review"
+    );
+}
+
+#[test]
+fn files_ignored_at_open_are_not_in_the_baseline() {
+    let (fixture, mut workbench, project) = open(&[(".gitignore", "out/\n"), ("out/a.js", "a\n"), ("a.ts", "a\n")]);
+
+    fixture.remove("out/a.js");
+    fixture.write("out/b.js", "b\n");
+    workbench.settle().unwrap();
+
+    assert_eq!(changes(&workbench, project), []);
+}
+
+#[test]
+fn a_changed_gitignore_changes_what_is_reviewed() {
+    let (fixture, mut workbench, project) = open(&[(".gitignore", "tmp/\n"), ("a.ts", "a\n")]);
+    fixture.write("b.ts", "b\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::KeepAllChanges);
+    workbench.settle().unwrap();
+
+    fixture.write(".gitignore", "tmp/\nb.ts\n");
+    fixture.write("tmp/scratch.ts", "x\n");
+    workbench.settle().unwrap();
+    assert_eq!(changes(&workbench, project), [(".gitignore".into(), ChangeKind::Modified)]);
+
+    fixture.write("b.ts", "changed\n");
+    workbench.settle().unwrap();
+    assert_eq!(changes(&workbench, project), [(".gitignore".into(), ChangeKind::Modified)], "b.ts is ignored now");
+
+    fixture.write(".gitignore", "");
+    workbench.settle().unwrap();
+    assert_eq!(
+        changes(&workbench, project),
+        [
+            (".gitignore".into(), ChangeKind::Modified),
+            ("b.ts".into(), ChangeKind::Created),
+            ("tmp/scratch.ts".into(), ChangeKind::Created),
+        ],
+        "files that come into review have no baseline yet"
+    );
+}
+
 fn editor_text(workbench: &Workbench, project: ProjectId) -> Vec<String> {
     workbench.project(project).unwrap().editor.unwrap().lines.into_iter().map(|l| l.text).collect()
 }
