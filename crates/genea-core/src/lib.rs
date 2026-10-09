@@ -21,17 +21,23 @@
 //!   commands.
 
 mod command;
+mod config;
 mod editor;
 mod jobs;
+mod problems;
 mod project;
 mod recent;
 mod text;
 mod view;
+mod watcher;
 mod workbench;
 
 pub use command::{CaretMove, Command};
+pub use config::{Config, TerminalPosition, Theme};
 pub use editor::MAX_VISIBLE_COLUMNS;
+pub use problems::{ProblemSource, Severity, TextPosition};
 pub use view::{
-    Caret, EditorView, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView,
+    Caret, EditorView, InlineProblem, LeftColumnView, Notice, Preedit, ProblemItem, ProjectView, RecentProject,
+    StatusBar, VisibleLine, WelcomeView,
 };
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

@@ -23,6 +23,12 @@ genea-testkit = { path = "crates/genea-testkit" }
 # Core building blocks (spec #19, "Building blocks").
 ropey = "1.6.1"
 unicode-width = "0.2.2"
+# The config (#29): JSONC with positions for inline errors, and the
+# `.gitignore` syntax of `exclude` (also used to walk the project).
+jsonc-parser = { version = "0.34.0", default-features = false }
+ignore = "0.4.33"
+# The project watcher: FSEvents on macOS (#29; the Files view builds on it).
+notify = "8.2.0"
 
 # Host boundary (genea-host's RealHost). The system TLS stack, so no C crypto
 # library is built.

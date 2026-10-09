@@ -1,8 +1,10 @@
 //! One open project: its folder and what its window shows.
 
 use std::{
-    fs::File,
-    io::{BufReader, BufWriter, Write},
+    collections::BTreeSet,
+    ffi::OsStr,
+    fs::{self, File},
+    io::{self, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -11,9 +13,12 @@ use ropey::Rope;
 
 use crate::{
     command::{CaretMove, Command},
+    config::{self, CONFIG_FILE, Config},
     editor::Editor,
     jobs::Jobs,
-    view::{Notice, ProjectView, StatusBar},
+    problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
+    view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
+    watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
 
@@ -28,6 +33,20 @@ pub(crate) struct Project {
     notices: Vec<Notice>,
     /// Bumped by every OpenFile, so a slow read can't replace a newer one.
     open_generation: u64,
+    /// Watches the project folder; `None` until started, or if it failed.
+    watcher: Option<Watcher>,
+    /// The effective config, and the problems of the root `genea.jsonc`.
+    config: Config,
+    config_problems: Vec<Problem>,
+    /// Bumped by every config read, so a slow read can't replace a newer one.
+    config_generation: u64,
+    /// `genea.jsonc` files below the root (relative paths), each ignored
+    /// with a warning.
+    nested_configs: BTreeSet<PathBuf>,
+    /// Every source's errors and warnings: the Problems view.
+    problems: Problems,
+    /// What the left column shows; `None` while it is collapsed.
+    left_column: Option<LeftColumnView>,
 }
 
 impl Project {
@@ -39,7 +58,152 @@ impl Project {
             viewport_rows: DEFAULT_VIEWPORT_ROWS,
             notices: Vec::new(),
             open_generation: 0,
+            watcher: None,
+            config: Config::default(),
+            config_problems: Vec::new(),
+            config_generation: 0,
+            nested_configs: BTreeSet::new(),
+            problems: Problems::default(),
+            left_column: None,
         }
+    }
+
+    /// Starts the project's background work once it is open: the watcher,
+    /// and reading the config.
+    pub(crate) fn start(&mut self, jobs: &Jobs, host: &dyn Host) {
+        match Watcher::start(&self.root, host.support_dir(), self.id, jobs) {
+            Ok(watcher) => self.watcher = Some(watcher),
+            Err(error) => self.notices.push(Notice {
+                message: format!("Genea can't watch this project, so changes on disk won't show: {error}"),
+            }),
+        }
+        self.load_config(jobs);
+        self.find_nested_configs(jobs);
+    }
+
+    /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
+    /// was written.
+    pub(crate) fn sync_watcher(&self) -> bool {
+        self.watcher.as_ref().is_some_and(Watcher::sync)
+    }
+
+    /// Files changed on disk (from the watcher). Every area that follows
+    /// files on disk hooks in here.
+    pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
+        let root_config = self.root.join(CONFIG_FILE);
+        if changes.rescan {
+            self.load_config(jobs);
+            self.find_nested_configs(jobs);
+            return;
+        }
+        if changes.paths.contains(&root_config) {
+            self.load_config(jobs);
+        }
+        let nested: Vec<PathBuf> = changes
+            .paths
+            .iter()
+            .filter(|path| **path != root_config && path.file_name().is_some_and(|n| n == CONFIG_FILE))
+            .filter_map(|path| path.strip_prefix(&self.root).ok())
+            .filter(|path| !path.components().any(|c| is_skipped_dir(c.as_os_str())))
+            .map(Path::to_path_buf)
+            .collect();
+        if !nested.is_empty() {
+            self.check_nested_configs(nested, jobs);
+        }
+    }
+
+    /// Reads the root `genea.jsonc` in the background and applies it. A
+    /// missing file is an empty config.
+    fn load_config(&mut self, jobs: &Jobs) {
+        self.config_generation += 1;
+        let generation = self.config_generation;
+        let path = self.root.join(CONFIG_FILE);
+        let id = self.id;
+        jobs.spawn("read config", move || {
+            let read = match fs::read_to_string(&path) {
+                Ok(text) => Ok(config::parse(&text, Path::new(CONFIG_FILE))),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok((Config::default(), Vec::new())),
+                Err(error) => Err(error),
+            };
+            Box::new(move |core| {
+                let Some(project) = core.project_mut(id) else { return };
+                if project.config_generation != generation {
+                    return;
+                }
+                let (config, problems) = read.unwrap_or_else(|error| {
+                    let problem = Problem {
+                        severity: Severity::Error,
+                        path: CONFIG_FILE.into(),
+                        start: TextPosition::default(),
+                        end: TextPosition::default(),
+                        message: format!("Couldn't read the config: {error}. It isn't applied."),
+                    };
+                    (Config::default(), vec![problem])
+                });
+                project.config = config;
+                project.config_problems = problems;
+                project.update_config_problems();
+            })
+        });
+    }
+
+    /// Walks the project in the background for `genea.jsonc` files below
+    /// the root, skipping `node_modules` and `.git`.
+    fn find_nested_configs(&mut self, jobs: &Jobs) {
+        let root = self.root.clone();
+        let id = self.id;
+        jobs.spawn("find nested configs", move || {
+            let found: BTreeSet<PathBuf> = ignore::WalkBuilder::new(&root)
+                .standard_filters(false)
+                .filter_entry(|entry| !is_skipped_dir(entry.file_name()))
+                .build()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.depth() > 1 && entry.file_name() == CONFIG_FILE)
+                .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
+                .filter_map(|entry| entry.path().strip_prefix(&root).ok().map(Path::to_path_buf))
+                .collect();
+            Box::new(move |core| {
+                let Some(project) = core.project_mut(id) else { return };
+                project.nested_configs = found;
+                project.update_config_problems();
+            })
+        });
+    }
+
+    /// Checks in the background whether these nested config paths (from
+    /// watcher events) exist now.
+    fn check_nested_configs(&mut self, paths: Vec<PathBuf>, jobs: &Jobs) {
+        let root = self.root.clone();
+        let id = self.id;
+        jobs.spawn("check nested configs", move || {
+            let checked: Vec<(bool, PathBuf)> =
+                paths.into_iter().map(|path| (root.join(&path).is_file(), path)).collect();
+            Box::new(move |core| {
+                let Some(project) = core.project_mut(id) else { return };
+                for (exists, path) in checked {
+                    if exists {
+                        project.nested_configs.insert(path);
+                    } else {
+                        project.nested_configs.remove(&path);
+                    }
+                }
+                project.update_config_problems();
+            })
+        });
+    }
+
+    /// Puts the config's problems (the root file's, plus a warning per
+    /// nested config) into Problems.
+    fn update_config_problems(&mut self) {
+        let nested = self.nested_configs.iter().map(|path| Problem {
+            severity: Severity::Warning,
+            path: path.clone(),
+            start: TextPosition::default(),
+            end: TextPosition::default(),
+            message: format!("Only the config at the project root applies. This {CONFIG_FILE} is ignored."),
+        });
+        let problems = self.config_problems.iter().cloned().chain(nested).collect();
+        self.problems.replace(ProblemSource::Config, problems);
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -48,7 +212,12 @@ impl Project {
 
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         match command {
-            Command::OpenFile(path) => self.open_file(path, jobs),
+            Command::OpenFile(path) => self.open_file(path, None, jobs),
+            Command::OpenFileAt { path, at } => self.open_file_at(path, Some(at), jobs),
+            Command::OpenConfig => self.open_config(jobs),
+            Command::ToggleLeftColumn(view) => {
+                self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
+            }
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -140,9 +309,17 @@ impl Project {
     }
 
     pub(crate) fn view(&self) -> ProjectView {
-        let editor = self.editor.as_ref().map(|e| e.view(self.viewport_rows));
+        let editor = self.editor.as_ref().map(|e| {
+            let mut view = e.view(self.viewport_rows);
+            view.problems = self.inline_problems(e, &view.lines);
+            view
+        });
+        let (errors, warnings) = self.problems.counts();
         let status = StatusBar {
             caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
+            errors,
+            warnings,
+            config_notice: self.config_notice(),
         };
         ProjectView {
             root: self.root.clone(),
@@ -150,6 +327,49 @@ impl Project {
             editor,
             status,
             notices: self.notices.clone(),
+            config: self.config.clone(),
+            problems: self.problems.items(),
+            left_column: self.left_column,
+        }
+    }
+
+    /// The open file's problems on the visible lines, in grid columns.
+    fn inline_problems(&self, editor: &Editor, lines: &[crate::view::VisibleLine]) -> Vec<InlineProblem> {
+        let (Some(first), Some(last)) = (lines.first(), lines.last()) else { return Vec::new() };
+        let mut inline = Vec::new();
+        for problem in self.problems.in_file(editor.path()) {
+            for line in problem.start.line.max(first.index)..=problem.end.line.min(last.index) {
+                let start = if line == problem.start.line { problem.start.column } else { 0 };
+                let end = if line == problem.end.line { problem.end.column } else { usize::MAX };
+                let from = editor.display_column(line, start);
+                let to = editor.display_column(line, end);
+                inline.push(InlineProblem {
+                    line,
+                    columns: from..to.max(from + 1),
+                    severity: problem.severity,
+                    message: problem.message.clone(),
+                });
+            }
+        }
+        inline.sort_by_key(|p| (p.line, p.columns.start));
+        inline
+    }
+
+    /// The status-bar notice while the config has problems.
+    fn config_notice(&self) -> Option<String> {
+        let (errors, warnings) =
+            self.problems.items().iter().filter(|p| p.source == ProblemSource::Config).fold((0, 0), |(e, w), p| {
+                match p.severity {
+                    Severity::Error => (e + 1, w),
+                    Severity::Warning => (e, w + 1),
+                }
+            });
+        let count = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
+        match (errors, warnings) {
+            (0, 0) => None,
+            (e, 0) => Some(format!("{CONFIG_FILE} has {}", count(e, "error"))),
+            (0, w) => Some(format!("{CONFIG_FILE} has {}", count(w, "warning"))),
+            (e, w) => Some(format!("{CONFIG_FILE} has {} and {}", count(e, "error"), count(w, "warning"))),
         }
     }
 
@@ -167,11 +387,16 @@ impl Project {
                 writer.flush()
             });
             Box::new(move |core| {
+                let jobs = core.jobs.clone();
                 let Some(project) = core.project_mut(id) else { return };
                 match written {
                     Ok(()) => {
                         if let Some(editor) = &mut project.editor {
                             editor.saved(&snapshot);
+                        }
+                        // The config applies on save, without waiting for the watcher.
+                        if snapshot.path == Path::new(CONFIG_FILE) {
+                            project.load_config(&jobs);
                         }
                     }
                     Err(error) => project
@@ -182,9 +407,50 @@ impl Project {
         });
     }
 
-    /// Reads the file in the background. The current editor stays until the
-    /// new file is read; a failed read leaves it and adds a notice.
-    fn open_file(&mut self, path: PathBuf, jobs: &Jobs) {
+    /// Shows a file with the caret at `at`. A file that is already open
+    /// keeps its buffer, unsaved edits included; another is read from disk.
+    fn open_file_at(&mut self, path: PathBuf, at: Option<TextPosition>, jobs: &Jobs) {
+        let relative = path.strip_prefix(&self.root).unwrap_or(&path);
+        if let Some(editor) = &mut self.editor
+            && editor.path() == relative
+        {
+            if let Some(at) = at {
+                let column = editor.display_column(at.line, at.column);
+                editor.place_caret(at.line, column, false, self.viewport_rows);
+            }
+            return;
+        }
+        self.open_file(path, at, jobs);
+    }
+
+    /// "Open config": opens the root `genea.jsonc`, creating it as `{}`
+    /// first if it is missing.
+    fn open_config(&mut self, jobs: &Jobs) {
+        let path = self.root.join(CONFIG_FILE);
+        let id = self.id;
+        jobs.spawn("create config", move || {
+            let created = match File::create_new(&path) {
+                Ok(mut file) => file.write_all(b"{}\n"),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+                Err(error) => Err(error),
+            };
+            Box::new(move |core| {
+                let jobs = core.jobs.clone();
+                let Some(project) = core.project_mut(id) else { return };
+                match created {
+                    Ok(()) => project.open_file_at(CONFIG_FILE.into(), None, &jobs),
+                    Err(error) => {
+                        project.notices.push(Notice { message: format!("Couldn't create {CONFIG_FILE}: {error}") })
+                    }
+                }
+            })
+        });
+    }
+
+    /// Reads the file in the background, then puts the caret at `at`. The
+    /// current editor stays until the new file is read; a failed read leaves
+    /// it and adds a notice.
+    fn open_file(&mut self, path: PathBuf, at: Option<TextPosition>, jobs: &Jobs) {
         let absolute = self.root.join(&path);
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
         self.open_generation += 1;
@@ -198,7 +464,14 @@ impl Project {
                     return;
                 }
                 match read {
-                    Ok(text) => project.editor = Some(Editor::new(shown, text)),
+                    Ok(text) => {
+                        let mut editor = Editor::new(shown, text);
+                        if let Some(at) = at {
+                            let column = editor.display_column(at.line, at.column);
+                            editor.place_caret(at.line, column, false, project.viewport_rows);
+                        }
+                        project.editor = Some(editor);
+                    }
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()) }),
@@ -206,4 +479,9 @@ impl Project {
             })
         });
     }
+}
+
+/// Folders the search for nested configs never looks in.
+fn is_skipped_dir(name: &OsStr) -> bool {
+    name == "node_modules" || name == ".git"
 }

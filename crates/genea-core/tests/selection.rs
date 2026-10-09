@@ -6,6 +6,11 @@ use std::ops::Range;
 use genea_core::{CaretMove::*, Command, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
+/// A line with nothing highlighted. Spelled out because `[vec![], vec![]]`
+/// can't infer its type: regex-automata and aho-corasick (under `ignore`)
+/// add `PartialEq` impls for `Range<usize>`.
+const NONE: Vec<Range<usize>> = Vec::new();
+
 fn open(text: &str) -> (FixtureProject, Workbench, ProjectId) {
     let fixture = FixtureProject::new().file("file.ts", text).build();
     let mut workbench = Workbench::new(TestHost::new().shared());
@@ -47,7 +52,7 @@ fn shift_arrows_select_characters_and_typing_replaces_them() {
 
     run(&mut workbench, project, [Command::InsertText("x".into())]);
     assert_eq!(lines(&workbench, project), ["let x = 1;", ""]);
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE]);
 }
 
 #[test]
@@ -57,11 +62,11 @@ fn left_and_right_collapse_a_selection_to_its_start_and_end() {
     run(&mut workbench, project, [Command::MoveCaret(Right), Command::Select(Right), Command::Select(Right)]);
     run(&mut workbench, project, [Command::MoveCaret(Left)]);
     assert_eq!(status_caret(&workbench, project), "1:2");
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE]);
 
     run(&mut workbench, project, [Command::Select(Right), Command::Select(Right), Command::MoveCaret(Right)]);
     assert_eq!(status_caret(&workbench, project), "1:4");
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE]);
 }
 
 #[test]
@@ -155,7 +160,7 @@ fn dragging_or_shift_clicking_extends_the_selection_from_the_click() {
 
     // A plain click drops it.
     run(&mut workbench, project, [Command::PlaceCaret { line: 1, column: 0 }]);
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE, NONE]);
 }
 
 #[test]
