@@ -1,14 +1,15 @@
 // The left column (spec #19 story 54): a view switcher on top and the active
-// view below. Files (⌘1, the one a project opens with) and Problems (⌘6)
-// are there; Changes and Search join them in their tickets: add a
+// view below. Files (⌘1, the one a project opens with), Changes (#53) and
+// Problems (⌘6) are there; Search joins them in its ticket: add a
 // `LeftView` value, a switcher tab and the view itself. The column is collapsed (not shown) while the core's
 // `left_column` is `None`.
 
 import { Theme } from "theme.slint";
 import { ProblemsView, ProblemRow } from "problems-view.slint";
 import { FilesView, FileEntry } from "files-view.slint";
+import { ChangesView, ChangeRow } from "changes-view.slint";
 
-export enum LeftView { files, problems }
+export enum LeftView { files, changes, problems }
 
 // A tab in the switcher.
 component SwitcherTab inherits Rectangle {
@@ -44,11 +45,18 @@ export component LeftColumn inherits Rectangle {
     in property <LeftView> view;
     in property <[ProblemRow]> problems;
     in property <[FileEntry]> files;
+    in property <[ChangeRow]> changes;
 
     // A switcher tab was clicked: show that view.
     callback show(LeftView);
     callback problem-clicked(int);
     callback file-clicked(int);
+    // The Changes view's row, its Keep and Revert, and Keep All, Revert All.
+    callback change-clicked(int);
+    callback keep-change(int);
+    callback revert-change(int);
+    callback keep-all-changes();
+    callback revert-all-changes();
 
     background: Theme.chrome-background;
 
@@ -65,6 +73,14 @@ export component LeftColumn inherits Rectangle {
                     active: root.view == LeftView.files;
                     clicked => {
                         root.show(LeftView.files);
+                    }
+                }
+
+                SwitcherTab {
+                    label: root.changes.length == 0 ? "Changes" : "Changes (" + root.changes.length + ")";
+                    active: root.view == LeftView.changes;
+                    clicked => {
+                        root.show(LeftView.changes);
                     }
                 }
 
@@ -89,6 +105,26 @@ export component LeftColumn inherits Rectangle {
             files: root.files;
             clicked(index) => {
                 root.file-clicked(index);
+            }
+        }
+
+        if root.view == LeftView.changes: ChangesView {
+            vertical-stretch: 1;
+            changes: root.changes;
+            clicked(index) => {
+                root.change-clicked(index);
+            }
+            keep(index) => {
+                root.keep-change(index);
+            }
+            revert(index) => {
+                root.revert-change(index);
+            }
+            keep-all => {
+                root.keep-all-changes();
+            }
+            revert-all => {
+                root.revert-all-changes();
             }
         }
 

@@ -390,6 +390,26 @@ fn wire(controller: &WindowController) {
             controller.click_file(&mut app.workbench, index);
         });
     });
+    window.on_change_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.click_change(&mut app.workbench, index);
+        });
+    });
+    let review = move |keep: bool| {
+        move |index: i32| {
+            let Ok(index) = usize::try_from(index) else { return };
+            with_app(move |app| {
+                let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+                controller.review_change(&mut app.workbench, index, keep);
+            });
+        }
+    };
+    window.on_keep_change(review(true));
+    window.on_revert_change(review(false));
+    window.on_keep_all_changes(menu(Command::KeepAllChanges));
+    window.on_revert_all_changes(menu(Command::RevertAllChanges));
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
@@ -421,6 +441,7 @@ fn left_column_view(view: LeftView) -> LeftColumnView {
     match view {
         LeftView::Files => LeftColumnView::Files,
         LeftView::Problems => LeftColumnView::Problems,
+        LeftView::Changes => LeftColumnView::Changes,
     }
 }
 

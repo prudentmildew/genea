@@ -1,0 +1,148 @@
+// The Changes view in the left column (ticket #53): the files changed on
+// disk outside Genea since the review baseline. Each row has Keep and
+// Revert (when the baseline can be restored); the header has Keep All and
+// Revert All. Clicking
+// a row opens the file. Rows are set from Rust (src/window.rs) out of the
+// core's ProjectView.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export enum ChangeMark { modified, created, deleted }
+
+export struct ChangeRow {
+    // Relative to the project root.
+    path: string,
+    mark: ChangeMark,
+    // Revert is available (the baseline's content is stored).
+    can-revert: bool,
+}
+
+// A text button in the chrome.
+component TextButton inherits Text {
+    callback clicked();
+
+    color: touch.has-hover ? Theme.link : Theme.chrome-foreground;
+    font-weight: 600;
+    vertical-alignment: center;
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ChangesView inherits Rectangle {
+    in property <[ChangeRow]> changes;
+
+    callback clicked(int);
+    callback keep(int);
+    callback revert(int);
+    callback keep-all();
+    callback revert-all();
+
+    background: Theme.chrome-background;
+
+    VerticalLayout {
+        if root.changes.length > 0: Rectangle {
+            height: 28px;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 12px;
+
+                Text {
+                    text: root.changes.length == 1 ? "1 file changed" : root.changes.length + " files changed";
+                    color: Theme.chrome-muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+
+                TextButton {
+                    text: "Keep All";
+                    clicked => {
+                        root.keep-all();
+                    }
+                }
+
+                TextButton {
+                    text: "Revert All";
+                    clicked => {
+                        root.revert-all();
+                    }
+                }
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.chrome-border;
+            }
+        }
+
+        if root.changes.length == 0: Text {
+            vertical-stretch: 1;
+            text: "No changes outside Genea";
+            color: Theme.chrome-muted;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        if root.changes.length > 0: ListView {
+            vertical-stretch: 1;
+
+            for change[index] in root.changes: Rectangle {
+                height: 22px;
+                background: touch.has-hover ? Theme.chrome-highlight : transparent;
+
+                // Under the buttons, so they get their own clicks.
+                touch := TouchArea {
+                    clicked => {
+                        root.clicked(index);
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+
+                    Text {
+                        width: 12px;
+                        text: change.mark == ChangeMark.created ? "A" : change.mark == ChangeMark.deleted ? "D" : "M";
+                        color: change.mark == ChangeMark.created ? Theme.link : change.mark == ChangeMark.deleted ? Theme.error : Theme.warning;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: change.path;
+                        color: change.mark == ChangeMark.deleted ? Theme.chrome-muted : Theme.chrome-foreground;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    TextButton {
+                        text: "Keep";
+                        clicked => {
+                            root.keep(index);
+                        }
+                    }
+
+                    TextButton {
+                        text: "Revert";
+                        visible: change.can-revert;
+                        clicked => {
+                            root.revert(index);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
