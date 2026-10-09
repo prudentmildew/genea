@@ -408,6 +408,33 @@ fn a_toolchain_pin_written_by_genea_is_not_listed() {
     assert_eq!(changes(&workbench, project), []);
 }
 
+#[test]
+fn the_baseline_is_kept_in_the_support_folder_not_the_project() {
+    let fixture = FixtureProject::new().file("main.ts", "one\n").build();
+    let host = TestHost::new();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    fixture.write("main.ts", "two\n");
+    workbench.settle().unwrap();
+    assert_eq!(changes(&workbench, project), [("main.ts".into(), ChangeKind::Modified)]);
+    drop(workbench);
+
+    // A restart: the first open's baseline is still "one".
+    let mut workbench = Workbench::new(host.shared());
+    let project_again = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    fixture.write("main.ts", "one\n");
+    workbench.settle().unwrap();
+    assert_eq!(changes(&workbench, project_again), [], "back to the baseline");
+    fixture.write("main.ts", "three\n");
+    workbench.settle().unwrap();
+    assert_eq!(changes(&workbench, project_again), [("main.ts".into(), ChangeKind::Modified)]);
+
+    let in_project: Vec<_> = std::fs::read_dir(fixture.root()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(in_project, ["main.ts"], "review writes nothing into the project");
+}
+
 fn editor_text(workbench: &Workbench, project: ProjectId) -> Vec<String> {
     workbench.project(project).unwrap().editor.unwrap().lines.into_iter().map(|l| l.text).collect()
 }
