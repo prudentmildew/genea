@@ -56,3 +56,18 @@ fn undo_after_a_reload_returns_the_previous_contents() {
     assert_eq!(text(&workbench, project), ["let b = 2;", ""]);
     assert!(!editor(&workbench, project).modified);
 }
+
+#[test]
+fn a_buffer_with_unsaved_edits_shows_the_conflict_bar_and_keeps_them() {
+    let (fixture, mut workbench, project) = open("main.ts", "let a = 1;\n");
+    run(&mut workbench, project, [Command::InsertText("mine ".into())]);
+    assert!(!editor(&workbench, project).conflict, "no bar before the file changes on disk");
+
+    fixture.write("main.ts", "theirs\n");
+    workbench.settle().unwrap();
+
+    let view = editor(&workbench, project);
+    assert!(view.conflict);
+    assert!(view.modified);
+    assert_eq!(text(&workbench, project), ["mine let a = 1;", ""]);
+}

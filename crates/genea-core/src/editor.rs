@@ -108,6 +108,9 @@ pub(crate) struct Editor {
     /// Bumped whenever `disk` changes, so a check against an older one is
     /// stale.
     disk_generation: u64,
+    /// `disk` changed outside Genea while the buffer had unsaved edits: the
+    /// conflict bar shows until the user picks Reload or Keep my edits.
+    conflict: bool,
 }
 
 /// The buffer as it was when a save started.
@@ -139,6 +142,7 @@ impl Editor {
             syntax,
             disk,
             disk_generation: 0,
+            conflict: false,
         }
     }
 
@@ -820,6 +824,7 @@ impl Editor {
             path: self.path.clone(),
             read_only: self.read_only,
             modified: self.version != self.saved_version,
+            conflict: self.conflict,
             line_count,
             scroll_top: self.scroll_top,
             lines,
@@ -1005,10 +1010,11 @@ impl Editor {
             return true;
         }
         self.set_disk(text);
+        self.conflict = false;
         match edit {
             None => self.saved_version = self.version,
             Some(splice) if !self.is_modified() => self.reload(splice, now, viewport_rows),
-            Some(_) => {}
+            Some(_) => self.conflict = true,
         }
         true
     }
