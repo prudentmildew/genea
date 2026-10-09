@@ -27,12 +27,12 @@ use std::{
 
 use alacritty_terminal::{
     Term,
-    event::{Event, EventListener},
+    event::{Event, EventListener, WindowSize},
     grid::{Dimensions, Scroll},
     term::{Config, TermMode},
     vte::ansi::{Processor, Timeout},
 };
-use genea_host::{Exit, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
+use genea_host::{Exit, Host, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
 
 mod grid;
 mod input;
@@ -68,6 +68,10 @@ pub(crate) struct Terminal {
     generation: u64,
     /// What the terminal showed when last copied from the session.
     screen: Screen,
+    /// The running shell's file name, the title until the program sets one.
+    shell_name: String,
+    /// The title the program set.
+    title: Option<String>,
 }
 
 enum Shell {
@@ -87,6 +91,20 @@ struct Session {
     control: Arc<dyn PtyControl>,
     /// An Apply with new output is pending.
     dirty: Arc<AtomicBool>,
+    /// What the program asked of Genea while its output was parsed.
+    requests: Arc<Mutex<Requests>>,
+    /// The size the emulator's listener reports.
+    size: Arc<Mutex<Size>>,
+}
+
+/// What a program asks of the terminal beyond drawing, gathered on the
+/// reader thread and carried out on the main thread.
+#[derive(Default)]
+struct Requests {
+    /// The title it set (`Some(None)`: it reset it).
+    title: Option<Option<String>>,
+    /// Text to put on the clipboard (OSC 52).
+    copy: Option<String>,
 }
 
 impl Drop for Session {
@@ -130,15 +148,35 @@ impl From<Size> for PtySize {
 }
 
 /// The emulator's events: answers it writes back to the program go to the
-/// writer thread.
+/// writer thread; requests wait for the main thread.
 struct Listener {
     to_pty: mpsc::Sender<ToPty>,
+    requests: Arc<Mutex<Requests>>,
+    /// The grid's size, for programs that ask for it in pixels.
+    size: Arc<Mutex<Size>>,
 }
 
 impl EventListener for Listener {
     fn send_event(&self, event: Event) {
-        if let Event::PtyWrite(text) = event {
-            let _ = self.to_pty.send(ToPty::Input(text.into_bytes()));
+        match event {
+            Event::PtyWrite(text) => {
+                let _ = self.to_pty.send(ToPty::Input(text.into_bytes()));
+            }
+            Event::Title(title) => self.requests.lock().unwrap().title = Some(Some(title)),
+            Event::ResetTitle => self.requests.lock().unwrap().title = Some(None),
+            Event::ClipboardStore(_, text) => self.requests.lock().unwrap().copy = Some(text),
+            Event::TextAreaSizeRequest(answer) => {
+                // Cells of Menlo 13 pt are about 8 × 16 px.
+                let grid = PtySize::from(*self.size.lock().unwrap());
+                let size = WindowSize {
+                    num_lines: grid.rows,
+                    num_cols: grid.columns,
+                    cell_width: 8,
+                    cell_height: 16,
+                };
+                let _ = self.to_pty.send(ToPty::Input(answer(size).into_bytes()));
+            }
+            _ => {}
         }
     }
 }
@@ -179,7 +217,15 @@ impl Terminal {
             scrolled_back: 0,
             mode: TermMode::empty(),
         };
-        Terminal { project, size: DEFAULT_SIZE, shell: Shell::Waiting, generation: 0, screen }
+        Terminal {
+            project,
+            size: DEFAULT_SIZE,
+            shell: Shell::Waiting,
+            generation: 0,
+            screen,
+            shell_name: String::new(),
+            title: None,
+        }
     }
 
     /// Whether the terminal waits for the project environment to start its
@@ -232,7 +278,10 @@ impl Terminal {
         let control: Arc<dyn PtyControl> = Arc::from(control);
         let (to_pty, from_core) = mpsc::channel();
         let config = Config { scrolling_history: SCROLLBACK, ..Config::default() };
-        let term = Arc::new(Mutex::new(Term::new(config, &self.size, Listener { to_pty: to_pty.clone() })));
+        let requests = Arc::new(Mutex::new(Requests::default()));
+        let size = Arc::new(Mutex::new(self.size));
+        let listener = Listener { to_pty: to_pty.clone(), requests: requests.clone(), size: size.clone() };
+        let term = Arc::new(Mutex::new(Term::new(config, &self.size, listener)));
         let dirty = Arc::new(AtomicBool::new(false));
 
         let writer_control = control.clone();
@@ -253,14 +302,26 @@ impl Terminal {
             .name("genea: terminal output".into())
             .spawn(move || reader.run())
             .expect("spawn the terminal's reader");
-        self.shell = Shell::Running(Session { term, to_pty, control, dirty });
+        self.shell_name = shell.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        self.title = None;
+        self.shell = Shell::Running(Session { term, to_pty, control, dirty, requests, size });
         self.refresh();
     }
 
-    /// New output was parsed: copy the visible grid.
-    fn output_arrived(&mut self, generation: u64) {
-        if generation == self.generation {
-            self.refresh();
+    /// New output was parsed: copy the visible grid, and do what the
+    /// program asked.
+    fn output_arrived(&mut self, generation: u64, host: &dyn Host) {
+        if generation != self.generation {
+            return;
+        }
+        self.refresh();
+        let Shell::Running(session) = &self.shell else { return };
+        let requests = std::mem::take(&mut *session.requests.lock().unwrap());
+        if let Some(title) = requests.title {
+            self.title = title;
+        }
+        if let Some(text) = requests.copy {
+            host.clipboard().write_text(&text);
         }
     }
 
@@ -284,9 +345,16 @@ impl Terminal {
     }
 
     /// A terminal command from the user.
-    pub(crate) fn command(&mut self, command: Command) {
+    pub(crate) fn command(&mut self, command: Command, host: &dyn Host) {
         match command {
-            Command::SetTerminalSize { rows, columns } => self.resize(Size { rows: rows.max(1), columns: columns.max(2) }),
+            Command::TerminalPaste => {
+                if let (Some(text), Some(mode)) = (host.clipboard().read_text(), self.mode()) {
+                    self.send(input::paste(&text, mode));
+                }
+            }
+            Command::SetTerminalSize { rows, columns } => {
+                self.resize(Size { rows: rows.max(1), columns: columns.max(2) })
+            }
             Command::TerminalText(text) => self.send(text.into_bytes()),
             Command::ScrollTerminal { rows, line, column } => self.scroll(rows, line, column),
             Command::TerminalMouse { action, line, column, modifiers } => {
@@ -316,6 +384,7 @@ impl Terminal {
         self.size = size;
         match &self.shell {
             Shell::Running(session) => {
+                *session.size.lock().unwrap() = size;
                 session.term.lock().unwrap().resize(size);
                 let _ = session.to_pty.send(ToPty::Resize(size.into()));
                 self.refresh();
@@ -366,6 +435,7 @@ impl Terminal {
         let screen = &self.screen;
         TerminalView {
             status,
+            title: self.title.clone().unwrap_or_else(|| self.shell_name.clone()),
             rows: self.size.rows,
             columns: self.size.columns,
             lines: screen.lines.clone(),
@@ -407,8 +477,9 @@ impl Reader {
             }
             if !self.dirty.swap(true, Ordering::SeqCst) {
                 self.jobs.busy().finish(Box::new(move |core| {
+                    let host = core.host.clone();
                     if let Some(project) = core.project_mut(id) {
-                        project.terminal.output_arrived(generation);
+                        project.terminal.output_arrived(generation, host.as_ref());
                     }
                 }));
             }

@@ -409,3 +409,51 @@ fn mouse_reports_use_the_programs_encoding() {
 
     assert_eq!(pty.wait_for_input("\x1b[M#"), "\x1b[M&#\"\x1b[M#$\"");
 }
+
+#[test]
+fn a_paste_is_bracketed_when_the_program_asks() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    host.clipboard().set_text("echo a\necho b");
+
+    // Without bracketed paste, line breaks are Returns.
+    workbench.dispatch(project, Command::TerminalPaste);
+    pty.wait_for_input("echo b");
+    pty.output("\x1b[?2004h");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::TerminalPaste);
+
+    assert_eq!(pty.wait_for_input("\x1b[201~"), "echo a\recho b\x1b[200~echo a\necho b\x1b[201~");
+}
+
+#[test]
+fn hyperlinks_and_the_title_come_from_the_program() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    // Until the program sets one, the title is the shell's name.
+    assert_eq!(terminal(&workbench, project).title, "zsh");
+
+    pty.output("\x1b]0;vim main.ts\x07see \x1b]8;;https://genea.dev/docs\x1b\\the docs\x1b]8;;\x1b\\.");
+    workbench.settle().unwrap();
+
+    let view = terminal(&workbench, project);
+    assert_eq!(view.title, "vim main.ts");
+    assert_eq!(view.lines[0].text, "see the docs.");
+    let link = TerminalStyle { link: Some("https://genea.dev/docs".into()), ..TerminalStyle::default() };
+    assert_eq!(view.lines[0].runs[1], run(4..12, "the docs", link));
+}
+
+#[test]
+fn a_program_can_copy_to_the_clipboard() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, _project, pty) = open(&host, &fixture);
+
+    // OSC 52 with "copied" in base64.
+    pty.output("\x1b]52;c;Y29waWVk\x07");
+    workbench.settle().unwrap();
+
+    assert_eq!(host.clipboard().text().as_deref(), Some("copied"));
+}

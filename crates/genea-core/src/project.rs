@@ -299,9 +299,8 @@ impl Project {
             | Command::TerminalText(_)
             | Command::TerminalKey(..)
             | Command::ScrollTerminal { .. }
-            | Command::TerminalMouse { .. } => {
-                self.terminal.command(command)
-            }
+            | Command::TerminalMouse { .. }
+            | Command::TerminalPaste => self.terminal.command(command, host),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {

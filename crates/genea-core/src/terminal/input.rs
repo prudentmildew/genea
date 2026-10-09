@@ -141,3 +141,14 @@ fn report(code: u32, line: usize, column: usize, release: bool, mode: TermMode) 
     }
     report
 }
+
+/// The bytes a paste sends: one bracketed paste if the program asked for
+/// them (without escapes, which could end it early), else the text with
+/// its line breaks as Returns.
+pub(super) fn paste(text: &str, mode: TermMode) -> Vec<u8> {
+    if mode.contains(TermMode::BRACKETED_PASTE) {
+        format!("\x1b[200~{}\x1b[201~", text.replace('\x1b', "")).into_bytes()
+    } else {
+        text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
+    }
+}

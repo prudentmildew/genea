@@ -156,6 +156,10 @@ pub enum Command {
     /// scrollback, unless the program takes it: a program that reports the
     /// mouse gets wheel events, and a full-screen one gets ↑ and ↓.
     ScrollTerminal { rows: i32, line: usize, column: usize },
+    /// ⌘V in the terminal: types the clipboard's text, as one bracketed
+    /// paste if the program asked for that (so a shell doesn't run each
+    /// line as it arrives).
+    TerminalPaste,
     /// A mouse button or movement over the terminal's cell at `line` and
     /// `column` (0-based visible row and grid column). Reported to a
     /// program that asked for the mouse, in the encoding it chose;

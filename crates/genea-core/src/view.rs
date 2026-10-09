@@ -290,6 +290,8 @@ pub struct RecentProject {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalView {
     pub status: TerminalStatus,
+    /// The title the program set (OSC 0 or 2), else the shell's name.
+    pub title: String,
     /// The grid's size in cells.
     pub rows: usize,
     pub columns: usize,
