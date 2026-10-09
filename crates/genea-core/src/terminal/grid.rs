@@ -42,8 +42,12 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>) -> Screen {
             continue;
         }
         builder.push(indexed.point.column.0, indexed.cell, colors);
+        if indexed.cell.flags.contains(Flags::WRAPLINE) {
+            builder.wraps = true;
+        }
     }
-    let lines = builders.into_iter().map(Row::finish).collect();
+    let mut lines: Vec<TerminalLine> = builders.iter().map(Row::finish).collect();
+    find_links(&builders, &mut lines);
     let cursor = content.cursor;
     let line = cursor.point.line.0 + offset;
     let cursor = (cursor.shape != CursorShape::Hidden && (0..rows as i32).contains(&line))
@@ -67,6 +71,8 @@ struct Row {
     /// Columns up to the last one with something to paint: text, a
     /// background, an underline.
     paint_end: usize,
+    /// The row's text goes on in the next row (it was wrapped).
+    wraps: bool,
 }
 
 /// A cell's place on the row.
@@ -98,7 +104,7 @@ impl Row {
         self.cells.push(Placed { column, bytes: start..self.text.len(), width, style });
     }
 
-    fn finish(self) -> TerminalLine {
+    fn finish(&self) -> TerminalLine {
         let text_bytes =
             self.cells.iter().take_while(|cell| cell.column < self.text_end).last().map_or(0, |cell| cell.bytes.end);
         let end = self.text_end.max(self.paint_end);
@@ -117,18 +123,45 @@ impl Row {
                 }),
             }
         }
-        let mut text = self.text;
-        text.truncate(text_bytes);
-        let links = links::find(&text)
-            .into_iter()
-            .filter_map(|found| {
-                let first = self.cells.iter().find(|cell| cell.bytes.end > found.bytes.start)?;
-                let last = self.cells.iter().rev().find(|cell| cell.bytes.start < found.bytes.end)?;
-                let columns = first.column..last.column + last.width;
-                Some(TerminalFileLink { columns, path: found.path, at: found.at })
-            })
-            .collect();
-        TerminalLine { text, runs, links }
+        TerminalLine { text: self.text[..text_bytes].to_owned(), runs, links: Vec::new() }
+    }
+
+    /// The columns of the cells with text in `bytes` (of `Row::text`).
+    fn columns(&self, bytes: Range<usize>) -> Option<Range<usize>> {
+        let first = self.cells.iter().find(|cell| cell.bytes.end > bytes.start)?;
+        let last = self.cells.iter().rev().find(|cell| cell.bytes.start < bytes.end)?;
+        (first.column <= last.column).then(|| first.column..last.column + last.width)
+    }
+}
+
+/// Finds the `path:line:col` references on each line of output, which
+/// may run over several rows when it was wrapped, and puts each on the
+/// rows it covers.
+fn find_links(rows: &[Row], lines: &mut [TerminalLine]) {
+    let mut first = 0;
+    while first < rows.len() {
+        let last = (first..rows.len()).find(|&row| !rows[row].wraps).unwrap_or(rows.len() - 1);
+        // The output line's text, and where each row's starts in it.
+        let mut text = String::new();
+        let mut starts = Vec::new();
+        for row in &rows[first..=last] {
+            starts.push(text.len());
+            text.push_str(&row.text);
+        }
+        for found in links::find(&text) {
+            for (index, row) in rows[first..=last].iter().enumerate() {
+                let start = starts[index];
+                let bytes = found.bytes.start.max(start) - start..found.bytes.end.min(start + row.text.len()).max(start) - start;
+                if bytes.is_empty() {
+                    continue;
+                }
+                if let Some(columns) = row.columns(bytes) {
+                    let link = TerminalFileLink { columns, path: found.path.clone(), at: found.at };
+                    lines[first + index].links.push(link);
+                }
+            }
+        }
+        first = last + 1;
     }
 }
 

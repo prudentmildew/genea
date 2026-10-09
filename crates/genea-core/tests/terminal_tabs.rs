@@ -166,6 +166,65 @@ fn clicking_a_path_line_column_in_the_output_opens_the_file_there() {
     assert!(!terminal(&workbench, project).focused);
 }
 
+#[test]
+fn a_reference_resolves_against_the_tabs_directory_and_an_absolute_one_inside_the_project_is_its_file() {
+    let host = TestHost::new();
+    let fixture = FixtureProject::new().file("src/app.ts", &app_ts()).build();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    let root = fixture.root().canonicalize().unwrap();
+    // Wide enough for the temp folder's path on one row.
+    workbench.dispatch(project, Command::SetTerminalSize { rows: 24, columns: 400 });
+    pty.output(format!("./src/../src/app.ts:4\r\n{}/src/app.ts:6:3\r\n", root.display()));
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::OpenTerminalLink { line: 0, column: 2 });
+    workbench.settle().unwrap();
+    assert_eq!(opened(&workbench, project), Some(("app.ts".into(), "4:1".into())));
+
+    workbench.dispatch(project, Command::OpenTerminalLink { line: 1, column: 1 });
+    workbench.settle().unwrap();
+    // The same file, so the same tab.
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.panes[0].tabs.len(), 1);
+    assert_eq!(view.editor.unwrap().path, std::path::Path::new("src/app.ts"));
+    assert_eq!(view.status.caret.as_deref(), Some("6:3"));
+}
+
+#[test]
+fn a_reference_wrapped_onto_the_next_row_is_one_link_on_both() {
+    let host = TestHost::new();
+    let fixture = FixtureProject::new().file("src/app.ts", &app_ts()).build();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    workbench.dispatch(project, Command::SetTerminalSize { rows: 10, columns: 20 });
+    pty.output("error in src/app.ts:12:5 here");
+    workbench.settle().unwrap();
+    assert_eq!(screen(&workbench, project), ["error in src/app.ts:", "12:5 here"]);
+
+    assert_eq!(
+        links(&workbench, project),
+        [vec![link(9..20, "src/app.ts", "12:5")], vec![link(0..4, "src/app.ts", "12:5")]]
+    );
+    workbench.dispatch(project, Command::OpenTerminalLink { line: 1, column: 1 });
+    workbench.settle().unwrap();
+    assert_eq!(opened(&workbench, project), Some(("app.ts".into(), "12:5".into())));
+}
+
+#[test]
+fn a_click_beside_a_reference_opens_nothing() {
+    let host = TestHost::new();
+    let fixture = FixtureProject::new().file("src/app.ts", &app_ts()).build();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    pty.output("see src/app.ts:2");
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::OpenTerminalLink { line: 0, column: 2 });
+    workbench.dispatch(project, Command::OpenTerminalLink { line: 0, column: 16 });
+    workbench.dispatch(project, Command::OpenTerminalLink { line: 5, column: 4 });
+    workbench.settle().unwrap();
+
+    assert_eq!(opened(&workbench, project), None);
+}
+
 /// Each row's links as (columns, path, 1-based line:column).
 fn links(workbench: &Workbench, project: ProjectId) -> Vec<Vec<(std::ops::Range<usize>, String, String)>> {
     let view = terminal(workbench, project);
