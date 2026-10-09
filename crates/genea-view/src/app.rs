@@ -393,6 +393,7 @@ fn wire(controller: &WindowController) {
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
+    window.on_restart_language_server(menu(Command::RestartLanguageServer));
     window.on_set_runtime(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Runtime)));
     window.on_set_package_manager(menu(Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager)));
     window.on_update_toolchain(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Update)));

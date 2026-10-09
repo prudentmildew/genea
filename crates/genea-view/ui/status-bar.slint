@@ -24,11 +24,18 @@ export component StatusBar inherits Rectangle {
     in property <string> large-file;
     // The open file's rest is still being read; it is read-only meanwhile.
     in property <bool> loading;
+    // The language servers' state, e.g. "TypeScript 7.0.2" (ticket #42).
+    in property <string> language-server;
+    // A server failed or isn't responding: the item is a warning, and a
+    // click restarts it.
+    in property <bool> language-server-alert;
 
     callback notice-action-clicked();
     callback update-clicked();
     // The config notice or the counts were clicked.
     callback show-problems();
+    // The language-server item was clicked while it is an alert.
+    callback restart-language-server();
 
     height: 22px;
     background: Theme.chrome-background;
@@ -78,6 +85,22 @@ export component StatusBar inherits Rectangle {
                 mouse-cursor: pointer;
                 clicked => {
                     root.notice-action-clicked();
+                }
+            }
+        }
+
+        if root.language-server != "": Text {
+            text: root.language-server;
+            color: root.language-server-alert ? Theme.warning : Theme.chrome-muted;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+
+            TouchArea {
+                mouse-cursor: root.language-server-alert ? pointer : default;
+                clicked => {
+                    if root.language-server-alert {
+                        root.restart-language-server();
+                    }
                 }
             }
         }
