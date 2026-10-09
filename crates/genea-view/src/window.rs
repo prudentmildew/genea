@@ -226,6 +226,8 @@ impl WindowController {
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
         window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
+        window.set_status_large_file(view.status.large_file.clone().unwrap_or_default().into());
+        window.set_status_loading(editor.is_some_and(|e| e.loading));
 
         window.set_split(view.panes.len() > 1);
         window.set_can_split(view.can_split);
