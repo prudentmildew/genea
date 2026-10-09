@@ -48,7 +48,27 @@ impl Project {
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs) {
         match command {
             Command::OpenFile(path) => self.open_file(path, jobs),
-            _ => {}
+            Command::SetViewport { rows } => {
+                self.viewport_rows = rows.max(1.0);
+                if let Some(editor) = &mut self.editor {
+                    editor.scroll_by(0.0, self.viewport_rows);
+                }
+            }
+            Command::ScrollBy { rows } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.scroll_by(rows, self.viewport_rows);
+                }
+            }
+            Command::MoveCaret(movement) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.move_caret(movement, self.viewport_rows);
+                }
+            }
+            Command::PlaceCaret { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.place_caret(line, column, self.viewport_rows);
+                }
+            }
         }
     }
 

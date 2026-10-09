@@ -22,7 +22,9 @@ pub enum Command {
     /// Moves the caret, scrolling it into view.
     MoveCaret(CaretMove),
     /// Puts the caret at a grid cell (0-based line and display column), as a
-    /// click does. Out-of-range cells clamp to the nearest text position.
+    /// click does: at the last text position at or before the cell, so the
+    /// view rounds a click to the nearest cell boundary first. Cells past the
+    /// end of a line or below the last line clamp to the text.
     PlaceCaret { line: usize, column: usize },
 }
 
