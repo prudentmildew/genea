@@ -13,8 +13,8 @@ use std::{
 };
 
 use genea_core::{
-    CloseChoice, Command, FileRow, FileRowKind, LeftColumnView, PaneView, ProblemItem, ProjectId, Severity,
-    Theme as ConfigTheme, ToolchainOption, Workbench,
+    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, LeftColumnView, PaneView, ProblemItem, ProjectId,
+    Severity, Theme as ConfigTheme, ToolchainOption, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -316,10 +316,13 @@ impl WindowController {
                 self.tabs[pane] = tabs;
             }
             let editor = shown.and_then(|p| p.editor.as_ref());
+            let conflict = editor.is_some_and(|e| e.conflict);
             if pane == 0 {
                 window.set_left_has_editor(editor.is_some());
+                window.set_left_conflict(conflict);
             } else {
                 window.set_right_has_editor(editor.is_some());
+                window.set_right_conflict(conflict);
             }
             // Before Slint shapes the text: registers fallback fonts it needs.
             let titles = shown.iter().flat_map(|p| &p.tabs).map(|tab| &tab.title);
@@ -353,6 +356,14 @@ impl WindowController {
     pub fn resolve_close(&mut self, workbench: &mut Workbench, choice: CloseChoice) {
         self.prompting = false;
         self.dispatch(workbench, Command::ResolveClose(choice));
+    }
+
+    /// A pane's conflict bar was answered: for the file that pane shows.
+    pub fn resolve_conflict(&mut self, workbench: &mut Workbench, pane: usize, choice: ConflictChoice) {
+        let Some(view) = workbench.project(self.project) else { return };
+        let Some(editor) = view.panes.get(pane).and_then(|p| p.editor.as_ref()) else { return };
+        let command = Command::ResolveConflict { path: editor.path.clone(), choice };
+        self.dispatch(workbench, command);
     }
 
     /// A toolchain picker option was picked: pin it.

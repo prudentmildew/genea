@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, ToolchainPickerKind, Workbench};
+use genea_core::{CloseChoice, Command, ConflictChoice, LeftColumnView, ProjectId, ToolchainPickerKind, Workbench};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
@@ -373,6 +373,14 @@ fn wire(controller: &WindowController) {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
             controller.open_problem(&mut app.workbench, index);
+        });
+    });
+    window.on_conflict_resolved(move |pane, reload| {
+        let Ok(pane) = usize::try_from(pane) else { return };
+        let choice = if reload { ConflictChoice::Reload } else { ConflictChoice::KeepMyEdits };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.resolve_conflict(&mut app.workbench, pane, choice);
         });
     });
     window.on_file_clicked(move |index| {

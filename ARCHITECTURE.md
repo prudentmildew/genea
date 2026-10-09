@@ -70,11 +70,22 @@ use, and nothing else:
 - **Files changing on disk**: each project has one `notify` watcher
   (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
   batches at `Project::files_changed(FileChanges, jobs)`; react there (the
-  config and the file index do; open editors and review hook in beside them).
+  config, the file index and open editors do; review hooks in beside them).
   `settle` waits for the watcher by writing a cookie file into
   `<support>/watch-sync`, which the same FSEvents stream watches: once its
   event is back, every earlier change has been delivered. So a test writes a
   file with `fixture.write(..)`, calls `settle()`, and asserts.
+- **Open editors and external changes** (`src/disk.rs`,
+  `src/project/external.rs`, ticket #32): each `Editor` keeps the text it
+  believes is on disk (read at open, or set when a save *starts*). A changed
+  open file is read and compared in the background: the same text is no
+  change, which is how Genea's own saves are recognised. Different text
+  reloads a clean buffer as one undo step (kind `Other`, a single splice of
+  the changed stretch, so carets outside it keep their place) or, with
+  unsaved edits, sets `EditorView::conflict` until
+  `Command::ResolveConflict` (Reload or Keep my edits) or a save. A result
+  whose buffer or disk text moved on meanwhile is checked again. Review
+  (#53) should reuse the same "what Genea last wrote" comparison.
 - **The file index** (`src/files.rs`, ticket #30): every file and folder
   outside `node_modules` and `.git`, read once in the background at open and
   then kept up to date from the watcher's batches (a changed path re-lists

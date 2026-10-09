@@ -158,6 +158,11 @@ pub struct EditorView {
     /// The buffer has edits that aren't on disk yet: the tab and window
     /// show it as unsaved.
     pub modified: bool,
+    /// The file changed on disk, outside Genea, while the buffer had
+    /// unsaved edits: the editor shows a bar offering Reload or Keep my
+    /// edits (`Command::ResolveConflict`). A buffer without unsaved edits
+    /// reloads instead, as one undo step.
+    pub conflict: bool,
     /// Lines in the file. A file ending in a newline has an empty last line.
     pub line_count: usize,
     /// The first visible row, fractional while scrolling smoothly. The view

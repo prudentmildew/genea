@@ -22,6 +22,7 @@
 
 mod command;
 mod config;
+mod disk;
 mod editor;
 mod environment;
 mod files;
@@ -43,7 +44,7 @@ mod workbench;
 
 pub use command::{CaretMove, Command};
 pub use config::{Config, TerminalPosition, Theme};
-pub use command::CloseChoice;
+pub use command::{CloseChoice, ConflictChoice};
 pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
 pub use problems::{ProblemSource, Severity, TextPosition};
 pub use syntax::Highlight;

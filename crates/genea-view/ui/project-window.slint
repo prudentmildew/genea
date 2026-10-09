@@ -56,6 +56,9 @@ export component ProjectWindow inherits Window {
     in property <[Line]> right-lines <=> right.lines;
     in property <SurfaceGeometry> left-geometry;
     in property <SurfaceGeometry> right-geometry;
+    // Each pane's file changed on disk while it had unsaved edits (#32).
+    in property <bool> left-conflict;
+    in property <bool> right-conflict;
     // Both panes have the same font and height.
     out property <length> char-width: left.char-width;
     out property <length> viewport-height: left.viewport-height;
@@ -102,6 +105,8 @@ export component ProjectWindow inherits Window {
     callback tab-clicked(pane: int, index: int);
     callback tab-closed(pane: int, index: int);
     callback tab-moved(pane: int, index: int);
+    // A pane's conflict bar: Reload (`reload`) or Keep my edits.
+    callback conflict-resolved(pane: int, reload: bool);
 
     // Editor input. Keys, commits and the preedit come from the focused
     // pane only, so they carry no pane.
@@ -380,6 +385,10 @@ export component ProjectWindow inherits Window {
                 has-editor: root.left-has-editor;
                 can-split: root.can-split;
                 geometry: root.left-geometry;
+                conflict: root.left-conflict;
+                conflict-resolved(reload) => {
+                    root.conflict-resolved(0, reload);
+                }
                 tab-clicked(index) => {
                     root.tab-clicked(0, index);
                 }
@@ -429,6 +438,10 @@ export component ProjectWindow inherits Window {
                 has-editor: root.right-has-editor;
                 can-split: root.can-split;
                 geometry: root.right-geometry;
+                conflict: root.right-conflict;
+                conflict-resolved(reload) => {
+                    root.conflict-resolved(1, reload);
+                }
                 tab-clicked(index) => {
                     root.tab-clicked(1, index);
                 }

@@ -1,5 +1,6 @@
 //! One open project: its folder and what its window shows.
 
+mod external;
 mod tabs;
 
 use std::{
@@ -118,6 +119,7 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
+        self.check_open_files(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if let Some(toolchain) = &mut self.toolchain
             && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
@@ -299,6 +301,7 @@ impl Project {
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
+            Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -590,8 +593,8 @@ impl Project {
     /// Writes an open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
     fn save(&mut self, path: PathBuf, jobs: &Jobs) {
-        let Some(editor) = self.open_editor(&path).filter(|e| !e.is_read_only()) else { return };
-        let snapshot = editor.snapshot();
+        let Some(editor) = self.open_editor_mut(&path).filter(|e| !e.is_read_only()) else { return };
+        let snapshot = editor.start_save();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
         jobs.spawn("save file", move || {
