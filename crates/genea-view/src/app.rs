@@ -17,8 +17,11 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+/// How often background work may refresh the windows: a 120 Hz frame.
+const FRAME: Duration = Duration::from_millis(8);
 
 use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, Workbench};
 use genea_host::RealHost;
@@ -34,6 +37,10 @@ use crate::{
 
 pub struct App {
     workbench: Workbench,
+    /// When background work last refreshed the windows, and whether a
+    /// refresh is already scheduled (see `pump`).
+    last_refresh: Option<Instant>,
+    refresh_scheduled: bool,
     /// One window per open project.
     windows: Vec<WindowController>,
     next_key: WindowKey,
@@ -77,7 +84,15 @@ pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint
     let welcome = WelcomeController::new()?;
     wire_welcome(&welcome);
     APP.with(|cell| {
-        *cell.borrow_mut() = Some(App { workbench, windows: Vec::new(), next_key: 0, welcome, about: None })
+        *cell.borrow_mut() = Some(App {
+            workbench,
+            last_refresh: None,
+            refresh_scheduled: false,
+            windows: Vec::new(),
+            next_key: 0,
+            welcome,
+            about: None,
+        })
     });
 
     with_app(move |app| {
@@ -95,11 +110,27 @@ pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint
 }
 
 impl App {
-    /// Applies finished background work and refreshes every window.
+    /// Applies finished background work and refreshes every window, at
+    /// most once a frame: a flood of terminal output wakes the app far
+    /// more often than that (ticket #38). Input refreshes its window at
+    /// once, through `dispatch`.
     fn pump(&mut self) {
-        if self.workbench.pump() {
-            self.sync_all();
+        if !self.workbench.pump() || self.refresh_scheduled {
+            return;
         }
+        let since = self.last_refresh.map_or(FRAME, |at| at.elapsed());
+        if since >= FRAME {
+            self.refresh();
+            return;
+        }
+        self.refresh_scheduled = true;
+        slint::Timer::single_shot(FRAME - since, || with_app(App::refresh));
+    }
+
+    fn refresh(&mut self) {
+        self.refresh_scheduled = false;
+        self.last_refresh = Some(Instant::now());
+        self.sync_all();
     }
 
     fn sync_all(&mut self) {
@@ -356,13 +387,68 @@ fn wire(controller: &WindowController) {
             with_app(move |app| app.dispatch(key, command));
         }
     };
+    // Editing items act on the editor; with the terminal focused, Paste
+    // types into it and the others do nothing.
+    let edit = move |command: Command| {
+        move || {
+            let command = command.clone();
+            with_app(move |app| {
+                let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+                let command = match (controller.terminal_focused(), command) {
+                    (false, command) => command,
+                    (true, Command::Paste) => Command::TerminalPaste,
+                    (true, _) => return,
+                };
+                controller.dispatch(&mut app.workbench, command);
+            });
+        }
+    };
     window.on_save(menu(Command::Save));
-    window.on_undo(menu(Command::Undo));
-    window.on_redo(menu(Command::Redo));
-    window.on_cut(menu(Command::Cut));
-    window.on_copy(menu(Command::Copy));
-    window.on_paste(menu(Command::Paste));
-    window.on_select_all(menu(Command::SelectAll));
+    window.on_undo(edit(Command::Undo));
+    window.on_redo(edit(Command::Redo));
+    window.on_cut(edit(Command::Cut));
+    window.on_copy(edit(Command::Copy));
+    window.on_paste(edit(Command::Paste));
+    window.on_select_all(edit(Command::SelectAll));
+    // The terminal pane (ticket #38).
+    window.on_toggle_terminal(menu(Command::ToggleTerminal));
+    window.on_terminal_focus(move || {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            if !controller.terminal_focused() {
+                controller.dispatch(&mut app.workbench, Command::FocusTerminal);
+            }
+        });
+    });
+    window.on_terminal_key(move |text, shift, cmd, alt, ctrl| {
+        let text = text.to_string();
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.terminal_key(&mut app.workbench, &text, Modifiers { shift, cmd, alt, ctrl });
+        });
+    });
+    window.on_terminal_committed(move |text| {
+        let text = text.to_string();
+        with_app(move |app| app.dispatch(key, Command::TerminalText(text)));
+    });
+    window.on_terminal_preedit_changed(move |text| {
+        let text = text.to_string();
+        with_app(move |app| app.dispatch(key, Command::TerminalPreedit(text)));
+    });
+    window.on_terminal_mouse(move |kind, button, x, y, shift, alt, ctrl, cmd| {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            let modifiers = Modifiers { shift, cmd, alt, ctrl };
+            controller.terminal_mouse(&mut app.workbench, kind, button, x, y, modifiers);
+        });
+    });
+    window.on_terminal_scrolled(move |delta_y, x, y| {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.terminal_scrolled(&mut app.workbench, delta_y, x, y);
+        });
+    });
+    window.on_terminal_size_changed(move || with_app(move |app| app.sync(key)));
     window.on_open_config(menu(Command::OpenConfig));
     window.on_toggle_view(move |view| {
         let view = left_column_view(view);
