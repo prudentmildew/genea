@@ -99,3 +99,53 @@ fn the_install_starts_in_the_terminal_once_the_toolchain_is_ready() {
     let terminal = workbench.project(only_project(&workbench)).unwrap().terminal;
     assert_eq!(terminal.tabs[terminal.active_tab].title, "pnpm install");
 }
+
+#[test]
+fn invalid_names_are_refused_with_a_clear_message() {
+    let charset = "A project name can only have lowercase letters, digits, hyphens, dots and underscores.";
+    let cases = [
+        ("", "Enter a project name."),
+        ("My-App", "A project name can't have capital letters."),
+        (".app", "A project name can't start with a dot or an underscore."),
+        ("_app", "A project name can't start with a dot or an underscore."),
+        ("my app", charset),
+        ("@scope/app", charset),
+        ("app!", charset),
+        ("node_modules", "“node_modules” can't be a package name."),
+        ("favicon.ico", "“favicon.ico” can't be a package name."),
+        ("http", "“http” is the name of a Node built-in module."),
+    ];
+    let parent = FixtureProject::new().build();
+    let mut workbench = Workbench::new(host().shared());
+    open_dialog(&mut workbench);
+
+    for (name, message) in cases {
+        create(&mut workbench, name, parent.root());
+
+        let dialog = workbench.new_project_dialog().expect("the dialog stays open");
+        assert_eq!(dialog.error.as_deref(), Some(message), "for {name:?}");
+        assert!(!dialog.creating);
+    }
+    let long = "a".repeat(215);
+    create(&mut workbench, &long, parent.root());
+    let error = workbench.new_project_dialog().unwrap().error;
+    assert_eq!(error.as_deref(), Some("A project name can't be longer than 214 characters."));
+
+    assert_eq!(std::fs::read_dir(parent.root()).unwrap().count(), 0, "nothing was created");
+    assert_eq!(workbench.projects(), []);
+}
+
+#[test]
+fn the_dialog_says_whats_wrong_with_the_name_while_typing() {
+    let mut workbench = Workbench::new(host().shared());
+    open_dialog(&mut workbench);
+    assert_eq!(workbench.new_project_dialog().unwrap().name_problem, None, "an empty name isn't a problem yet");
+
+    workbench.dispatch_new_project(NewProjectCommand::SetName("MyApp".into()));
+    let dialog = workbench.new_project_dialog().unwrap();
+    assert_eq!(dialog.name_problem.as_deref(), Some("A project name can't have capital letters."));
+
+    workbench.dispatch_new_project(NewProjectCommand::SetName("my-app.v2_beta".into()));
+    let dialog = workbench.new_project_dialog().unwrap();
+    assert_eq!(dialog.name_problem, None);
+}

@@ -43,6 +43,9 @@ pub enum NewProjectCommand {
 pub struct NewProjectDialog {
     pub template: Template,
     pub name: String,
+    /// Why the name can't be used, while it can't. An empty name has no
+    /// problem until Create.
+    pub name_problem: Option<String>,
     /// The parent folder, if one is chosen.
     pub parent: Option<PathBuf>,
     pub runtime: RuntimePin,
@@ -79,6 +82,7 @@ impl NewProjectFlow {
         Some(NewProjectDialog {
             template: dialog.template,
             name: dialog.name.clone(),
+            name_problem: (!dialog.name.is_empty()).then(|| check_name(&dialog.name).err()).flatten(),
             parent: dialog.parent.clone(),
             runtime: dialog.runtime.clone(),
             package_manager: dialog.package_manager.clone(),
@@ -125,6 +129,10 @@ pub(crate) fn dispatch(core: &mut Core, command: NewProjectCommand) {
 fn create(core: &mut Core) {
     let flow = &mut core.new_project;
     let Some(dialog) = &mut flow.dialog else { return };
+    if let Err(problem) = check_name(&dialog.name) {
+        dialog.error = Some(problem);
+        return;
+    }
     let Some(parent) = dialog.parent.clone() else {
         dialog.error = Some("Choose a folder to create the project in.".into());
         return;
@@ -160,4 +168,46 @@ fn create(core: &mut Core) {
             }
         }
     });
+}
+
+/// The longest package name npm accepts.
+const MAX_NAME_LENGTH: usize = 214;
+
+/// Names npm refuses for a package.
+const RESERVED_NAMES: [&str; 2] = ["node_modules", "favicon.ico"];
+
+/// Node's built-in modules, which npm doesn't accept as new package names.
+const NODE_BUILTINS: [&str; 42] = [
+    "assert", "async_hooks", "buffer", "child_process", "cluster", "console", "constants", "crypto", "dgram",
+    "diagnostics_channel", "dns", "domain", "events", "fs", "http", "http2", "https", "inspector", "module", "net",
+    "os", "path", "perf_hooks", "process", "punycode", "querystring", "readline", "repl", "stream", "string_decoder",
+    "sys", "timers", "tls", "trace_events", "tty", "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib",
+];
+
+/// Checks `name` as a new npm package's name (the rules of
+/// `validate-npm-package-name` for new packages, without scopes: the name is
+/// also a folder name and the full-stack template's scope).
+fn check_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Enter a project name.".into());
+    }
+    if name.len() > MAX_NAME_LENGTH {
+        return Err(format!("A project name can't be longer than {MAX_NAME_LENGTH} characters."));
+    }
+    if name.starts_with(['.', '_']) {
+        return Err("A project name can't start with a dot or an underscore.".into());
+    }
+    if name.chars().any(|c| c.is_ascii_uppercase()) {
+        return Err("A project name can't have capital letters.".into());
+    }
+    if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.' | '_')) {
+        return Err("A project name can only have lowercase letters, digits, hyphens, dots and underscores.".into());
+    }
+    if RESERVED_NAMES.contains(&name) {
+        return Err(format!("“{name}” can't be a package name."));
+    }
+    if NODE_BUILTINS.contains(&name) {
+        return Err(format!("“{name}” is the name of a Node built-in module."));
+    }
+    Ok(())
 }
