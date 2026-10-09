@@ -25,6 +25,7 @@ mod config;
 mod editor;
 mod environment;
 mod files;
+mod git;
 mod grid;
 mod history;
 mod jobs;

@@ -19,6 +19,7 @@ use crate::{
     editor::Editor,
     environment::{Environment, ProcessEnv},
     files::FileIndex,
+    git::Git,
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
@@ -66,6 +67,8 @@ pub(crate) struct Project {
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
+    /// The branch and the open files at HEAD (ticket #56).
+    pub(crate) git: Git,
 }
 
 impl Project {
@@ -73,6 +76,7 @@ impl Project {
         Project {
             id,
             files: FileIndex::new(id, root.clone()),
+            git: Git::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -104,6 +108,7 @@ impl Project {
         self.load_config(jobs);
         self.find_nested_configs(jobs);
         self.files.start(jobs);
+        self.git.reload(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -116,6 +121,9 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
+        if self.git.head_may_have_moved(&changes) {
+            self.git.reload(jobs);
+        }
         let root_config = self.root.join(CONFIG_FILE);
         if changes.rescan {
             self.load_config(jobs);
@@ -475,6 +483,7 @@ impl Project {
             encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
             line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
+            branch: self.git.branch().map(str::to_owned),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));

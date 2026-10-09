@@ -241,6 +241,9 @@ pub struct StatusBar {
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,
+    /// The git branch the project is on (the short commit id while HEAD is
+    /// detached), or `None` outside a git repository.
+    pub branch: Option<String>,
 }
 
 /// A message for the user.
