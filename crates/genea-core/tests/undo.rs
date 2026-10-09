@@ -239,6 +239,19 @@ fn paste_is_an_undo_step_of_its_own() {
 }
 
 #[test]
+fn undoing_a_cut_brings_back_the_text_selected() {
+    let mut editing = open("hello world\n");
+    editing.run([Command::SelectWord { line: 0, column: 2 }]);
+    editing.run([Command::Cut]);
+    assert_eq!(editing.lines(), [" world", ""]);
+
+    editing.run([Command::Undo]);
+
+    assert_eq!(editing.lines(), ["hello world", ""]);
+    assert_eq!(editing.selection(), ((0, 5), vec![vec![0..5], vec![]]));
+}
+
+#[test]
 fn a_multi_line_paste_undoes_in_one_step() {
     let mut editing = open("x\n");
     editing.host.clipboard().set_text("one\ntwo\n");
