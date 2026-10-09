@@ -10,7 +10,7 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::{EditorView, Severity};
+use genea_core::{EditorView, Severity, grid_pieces};
 use slint::{Color, Model, ModelRc, VecModel};
 
 use crate::{Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry};
@@ -35,6 +35,8 @@ struct SlotState {
     selections: Vec<Range<usize>>,
     /// Problems underlined on the line: columns, and whether it's an error.
     problems: Vec<(Range<usize>, bool)>,
+    /// Display columns of the carets on the line other than the primary.
+    carets: Vec<usize>,
     /// The cell width the selections were laid out with.
     char_width: f32,
 }
@@ -111,6 +113,12 @@ impl Surface {
                         .filter(|p| p.line == line.index)
                         .map(|p| (p.columns.clone(), p.severity == Severity::Error))
                         .collect(),
+                    carets: editor
+                        .carets
+                        .iter()
+                        .filter(|c| c.line == line.index && **c != editor.caret)
+                        .map(|c| c.column)
+                        .collect(),
                     char_width,
                 });
             }
@@ -129,11 +137,7 @@ impl Surface {
                     runs: if s.text.trim().is_empty() {
                         ModelRc::default()
                     } else {
-                        ModelRc::new(VecModel::from(vec![Run {
-                            x: 0.0,
-                            text: s.text.as_str().into(),
-                            color: FOREGROUND,
-                        }]))
+                        ModelRc::new(VecModel::from(grid_runs(&s.text, char_width)))
                     },
                     selections: if s.selections.is_empty() {
                         ModelRc::default()
@@ -157,6 +161,13 @@ impl Surface {
                                     error: *error,
                                 })
                                 .collect::<Vec<_>>(),
+                        ))
+                    },
+                    carets: if s.carets.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(
+                            s.carets.iter().map(|&column| column as f32 * char_width).collect::<Vec<_>>(),
                         ))
                     },
                 },
@@ -187,4 +198,18 @@ fn set_geometry(window: &ProjectWindow, pane: usize, geometry: SurfaceGeometry) 
     } else {
         window.set_right_geometry(geometry);
     }
+}
+
+/// A line's runs, one per grid piece: wide characters (CJK, emoji) are
+/// drawn from fallback fonts whose advances aren't two Menlo cells, so each
+/// is placed at its own column to keep the rest of the line on the grid.
+fn grid_runs(text: &str, char_width: f32) -> Vec<Run> {
+    grid_pieces(text)
+        .into_iter()
+        .map(|piece| Run {
+            x: piece.column as f32 * char_width,
+            text: piece.text.into(),
+            color: FOREGROUND,
+        })
+        .collect()
 }

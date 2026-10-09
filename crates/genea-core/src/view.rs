@@ -132,9 +132,13 @@ pub struct EditorView {
     /// The lines in the viewport, top to bottom, including a partly visible
     /// last one.
     pub lines: Vec<VisibleLine>,
-    /// Where the caret is in the file. While composing, the view draws it
-    /// after the preedit.
+    /// Where the primary caret is in the file: the one the view scrolls to
+    /// and the status bar reports. While composing, the view draws it after
+    /// the preedit.
     pub caret: Caret,
+    /// Every caret on the visible lines, primary included, top to bottom.
+    /// One entry unless there are several carets (⌥-click, ⌃G, …).
+    pub carets: Vec<Caret>,
     /// The IME composition being typed, if any. Its text is already spliced
     /// into the caret's line in `lines`; the view underlines it.
     pub preedit: Option<Preedit>,
@@ -189,6 +193,12 @@ pub struct StatusBar {
     /// Set while `genea.jsonc` has errors or warnings, e.g. "genea.jsonc
     /// has 1 error"; clicking it shows Problems.
     pub config_notice: Option<String>,
+    /// The open file's encoding (`UTF-8`, the only one Genea reads), or
+    /// `None` with no editor.
+    pub encoding: Option<String>,
+    /// The open file's line ending, `LF` or `CRLF`, or `None` with no
+    /// editor.
+    pub line_ending: Option<String>,
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,

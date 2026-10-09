@@ -23,6 +23,7 @@
 mod command;
 mod config;
 mod editor;
+mod grid;
 mod history;
 mod jobs;
 mod problems;
@@ -41,6 +42,7 @@ pub use config::{Config, TerminalPosition, Theme};
 pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use problems::{ProblemSource, Severity, TextPosition};
+pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{

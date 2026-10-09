@@ -6,7 +6,7 @@ use std::{
     collections::BTreeSet,
     ffi::OsStr,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Write},
+    io::{self, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -14,12 +14,13 @@ use genea_host::Host;
 use ropey::Rope;
 
 use crate::{
-    command::{CaretMove, Command},
+    command::Command,
     config::{self, CONFIG_FILE, Config},
     editor::Editor,
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
+    text::Decoded,
     toolchain::{Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
@@ -298,6 +299,36 @@ impl Project {
                     editor.place_caret(line, column, true, self.viewport_rows);
                 }
             }
+            Command::AddCaret { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.add_caret(line, column, self.viewport_rows);
+                }
+            }
+            Command::SelectNextOccurrence => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_next_occurrence(self.viewport_rows);
+                }
+            }
+            Command::UnselectLastOccurrence => {
+                if let Some(editor) = &mut self.editor {
+                    editor.unselect_last_occurrence(self.viewport_rows);
+                }
+            }
+            Command::SelectAllOccurrences => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_all_occurrences(self.viewport_rows);
+                }
+            }
+            Command::CloneCaretAbove | Command::CloneCaretBelow => {
+                if let Some(editor) = &mut self.editor {
+                    editor.clone_caret(command == Command::CloneCaretAbove, self.viewport_rows);
+                }
+            }
+            Command::CollapseCarets => {
+                if let Some(editor) = &mut self.editor {
+                    editor.collapse_carets(self.viewport_rows);
+                }
+            }
             Command::SelectWord { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.select_word(line, column, self.viewport_rows);
@@ -338,14 +369,14 @@ impl Project {
                     && let Some(text) = editor.selected_text()
                 {
                     host.clipboard().write_text(&text);
-                    editor.delete(CaretMove::Left, EditKind::Other, now, self.viewport_rows);
+                    editor.delete_selections(now, self.viewport_rows);
                 }
             }
             Command::Paste => {
                 if let Some(editor) = &mut self.editor
                     && let Some(text) = host.clipboard().read_text()
                 {
-                    editor.insert(&text, EditKind::Other, now, self.viewport_rows);
+                    editor.paste(&text, now, self.viewport_rows);
                 }
             }
             Command::Undo => {
@@ -388,6 +419,8 @@ impl Project {
             errors,
             warnings,
             config_notice: self.config_notice(),
+            encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
+            line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
         };
         let mut notices = self.notices.clone();
@@ -417,8 +450,8 @@ impl Project {
             for line in problem.start.line.max(first.index)..=problem.end.line.min(last.index) {
                 let start = if line == problem.start.line { problem.start.column } else { 0 };
                 let end = if line == problem.end.line { problem.end.column } else { usize::MAX };
-                let from = editor.display_column(line, start);
-                let to = editor.display_column(line, end);
+                let from = editor.grid_column(line, start);
+                let to = editor.grid_column(line, end);
                 inline.push(InlineProblem {
                     line,
                     columns: from..to.max(from + 1),
@@ -452,7 +485,7 @@ impl Project {
     /// Writes an open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
     fn save(&mut self, path: PathBuf, jobs: &Jobs) {
-        let Some(editor) = self.open_editor(&path) else { return };
+        let Some(editor) = self.open_editor(&path).filter(|e| !e.is_read_only()) else { return };
         let snapshot = editor.snapshot();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
@@ -515,14 +548,15 @@ impl Project {
     /// Puts the focused editor's caret at `at` (from `OpenFileAt`).
     fn go_to(&mut self, at: TextPosition) {
         if let Some(editor) = &mut self.editor {
-            let column = editor.display_column(at.line, at.column);
+            let column = editor.grid_column(at.line, at.column);
             editor.place_caret(at.line, column, false, self.viewport_rows);
         }
     }
 
     /// Reads the file in the background and opens it in a new tab, then
     /// puts the caret at `at`. The current editor stays until the new file
-    /// is read; a failed read leaves it and adds a notice. A file that is
+    /// is read; a failed read or a binary file leaves it and adds a notice.
+    /// A file that isn't valid UTF-8 opens read-only. A file that is
     /// already open just has its tab focused, keeping its buffer.
     fn open_file(&mut self, path: PathBuf, at: Option<TextPosition>, jobs: &Jobs) {
         let absolute = self.root.join(&path);
@@ -537,19 +571,33 @@ impl Project {
         let generation = self.open_generation;
         let id = self.id;
         jobs.spawn("open file", move || {
-            let read = File::open(&absolute).and_then(|f| Rope::from_reader(BufReader::new(f)));
+            let read = std::fs::read(&absolute).map(Decoded::from_bytes);
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 if project.open_generation != generation {
                     return;
                 }
                 match read {
-                    Ok(text) => {
-                        project.open_tab(Editor::new(shown, text));
+                    Ok(Decoded::Text(text)) => {
+                        project.open_tab(Editor::new(shown, Rope::from_str(&text)));
                         if let Some(at) = at {
                             project.go_to(at);
                         }
                     }
+                    Ok(Decoded::Invalid(text)) => {
+                        project.notices.push(Notice {
+                            message: format!("{} isn't valid UTF-8, so it's open read-only.", shown.display()),
+                            action: None,
+                        });
+                        project.open_tab(Editor::new(shown, Rope::from_str(&text)).read_only());
+                        if let Some(at) = at {
+                            project.go_to(at);
+                        }
+                    }
+                    Ok(Decoded::Binary) => project.notices.push(Notice {
+                        message: format!("{} is a binary file, so Genea doesn't open it in the editor.", shown.display()),
+                        action: None,
+                    }),
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()), action: None }),

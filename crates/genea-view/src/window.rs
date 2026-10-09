@@ -19,7 +19,7 @@ use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::{LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, surface::Surface};
+use crate::{LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts, surface::Surface};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -46,6 +46,9 @@ pub struct WindowController {
     /// user saw and an unchanged list isn't pushed again.
     problems: Vec<ProblemItem>,
     problem_rows: Rc<VecModel<ProblemRow>>,
+    /// The button went down with ⌥ (adding a caret), so a drag doesn't
+    /// select.
+    option_press: bool,
 }
 
 /// A press this soon after a double-click on the same line is a triple-click.
@@ -70,6 +73,7 @@ impl WindowController {
             last_double_click: None,
             problems: Vec::new(),
             problem_rows,
+            option_press: false,
         })
     }
 
@@ -108,16 +112,19 @@ impl WindowController {
     }
 
     /// Converts a press on the surface into a caret placement: ⇧ extends
-    /// the selection, and a press soon after a double-click (a third click)
-    /// selects the line.
-    pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool) {
+    /// the selection, ⌥ adds a caret, and a press soon after a double-click
+    /// (a third click) selects the line.
+    pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool, alt: bool) {
         self.focus_pane(workbench, pane);
         let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         let triple = self.last_double_click.take().is_some_and(|(at, clicked_line)| {
             clicked_line == line && at.elapsed() < TRIPLE_CLICK_INTERVAL
         });
+        self.option_press = alt && !triple;
         let command = if triple {
             Command::SelectLine { line }
+        } else if alt {
+            Command::AddCaret { line, column }
         } else if shift {
             Command::ExtendSelection { line, column }
         } else {
@@ -128,6 +135,9 @@ impl WindowController {
 
     /// A drag with the button down extends the selection.
     pub fn drag(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32) {
+        if self.option_press {
+            return;
+        }
         self.focus_pane(workbench, pane);
         let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         self.dispatch(workbench, Command::ExtendSelection { line, column });
@@ -209,6 +219,8 @@ impl WindowController {
             self.problem_rows.set_vec(rows);
             self.problems = view.problems.clone();
         }
+        window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
+        window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
         let action = view.notices.last().and_then(|n| n.action.clone());
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
@@ -240,6 +252,12 @@ impl WindowController {
                 window.set_left_has_editor(editor.is_some());
             } else {
                 window.set_right_has_editor(editor.is_some());
+            }
+            // Before Slint shapes the text: registers fallback fonts it needs.
+            let titles = shown.iter().flat_map(|p| &p.tabs).map(|tab| &tab.title);
+            let lines = editor.iter().flat_map(|e| &e.lines).map(|line| &line.text);
+            for text in titles.chain(lines) {
+                fonts::prepare(text);
             }
             self.surfaces[pane].sync(window, editor);
         }

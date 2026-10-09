@@ -282,10 +282,10 @@ fn wire(controller: &WindowController) {
         let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;
         with_app(move |app| app.dispatch(key, Command::ScrollPane { pane: index(pane), rows }));
     });
-    window.on_pressed(move |pane, x, y, shift| {
+    window.on_pressed(move |pane, x, y, shift, alt| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.press(&mut app.workbench, index(pane), x, y, shift);
+            controller.press(&mut app.workbench, index(pane), x, y, shift, alt);
         });
     });
     window.on_dragged(move |pane, x, y| {
@@ -326,8 +326,11 @@ fn wire(controller: &WindowController) {
     });
     // Edits apply synchronously, in order: with_app only defers a key if
     // the app is busy, and then to the very next event-loop turn.
+    let clone_caret = std::cell::RefCell::new(keys::CloneCaretGesture::default());
     window.on_key(move |text, shift, cmd, alt, ctrl| {
-        if let Some(command) = keys::command_for(&text, Modifiers { shift, cmd, alt, ctrl }) {
+        let modifiers = Modifiers { shift, cmd, alt, ctrl };
+        let clone = clone_caret.borrow_mut().command_for(&text, modifiers);
+        if let Some(command) = clone.or_else(|| keys::command_for(&text, modifiers)) {
             with_app(move |app| app.dispatch(key, command));
         }
     });
