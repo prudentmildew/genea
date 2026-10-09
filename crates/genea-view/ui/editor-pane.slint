@@ -3,7 +3,7 @@
 // Rust (src/window.rs) sets every property from the core's PaneView.
 
 import { Theme } from "theme.slint";
-import { EditorSurface, Line } from "editor-surface.slint";
+import { EditorSurface, Line, HunkPopup } from "editor-surface.slint";
 
 // A tab in the strip.
 export struct TabEntry {
@@ -30,6 +30,7 @@ export component EditorPane inherits Rectangle {
     in property <bool> can-split;
     in property <[Line]> lines <=> surface.lines;
     in property <SurfaceGeometry> geometry;
+    in property <HunkPopup> hunk <=> surface.hunk;
     // The file changed on disk while it had unsaved edits (ticket #32):
     // the conflict bar shows over the top of the editor.
     in property <bool> conflict;
@@ -52,6 +53,8 @@ export component EditorPane inherits Rectangle {
     callback key <=> surface.key;
     callback committed <=> surface.committed;
     callback preedit-changed <=> surface.preedit-changed;
+    callback rollback-hunk <=> surface.rollback-hunk;
+    callback hide-hunk <=> surface.hide-hunk;
 
     public function refocus() {
         surface.refocus();

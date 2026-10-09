@@ -19,6 +19,7 @@ use crate::{
     editor::Editor,
     environment::{Environment, ProcessEnv},
     files::FileIndex,
+    git::Git,
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
@@ -63,12 +64,16 @@ pub(crate) struct Project {
     problems: Problems,
     /// What the left column shows; `None` while it is collapsed.
     left_column: Option<LeftColumnView>,
+    /// The change whose popover is open, by file and line (ticket #56).
+    shown_hunk: Option<(PathBuf, usize)>,
     /// The project's files, for the Files view (ticket #30).
     pub(crate) files: FileIndex,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
+    /// The branch and the open files at HEAD (ticket #56).
+    pub(crate) git: Git,
 }
 
 impl Project {
@@ -76,6 +81,7 @@ impl Project {
         Project {
             id,
             files: FileIndex::new(id, root.clone()),
+            git: Git::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -91,6 +97,7 @@ impl Project {
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
+            shown_hunk: None,
         }
     }
 
@@ -107,6 +114,7 @@ impl Project {
         self.load_config(jobs);
         self.find_nested_configs(jobs);
         self.files.start(jobs);
+        self.git.reload(Vec::new(), jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -119,6 +127,10 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
+        if self.git.head_may_have_moved(&changes) {
+            let open = self.open_editors().map(|e| e.path().to_owned()).collect();
+            self.git.reload(open, jobs);
+        }
         self.check_open_files(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if let Some(toolchain) = &mut self.toolchain
@@ -285,7 +297,23 @@ impl Project {
 
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
+        // A shown change closes on anything but scrolling.
+        let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
+        let shown = if scrolling { None } else { self.shown_hunk.take() };
         match command {
+            Command::ShowHunk { line } => {
+                self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
+            }
+            Command::HideHunk => {}
+            Command::RollbackHunk => {
+                // `shown_hunk` was taken above; it is still the one shown.
+                if let Some(editor) = &mut self.editor
+                    && let Some((path, line)) = shown.filter(|(path, _)| path == editor.path())
+                    && let Some((lines, text)) = self.git.rollback(&path, editor.version(), line)
+                {
+                    editor.replace_lines(lines, &text, now, self.viewport_rows);
+                }
+            }
             Command::OpenFile(path) => self.open_file(path, None, jobs),
             Command::OpenFileAt { path, at } => self.open_file(path, Some(at), jobs),
             Command::OpenConfig => self.open_config(jobs),
@@ -511,7 +539,29 @@ impl Project {
             }
         }
         self.reparse(jobs);
+        if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
+            self.diff_file(&path, jobs);
+        }
         self.refresh_views();
+    }
+
+    /// Starts a background diff of an open file with its text at HEAD, if
+    /// its gutter markers are behind and none is running (ticket #56).
+    pub(crate) fn diff_file(&mut self, path: &Path, jobs: &Jobs) {
+        let Some(editor) = self.open_editor(path) else { return };
+        let (version, text) = (editor.version(), editor.snapshot().text);
+        if let Some(job) = self.git.start_diff(path, version, text) {
+            let (id, path) = (self.id, path.to_owned());
+            jobs.spawn("diff with git HEAD", move || {
+                let diffed = job.run();
+                Box::new(move |core| {
+                    let jobs = core.jobs.clone();
+                    let Some(project) = core.project_mut(id) else { return };
+                    project.git.diffed(&path, diffed);
+                    project.diff_file(&path, &jobs);
+                })
+            });
+        }
     }
 
     /// Starts a background parse of the focused file if its syntax tree is
@@ -536,6 +586,12 @@ impl Project {
         let editor = self.editor.as_ref().map(|e| {
             let mut view = e.view(self.viewport_rows);
             view.problems = self.inline_problems(e, &view.lines);
+            view.gutter = self.gutter(e, &view.lines);
+            view.hunk = self
+                .shown_hunk
+                .as_ref()
+                .filter(|(path, _)| path == e.path())
+                .and_then(|(path, line)| self.git.hunk_view(path, e.version(), *line));
             view
         });
         let mut tabs = self.tabs_view(editor.as_ref());
@@ -545,6 +601,7 @@ impl Project {
                 && let Some(e) = self.open_editor(&view.path)
             {
                 view.problems = self.inline_problems(e, &view.lines);
+                view.gutter = self.gutter(e, &view.lines);
             }
         }
         let (errors, warnings) = self.problems.counts();
@@ -556,6 +613,7 @@ impl Project {
             encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
             line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
+            branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
         };
         let mut notices = self.notices.clone();
@@ -578,6 +636,15 @@ impl Project {
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
         }
+    }
+
+    /// The open file's git gutter markers on the visible lines; lines
+    /// hidden in a collapsed fold have none.
+    fn gutter(&self, editor: &Editor, lines: &[crate::view::VisibleLine]) -> Vec<crate::view::GutterMark> {
+        let (Some(first), Some(last)) = (lines.first(), lines.last()) else { return Vec::new() };
+        let mut marks = self.git.gutter(editor.path(), first.index..last.index + 1);
+        marks.retain(|m| lines.binary_search_by_key(&m.line, |l| l.index).is_ok());
+        marks
     }
 
     /// The open file's problems on the visible lines, in grid columns.
@@ -772,6 +839,7 @@ impl Project {
             self.go_to(at);
         }
         self.reparse_file(&path, jobs);
+        self.git.load_base(&path, jobs);
     }
 
     /// Reading a file failed: a notice says why. A tab showing its first

@@ -26,6 +26,7 @@ mod disk;
 mod editor;
 mod environment;
 mod files;
+mod git;
 mod grid;
 mod history;
 mod jobs;
@@ -55,9 +56,9 @@ pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, Fold, HighlightSpan, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
-    ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
-    ToolchainView, VisibleLine, WelcomeView,
+    Caret, EditorView, Fold, GutterMark, HighlightSpan, HunkView, InlineProblem, LeftColumnView, LineChange, Notice,
+    NoticeAction, Preedit, ProblemItem, ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption,
+    ToolchainPicker, ToolchainPickerKind, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

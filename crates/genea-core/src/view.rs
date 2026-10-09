@@ -191,6 +191,50 @@ pub struct EditorView {
     /// when the caret isn't at a bracket or it has no match. Brackets in
     /// strings and comments don't count.
     pub brackets: Vec<Caret>,
+    /// Git gutter markers on the visible lines, top to bottom: how the
+    /// buffer differs from the file at HEAD (ticket #56). Empty outside a
+    /// git repository and for files that aren't in HEAD. Worked out in the
+    /// background as you type, so they can be a moment behind the text.
+    pub gutter: Vec<GutterMark>,
+    /// The change shown by a click on its gutter marker
+    /// (`Command::ShowHunk`): the lines it replaced at HEAD, offered for
+    /// Rollback. Typing, a click in the text and most other commands close
+    /// it (`Command::HideHunk` does too); scrolling doesn't.
+    pub hunk: Option<HunkView>,
+}
+
+/// A change against HEAD, as its popover shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HunkView {
+    /// The buffer's lines it covers (0-based, end exclusive). Empty for
+    /// deleted lines: they were just above `lines.start`.
+    pub lines: Range<usize>,
+    pub change: LineChange,
+    /// The lines at HEAD, joined by `\n` without a final line break. Empty
+    /// for added lines.
+    pub head: String,
+}
+
+/// A git gutter marker on one line. Clicking it shows the change with
+/// `Command::ShowHunk { line }`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GutterMark {
+    /// 0-based line index in the file.
+    pub line: usize,
+    pub change: LineChange,
+}
+
+/// How a line differs from HEAD.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineChange {
+    /// The line isn't in HEAD.
+    Added,
+    /// The line replaces lines that are in HEAD.
+    Modified,
+    /// Lines that are in HEAD were deleted just above this line. (A file
+    /// ending in a newline has an empty last line, so there is always a
+    /// line below a deletion.)
+    Deleted,
 }
 
 /// Marked text from the IME (a dead key waiting for the next key), shown
@@ -274,6 +318,9 @@ pub struct StatusBar {
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,
+    /// The git branch the project is on (the short commit id while HEAD is
+    /// detached), or `None` outside a git repository.
+    pub branch: Option<String>,
     /// Set while the open file is a large file (over
     /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
     /// language intelligence.

@@ -201,6 +201,17 @@ pub enum Command {
     /// Expands every collapsed region.
     ExpandAllFolds,
 
+    // Git (ticket #56).
+    /// A click on a git gutter marker of the focused file: shows the change
+    /// on that line (`EditorView::hunk`) with its lines at HEAD. A line
+    /// without a marker shows nothing.
+    ShowHunk { line: usize },
+    /// Closes the shown change (Esc, a click outside it).
+    HideHunk,
+    /// The shown change's Rollback: puts its lines at HEAD back in the
+    /// buffer, as an edit that Undo reverts, and closes it. Does nothing
+    /// without a shown change.
+    RollbackHunk,
     /// Answers an open file's conflict bar (`EditorView::conflict`): its
     /// file changed on disk while it had unsaved edits. The path is as in
     /// `EditorView::path`.
