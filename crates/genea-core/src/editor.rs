@@ -1033,7 +1033,7 @@ impl Editor {
                     None => self.saved_version = self.version,
                 }
             }
-            ConflictChoice::KeepMyEdits => {}
+            ConflictChoice::KeepMyEdits => self.conflict = false,
         }
     }
 

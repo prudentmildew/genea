@@ -102,3 +102,24 @@ fn reload_in_the_conflict_bar_takes_the_disk_and_undo_brings_my_edits_back() {
     assert_eq!(text(&workbench, project), ["mine let a = 1;", ""]);
     assert!(editor(&workbench, project).modified);
 }
+
+#[test]
+fn keep_my_edits_closes_the_bar_and_the_next_save_overwrites_the_disk() {
+    let (fixture, mut workbench, project) = conflict();
+
+    run(&mut workbench, project, [resolve(ConflictChoice::KeepMyEdits)]);
+
+    let view = editor(&workbench, project);
+    assert!(!view.conflict);
+    assert!(view.modified);
+    assert_eq!(text(&workbench, project), ["mine let a = 1;", ""]);
+    assert_eq!(fixture.read("main.ts"), "theirs\n", "nothing is written until a save");
+
+    run(&mut workbench, project, [Command::Save]);
+    workbench.settle().unwrap();
+
+    assert_eq!(fixture.read("main.ts"), "mine let a = 1;\n");
+    let view = editor(&workbench, project);
+    assert!(!view.conflict);
+    assert!(!view.modified);
+}
