@@ -17,12 +17,13 @@ use crate::{
     config::{self, CONFIG_FILE, Config},
     editor::Editor,
     environment::{Environment, ProcessEnv},
+    files::FileIndex,
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     reading::{self, Contents, FirstScreen},
     syntax::ParseJob,
-    toolchain::{Toolchain, ToolchainContext},
+    toolchain::{LOCKFILES, Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
@@ -61,6 +62,8 @@ pub(crate) struct Project {
     problems: Problems,
     /// What the left column shows; `None` while it is collapsed.
     left_column: Option<LeftColumnView>,
+    /// The project's files, for the Files view (ticket #30).
+    pub(crate) files: FileIndex,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
@@ -71,6 +74,7 @@ impl Project {
     pub(crate) fn new(id: ProjectId, root: PathBuf) -> Self {
         Project {
             id,
+            files: FileIndex::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -85,7 +89,7 @@ impl Project {
             config_generation: 0,
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
-            left_column: None,
+            left_column: Some(LeftColumnView::Files),
         }
     }
 
@@ -101,6 +105,7 @@ impl Project {
         }
         self.load_config(jobs);
         self.find_nested_configs(jobs);
+        self.files.start(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -112,7 +117,13 @@ impl Project {
     /// Files changed on disk (from the watcher). Every area that follows
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
+        self.files.files_changed(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
+        if let Some(toolchain) = &mut self.toolchain
+            && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
+        {
+            toolchain.check_lockfiles(jobs);
+        }
         if changes.rescan {
             self.load_config(jobs);
             self.find_nested_configs(jobs);
@@ -162,6 +173,7 @@ impl Project {
                     };
                     (Config::default(), vec![problem])
                 });
+                project.files.set_exclude(&config.exclude);
                 project.config = config;
                 project.config_problems = problems;
                 project.update_config_problems();
@@ -259,6 +271,16 @@ impl Project {
         &self.root
     }
 
+    /// Replaces a whole-project source's problems.
+    pub(crate) fn replace_problems(&mut self, source: ProblemSource, problems: Vec<Problem>) {
+        self.problems.replace(source, problems);
+    }
+
+    /// Shows a message in the project's window.
+    pub(crate) fn notify(&mut self, message: String) {
+        self.notices.push(Notice { message, action: None });
+    }
+
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
         match command {
@@ -268,6 +290,7 @@ impl Project {
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
+            Command::ToggleFolder(path) => self.files.toggle(&path),
             Command::SelectTab { .. }
             | Command::FocusPane(_)
             | Command::CloseTab { .. }
@@ -317,6 +340,37 @@ impl Project {
                     toolchain.pin_defaults(jobs);
                 }
             }
+            Command::OpenToolchainPicker(kind) => match &mut self.toolchain {
+                Some(toolchain) => toolchain.open_picker(kind, jobs),
+                None => self.notices.push(Notice {
+                    message: "Genea manages the runtime and package manager of a project with a package.json at its \
+                              root, and this folder has none."
+                        .into(),
+                    action: None,
+                }),
+            },
+            Command::FilterToolchainPicker(query) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.filter_picker(query);
+                }
+            }
+            Command::CloseToolchainPicker => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.close_picker();
+                }
+            }
+            Command::SetRuntime(pin) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.set_runtime(pin, jobs);
+                }
+            }
+            Command::SetPackageManager(pin) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.set_package_manager(pin, jobs);
+                }
+            }
+            // The workbench handles it: it needs the recent projects.
+            Command::RemoveUnusedToolchains => {}
             Command::ReloadEnvironment => {
                 if let Some(environment) = &mut self.environment {
                     environment.capture(jobs);
@@ -488,6 +542,8 @@ impl Project {
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
+            toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
+            files: self.files.rows(),
         }
     }
 
