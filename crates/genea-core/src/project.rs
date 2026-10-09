@@ -87,7 +87,7 @@ impl Project {
             config_generation: 0,
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
-            left_column: None,
+            left_column: Some(LeftColumnView::Files),
         }
     }
 

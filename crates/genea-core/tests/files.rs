@@ -4,7 +4,7 @@
 
 use std::{fs, path::Path};
 
-use genea_core::{Command, FileRow, FileRowKind, ProjectId, Severity, Workbench};
+use genea_core::{Command, FileRow, FileRowKind, LeftColumnView, ProjectId, Severity, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 fn open(fixture: FixtureBuilder) -> (FixtureProject, Workbench, ProjectId) {
@@ -29,6 +29,23 @@ fn tree(workbench: &Workbench, project: ProjectId) -> Vec<String> {
             }
         })
         .collect()
+}
+
+#[test]
+fn a_project_opens_with_the_files_view_and_its_shortcut_toggles_it() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new());
+    let left_column = |workbench: &Workbench| workbench.project(project).unwrap().left_column;
+    assert_eq!(left_column(&workbench), Some(LeftColumnView::Files));
+
+    workbench.dispatch(project, Command::ToggleLeftColumn(LeftColumnView::Files));
+    assert_eq!(left_column(&workbench), None);
+
+    workbench.dispatch(project, Command::ToggleLeftColumn(LeftColumnView::Files));
+    assert_eq!(left_column(&workbench), Some(LeftColumnView::Files));
+
+    workbench.dispatch(project, Command::ToggleLeftColumn(LeftColumnView::Problems));
+    workbench.dispatch(project, Command::ToggleLeftColumn(LeftColumnView::Files));
+    assert_eq!(left_column(&workbench), Some(LeftColumnView::Files));
 }
 
 #[test]

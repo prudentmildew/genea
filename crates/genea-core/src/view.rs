@@ -108,6 +108,8 @@ pub struct ClosePrompt {
 /// collapses the column when it is already showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LeftColumnView {
+    /// ⌘1: the project's file tree. A project opens showing it.
+    Files,
     /// ⌘6.
     Problems,
 }
