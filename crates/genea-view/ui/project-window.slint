@@ -14,6 +14,8 @@ export component ProjectWindow inherits Window {
     in property <bool> tab-modified;
     in property <string> status-caret;
     in property <string> status-notice;
+    in property <string> status-encoding;
+    in property <string> status-line-ending;
 
     in property <[Line]> lines <=> surface.lines;
     in property <length> offset-y <=> surface.offset-y;
@@ -180,6 +182,8 @@ export component ProjectWindow inherits Window {
         StatusBar {
             notice: root.status-notice;
             caret: root.status-caret;
+            encoding: root.status-encoding;
+            line-ending: root.status-line-ending;
         }
     }
 }

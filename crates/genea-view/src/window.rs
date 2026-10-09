@@ -13,7 +13,7 @@ use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::ComponentHandle;
 
-use crate::{ProjectWindow, surface::Surface};
+use crate::{ProjectWindow, fonts, surface::Surface};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -129,6 +129,11 @@ impl WindowController {
         window.set_tab_modified(editor.is_some_and(|e| e.modified));
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
+        window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
+        window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
+        for line in editor.iter().flat_map(|e| &e.lines) {
+            fonts::prepare(&line.text);
+        }
         self.surface.sync(window, editor);
     }
 }

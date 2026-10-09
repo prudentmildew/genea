@@ -6,6 +6,8 @@ import { Theme } from "theme.slint";
 export component StatusBar inherits Rectangle {
     in property <string> notice;
     in property <string> caret;
+    in property <string> encoding;
+    in property <string> line-ending;
 
     height: 22px;
     background: Theme.chrome-background;
@@ -32,6 +34,20 @@ export component StatusBar inherits Rectangle {
 
         Text {
             text: root.caret;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.line-ending;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.encoding;
             color: Theme.chrome-foreground;
             font-size: Theme.chrome-font-size;
             vertical-alignment: center;
