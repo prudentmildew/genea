@@ -20,12 +20,14 @@
 //!   build projects with `genea_testkit::FixtureProject` and drive them with
 //!   commands.
 
+mod action;
 mod command;
 mod config;
 mod disk;
 mod editor;
 mod environment;
 mod files;
+mod finder;
 mod git;
 mod grid;
 mod history;
@@ -45,6 +47,7 @@ mod view;
 mod watcher;
 mod workbench;
 
+pub use action::Action;
 pub use command::{CaretMove, Command, Modifiers, MouseAction, MouseButton, SearchQuery, TerminalKey};
 pub use search::MAX_SEARCH_MATCHES;
 pub use config::{Config, TerminalPosition, Theme};
@@ -67,4 +70,5 @@ pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFil
 pub use view::{
     TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
 };
+pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

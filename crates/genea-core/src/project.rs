@@ -1,6 +1,7 @@
 //! One open project: its folder and what its window shows.
 
 mod external;
+mod finder;
 mod tabs;
 
 use std::{
@@ -19,6 +20,7 @@ use crate::{
     editor::Editor,
     environment::{Environment, ProcessEnv},
     files::FileIndex,
+    finder::Finder,
     git::Git,
     history::EditKind,
     jobs::Jobs,
@@ -80,6 +82,15 @@ pub(crate) struct Project {
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
     pub(crate) terminal: Terminal,
+    /// The fuzzy finder, while it is open (ticket #33).
+    finder: Option<Finder>,
+    /// Bumped by every finder match, so an older match can't replace a
+    /// newer one.
+    finder_generation: u64,
+    /// The file index version the last finder match used.
+    finder_files: u64,
+    /// Files opened lately, most recent first: Recent Files (⌘E).
+    recent_files: Vec<PathBuf>,
 }
 
 impl Project {
@@ -106,6 +117,10 @@ impl Project {
             left_column: Some(LeftColumnView::Files),
             shown_hunk: None,
             terminal: Terminal::new(id),
+            finder: None,
+            finder_generation: 0,
+            finder_files: 0,
+            recent_files: Vec::new(),
         }
     }
 
@@ -373,6 +388,12 @@ impl Project {
             | Command::TerminalMouse { .. }
             | Command::TerminalPaste => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
+            Command::OpenFinder(_)
+            | Command::SetFinderQuery(_)
+            | Command::MoveFinderSelection(_)
+            | Command::SelectFinderItem(_)
+            | Command::AcceptFinder
+            | Command::CloseFinder => self.finder_command(command, jobs, host),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -680,6 +701,7 @@ impl Project {
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
             search: self.search.view(),
+            finder: self.finder.as_ref().map(Finder::view),
         }
     }
 
@@ -816,6 +838,7 @@ impl Project {
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
         self.open_generation += 1;
         if self.focus_open_file(&shown) {
+            self.opened_file(&shown);
             if let Some(at) = at {
                 self.go_to(at);
             }
@@ -878,6 +901,7 @@ impl Project {
             Some(first_screen) => first_screen.finish_loading(editor, rows),
             None => self.open_tab(editor),
         }
+        self.opened_file(&path);
         if let Some(at) = at
             && self.editor.as_ref().is_some_and(|e| e.path() == path)
         {

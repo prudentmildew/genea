@@ -10,6 +10,7 @@ use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{
     Highlight,
+    action::Action,
     command::{Command, SearchQuery},
     config::Config,
     problems::{ProblemSource, Severity, TextPosition},
@@ -58,6 +59,62 @@ pub struct ProjectView {
     pub files: Arc<[FileRow]>,
     /// The Search view (⌘⇧F): the last query and its results.
     pub search: SearchView,
+    /// The fuzzy finder overlay, while it is open (ticket #33).
+    pub finder: Option<FinderView>,
+}
+
+/// The fuzzy finder overlay: a query and the results matching it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderView {
+    pub mode: FinderMode,
+    /// What the user typed.
+    pub query: String,
+    /// Best first. While a new query is being matched, these are the last
+    /// query's results.
+    pub items: Vec<FinderItem>,
+    /// Index into `items` of the result Return opens or runs; `None`
+    /// without results.
+    pub selected: Option<usize>,
+}
+
+/// What the finder finds. Each mode has its shortcut, which opens the
+/// finder in it with `Command::OpenFinder`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FinderMode {
+    /// ⌘⇧O: the project's files, without `node_modules` and the config's
+    /// `exclude`. With an empty query, the recent files.
+    Files,
+    /// ⌘E: the files opened lately (by opening them or selecting their
+    /// tab), most recent first. A query narrows them, keeping that order.
+    /// With an empty query the file before the current one is selected.
+    RecentFiles,
+    /// ⌘⇧A: every action, with its shortcut. Choosing one runs it.
+    Actions,
+    /// ⇧⇧: files and actions together, best match first. With an empty
+    /// query, the recent files.
+    Everywhere,
+}
+
+/// A result in the finder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderItem {
+    /// A file's name, or an action's.
+    pub label: String,
+    /// A file's folder, relative to the project root (empty at the root,
+    /// and for actions).
+    pub detail: String,
+    /// The keyboard shortcut of an action that has one, e.g. `⌘S`.
+    pub shortcut: Option<String>,
+    pub kind: FinderItemKind,
+}
+
+/// What choosing a result does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FinderItemKind {
+    /// Opens the file (relative to the project root).
+    File(PathBuf),
+    /// Runs the action's command.
+    Action(Action),
 }
 
 /// The Search view: a query and its results, grouped by file.

@@ -419,6 +419,11 @@ impl Terminal {
         }
     }
 
+    /// Whether the terminal has the keyboard focus rather than the editor.
+    pub(crate) fn is_focused(&self) -> bool {
+        self.focused
+    }
+
     /// The editor takes the keyboard focus.
     pub(crate) fn unfocus(&mut self) {
         if std::mem::replace(&mut self.focused, false) {
