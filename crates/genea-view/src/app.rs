@@ -20,12 +20,12 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{Command, ProjectId, Workbench};
+use genea_core::{Command, LeftColumnView, ProjectId, Workbench};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, dialogs,
+    AboutWindow, LeftView, dialogs,
     keys::{self, Modifiers},
     pasteboard::Pasteboard,
     welcome::WelcomeController,
@@ -291,11 +291,37 @@ fn wire(controller: &WindowController) {
     window.on_copy(menu(Command::Copy));
     window.on_paste(menu(Command::Paste));
     window.on_select_all(menu(Command::SelectAll));
+    window.on_open_config(menu(Command::OpenConfig));
+    window.on_toggle_view(move |view| {
+        let view = left_column_view(view);
+        with_app(move |app| app.dispatch(key, Command::ToggleLeftColumn(view)));
+    });
+    window.on_show_view(move |view| {
+        let view = left_column_view(view);
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.show_view(&mut app.workbench, view);
+        });
+    });
+    window.on_problem_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.open_problem(&mut app.workbench, index);
+        });
+    });
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));
         CloseRequestResponse::HideWindow
     });
+}
+
+/// The core's name for a left-column view.
+fn left_column_view(view: LeftView) -> LeftColumnView {
+    match view {
+        LeftView::Problems => LeftColumnView::Problems,
+    }
 }
 
 /// Connects the welcome window's callbacks to the app.

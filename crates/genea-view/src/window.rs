@@ -5,15 +5,18 @@
 //! core's `ProjectView` and sets properties; Slint skips equal values and the
 //! surface diffs its slots, so a sync with nothing new repaints nothing.
 
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use genea_core::{Command, ProjectId, Workbench};
+use genea_core::{Command, LeftColumnView, ProblemItem, ProjectId, Severity, Theme as ConfigTheme, Workbench};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::{ProjectWindow, surface::Surface};
+use crate::{LeftView, ProblemRow, ProjectWindow, Theme, surface::Surface};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -27,6 +30,10 @@ pub struct WindowController {
     pub notice: Option<String>,
     /// When and on which line the last double-click was, to spot a third.
     last_double_click: Option<(Instant, usize)>,
+    /// The Problems items as last pushed, so a click maps to the item the
+    /// user saw and an unchanged list isn't pushed again.
+    problems: Vec<ProblemItem>,
+    problem_rows: Rc<VecModel<ProblemRow>>,
 }
 
 /// A press this soon after a double-click on the same line is a triple-click.
@@ -36,7 +43,18 @@ impl WindowController {
     pub fn new(key: WindowKey, project: ProjectId) -> Result<Self, slint::PlatformError> {
         let window = ProjectWindow::new()?;
         let surface = Surface::new(&window);
-        Ok(WindowController { key, window, project, surface, notice: None, last_double_click: None })
+        let problem_rows = Rc::new(VecModel::default());
+        window.set_problems(ModelRc::from(problem_rows.clone()));
+        Ok(WindowController {
+            key,
+            window,
+            project,
+            surface,
+            notice: None,
+            last_double_click: None,
+            problems: Vec::new(),
+            problem_rows,
+        })
     }
 
     pub fn show(&self) {
@@ -129,6 +147,56 @@ impl WindowController {
         window.set_tab_modified(editor.is_some_and(|e| e.modified));
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
+        window.set_status_config_notice(view.status.config_notice.clone().unwrap_or_default().into());
+        window.set_status_problems(problem_counts(view.status.errors, view.status.warnings).into());
+        window.set_status_has_errors(view.status.errors > 0);
+
+        let theme = window.global::<Theme>();
+        theme.set_follow_system(view.config.theme == ConfigTheme::System);
+        theme.set_pinned_dark(view.config.theme == ConfigTheme::Dark);
+
+        window.set_left_column_visible(view.left_column.is_some());
+        if let Some(LeftColumnView::Problems) = view.left_column {
+            window.set_left_view(LeftView::Problems);
+        }
+        if view.problems != self.problems {
+            let rows: Vec<ProblemRow> = view
+                .problems
+                .iter()
+                .map(|p| ProblemRow {
+                    error: p.severity == Severity::Error,
+                    message: p.message.as_str().into(),
+                    location: format!("{}:{}", p.path.display(), p.location).into(),
+                })
+                .collect();
+            self.problem_rows.set_vec(rows);
+            self.problems = view.problems.clone();
+        }
         self.surface.sync(window, editor);
     }
+
+    /// A Problems item was clicked: open its file at the problem.
+    pub fn open_problem(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some(item) = self.problems.get(index) else { return };
+        let command = Command::OpenFileAt { path: item.path.clone(), at: item.position };
+        self.dispatch(workbench, command);
+    }
+
+    /// Shows a left-column view, leaving it showing if it already is.
+    pub fn show_view(&mut self, workbench: &mut Workbench, view: LeftColumnView) {
+        if workbench.project(self.project).is_some_and(|p| p.left_column != Some(view)) {
+            self.dispatch(workbench, Command::ToggleLeftColumn(view));
+        }
+    }
+}
+
+/// The status bar's problem counts, e.g. "1 error  2 warnings"; empty with
+/// none.
+fn problem_counts(errors: usize, warnings: usize) -> String {
+    let count = |n: usize, what: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {what}")),
+        n => Some(format!("{n} {what}s")),
+    };
+    [count(errors, "error"), count(warnings, "warning")].into_iter().flatten().collect::<Vec<_>>().join("  ")
 }

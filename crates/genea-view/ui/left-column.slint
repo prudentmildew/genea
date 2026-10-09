@@ -1,0 +1,84 @@
+// The left column (spec #19 story 54): a view switcher on top and the active
+// view below. Problems (⌘6) is the first view; Files (⌘1), Changes and
+// Search join it in their tickets: add a `LeftView` value, a switcher tab
+// and the view itself. The column is collapsed (not shown) while the core's
+// `left_column` is `None`.
+
+import { Theme } from "theme.slint";
+import { ProblemsView, ProblemRow } from "problems-view.slint";
+
+export enum LeftView { problems }
+
+// A tab in the switcher.
+component SwitcherTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+
+    callback clicked();
+
+    min-width: label-text.preferred-width + 20px;
+    background: touch.has-hover && !root.active ? Theme.chrome-highlight : transparent;
+
+    label-text := Text {
+        text: root.label;
+        color: root.active ? Theme.chrome-foreground : Theme.chrome-muted;
+        font-weight: root.active ? 600 : 400;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        background: root.active ? Theme.caret : transparent;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component LeftColumn inherits Rectangle {
+    in property <LeftView> view;
+    in property <[ProblemRow]> problems;
+
+    // A switcher tab was clicked: show that view.
+    callback show(LeftView);
+    callback problem-clicked(int);
+
+    background: Theme.chrome-background;
+
+    VerticalLayout {
+        Rectangle {
+            height: 28px;
+
+            HorizontalLayout {
+                padding-left: 4px;
+                alignment: start;
+
+                SwitcherTab {
+                    label: "Problems";
+                    active: root.view == LeftView.problems;
+                    clicked => {
+                        root.show(LeftView.problems);
+                    }
+                }
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.chrome-border;
+            }
+        }
+
+        if root.view == LeftView.problems: ProblemsView {
+            vertical-stretch: 1;
+            problems: root.problems;
+            clicked(index) => {
+                root.problem-clicked(index);
+            }
+        }
+    }
+}

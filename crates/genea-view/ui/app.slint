@@ -3,4 +3,9 @@
 export { ProjectWindow } from "project-window.slint";
 export { AboutWindow } from "about.slint";
 export { WelcomeWindow, RecentEntry } from "welcome-window.slint";
-export { Line, Run, Span } from "editor-surface.slint";
+export { Line, Mark, Run, Span } from "editor-surface.slint";
+
+// The theme global, so Rust can follow the config's `theme` per window.
+export { Theme } from "theme.slint";
+export { LeftView } from "left-column.slint";
+export { ProblemRow } from "problems-view.slint";

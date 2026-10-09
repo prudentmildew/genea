@@ -1,24 +1,40 @@
-// Colours, fonts and metrics shared by every view. One light theme for now;
-// the themes ticket adds dark and follows the system.
+// Colours, fonts and metrics shared by every view: the built-in light and
+// dark themes (spec #19 story 57). A window follows the system's appearance
+// unless its project's config pins `theme` (ticket #29): Rust sets
+// `follow-system` and `pinned-dark` per window (src/window.rs). Each window
+// has its own instance of this global.
 //
 // The editor font is Menlo 13 pt with a line height of 1.2 (spec #19). Keep
 // line-height in step with LINE_HEIGHT in src/surface.rs.
 
+import { Palette } from "std-widgets.slint";
+
 export global Theme {
+    // The config's `theme`: "system" follows the system's appearance;
+    // "light" and "dark" pin one.
+    in-out property <bool> follow-system: true;
+    in-out property <bool> pinned-dark: false;
+    out property <bool> dark: root.follow-system ? Palette.color-scheme == ColorScheme.dark : root.pinned-dark;
+
     out property <string> editor-font: "Menlo";
     out property <length> editor-font-size: 13px;
     out property <length> line-height: 15.6px;
     out property <length> gutter-width: 56px;
 
-    out property <color> editor-background: #ffffff;
-    out property <color> editor-foreground: #24292f;
-    out property <color> gutter-foreground: #9a9a9a;
-    out property <color> caret: #1f6feb;
-    out property <color> selection: #b6d6fd;
+    out property <color> editor-background: root.dark ? #1e2228 : #ffffff;
+    out property <color> editor-foreground: root.dark ? #d4d8de : #24292f;
+    out property <color> gutter-foreground: root.dark ? #6b7280 : #9a9a9a;
+    out property <color> caret: root.dark ? #58a6ff : #1f6feb;
+    out property <color> selection: root.dark ? #264f78 : #b6d6fd;
+    // Underlines and markers for problems.
+    out property <color> error: root.dark ? #f85149 : #cf222e;
+    out property <color> warning: root.dark ? #d29922 : #9a6700;
 
-    out property <color> chrome-background: #f6f8fa;
-    out property <color> chrome-border: #d0d7de;
-    out property <color> chrome-foreground: #24292f;
-    out property <color> chrome-muted: #57606a;
+    out property <color> chrome-background: root.dark ? #25292f : #f6f8fa;
+    out property <color> chrome-border: root.dark ? #3a3f47 : #d0d7de;
+    out property <color> chrome-foreground: root.dark ? #d4d8de : #24292f;
+    out property <color> chrome-muted: root.dark ? #8b949e : #57606a;
+    // A selected or hovered row in a list.
+    out property <color> chrome-highlight: root.dark ? #2f353d : #eaeef2;
     out property <length> chrome-font-size: 12px;
 }

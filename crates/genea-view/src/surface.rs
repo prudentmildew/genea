@@ -10,10 +10,10 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::EditorView;
+use genea_core::{EditorView, Severity};
 use slint::{Color, Model, ModelRc, VecModel};
 
-use crate::{Line, ProjectWindow, Run, Span};
+use crate::{Line, Mark, ProjectWindow, Run, Span};
 
 /// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
 /// ui/theme.slint.
@@ -23,8 +23,9 @@ pub const LINE_HEIGHT: f32 = 15.6;
 /// huge file. The base moves (and every slot is rebuilt) past this distance.
 const REBASE_LINES: usize = 10_000;
 
-/// `Theme.editor-foreground`. Highlighting gives runs their own colours.
-const FOREGROUND: u32 = 0x24292f;
+/// A run colour that means `Theme.editor-foreground`, which follows the
+/// light or dark theme. Highlighting gives runs their own colours.
+const FOREGROUND: Color = Color::from_argb_encoded(0);
 
 #[derive(PartialEq)]
 struct SlotState {
@@ -32,6 +33,8 @@ struct SlotState {
     base: usize,
     text: String,
     selections: Vec<Range<usize>>,
+    /// Problems underlined on the line: columns, and whether it's an error.
+    problems: Vec<(Range<usize>, bool)>,
     /// The cell width the selections were laid out with.
     char_width: f32,
 }
@@ -96,6 +99,12 @@ impl Surface {
                     base: self.base,
                     text: line.text.clone(),
                     selections: line.selections.clone(),
+                    problems: editor
+                        .problems
+                        .iter()
+                        .filter(|p| p.line == line.index)
+                        .map(|p| (p.columns.clone(), p.severity == Severity::Error))
+                        .collect(),
                     char_width,
                 });
             }
@@ -117,7 +126,7 @@ impl Surface {
                         ModelRc::new(VecModel::from(vec![Run {
                             x: 0.0,
                             text: s.text.as_str().into(),
-                            color: Color::from_argb_encoded(0xff00_0000 | FOREGROUND),
+                            color: FOREGROUND,
                         }]))
                     },
                     selections: if s.selections.is_empty() {
@@ -127,6 +136,20 @@ impl Surface {
                             s.selections
                                 .iter()
                                 .map(|r| Span { x: r.start as f32 * char_width, width: r.len() as f32 * char_width })
+                                .collect::<Vec<_>>(),
+                        ))
+                    },
+                    problems: if s.problems.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(
+                            s.problems
+                                .iter()
+                                .map(|(r, error)| Mark {
+                                    x: r.start as f32 * char_width,
+                                    width: r.len() as f32 * char_width,
+                                    error: *error,
+                                })
                                 .collect::<Vec<_>>(),
                         ))
                     },

@@ -5,6 +5,8 @@
 import { Theme } from "theme.slint";
 import { EditorSurface, Line } from "editor-surface.slint";
 import { StatusBar } from "status-bar.slint";
+import { LeftColumn, LeftView } from "left-column.slint";
+import { ProblemRow } from "problems-view.slint";
 
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
@@ -14,6 +16,14 @@ export component ProjectWindow inherits Window {
     in property <bool> tab-modified;
     in property <string> status-caret;
     in property <string> status-notice;
+    in property <string> status-config-notice;
+    in property <string> status-problems;
+    in property <bool> status-has-errors;
+
+    // The left column: shown while `left-column-visible`, with `left-view`.
+    in property <bool> left-column-visible;
+    in property <LeftView> left-view;
+    in property <[ProblemRow]> problems;
 
     in property <[Line]> lines <=> surface.lines;
     in property <length> offset-y <=> surface.offset-y;
@@ -34,6 +44,12 @@ export component ProjectWindow inherits Window {
     callback paste();
     callback select-all();
     callback show-about();
+    callback open-config();
+    // A left-column view's shortcut: show it, or collapse the column.
+    callback toggle-view(LeftView);
+    // Show a left-column view (a switcher tab, the status-bar notice).
+    callback show-view(LeftView);
+    callback problem-clicked(int);
 
     // Editor input.
     callback scrolled <=> surface.scrolled;
@@ -78,6 +94,13 @@ export component ProjectWindow inherits Window {
                 title: "Open File…";
                 activated => {
                     root.open-file();
+                }
+            }
+
+            MenuItem {
+                title: "Open Config";
+                activated => {
+                    root.open-config();
                 }
             }
 
@@ -131,6 +154,17 @@ export component ProjectWindow inherits Window {
         }
 
         Menu {
+            title: "View";
+            MenuItem {
+                title: "Problems";
+                shortcut: @keys(Control + "6");
+                activated => {
+                    root.toggle-view(LeftView.problems);
+                }
+            }
+        }
+
+        Menu {
             title: "Help";
             MenuItem {
                 title: "About Genea";
@@ -142,44 +176,73 @@ export component ProjectWindow inherits Window {
     }
 
     VerticalLayout {
-        tabs := Rectangle {
-            height: 28px;
-            background: Theme.chrome-background;
+        HorizontalLayout {
+            vertical-stretch: 1;
 
-            Rectangle {
-                y: parent.height - 1px;
-                height: 1px;
+            if root.left-column-visible: LeftColumn {
+                width: 300px;
+                view: root.left-view;
+                problems: root.problems;
+                show(view) => {
+                    root.show-view(view);
+                }
+                problem-clicked(index) => {
+                    root.problem-clicked(index);
+                }
+            }
+
+            if root.left-column-visible: Rectangle {
+                width: 1px;
                 background: Theme.chrome-border;
             }
 
-            Text {
-                x: 12px;
-                // A dot marks unsaved edits.
-                text: !root.has-editor ? "" : root.tab-modified ? root.tab-title + "  ●" : root.tab-title;
-                color: Theme.chrome-foreground;
-                vertical-alignment: center;
-            }
-        }
+            editor-column := VerticalLayout {
+                tabs := Rectangle {
+                    height: 28px;
+                    background: Theme.chrome-background;
 
-        Rectangle {
-            vertical-stretch: 1;
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.chrome-border;
+                    }
 
-            surface := EditorSurface {
-                caret-visible: root.has-editor;
-            }
+                    Text {
+                        x: 12px;
+                        // A dot marks unsaved edits.
+                        text: !root.has-editor ? "" : root.tab-modified ? root.tab-title + "  ●" : root.tab-title;
+                        color: Theme.chrome-foreground;
+                        vertical-alignment: center;
+                    }
+                }
 
-            if !root.has-editor: Text {
-                text: "Open a file with File › Open File…";
-                color: Theme.chrome-muted;
-                font-size: 13px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+                Rectangle {
+                    vertical-stretch: 1;
+
+                    surface := EditorSurface {
+                        caret-visible: root.has-editor;
+                    }
+
+                    if !root.has-editor: Text {
+                        text: "Open a file with File › Open File…";
+                        color: Theme.chrome-muted;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
             }
         }
 
         StatusBar {
             notice: root.status-notice;
+            config-notice: root.status-config-notice;
+            problems: root.status-problems;
+            has-errors: root.status-has-errors;
             caret: root.status-caret;
+            show-problems => {
+                root.show-view(LeftView.problems);
+            }
         }
     }
 }
