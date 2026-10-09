@@ -1,6 +1,6 @@
 # GPUI as the GUI framework
 
-**Status: reopened.** The validation spike ([Does GPUI meet Genea's budgets?](https://github.com/prudentmildew/genea/issues/14)) missed several budgets: idle wake-ups, idle memory, start time and keystroke-to-frame. Under the reopen condition below, a Slint spike is measured with the same harness, and the decision is then taken again. GPUI stays the working choice until then.
+**Status: superseded by [ADR 0004](0004-slint-gui-framework.md).** The validation spike ([Does GPUI meet Genea's budgets?](https://github.com/prudentmildew/genea/issues/14)) missed several budgets, so a Slint spike was measured with the same harness. Comparing the two ([Which GUI framework does Genea build on, given both spikes?](https://github.com/prudentmildew/genea/issues/16)), Genea chose Slint.
 
 Genea's UI is built on GPUI, the framework Zed is built on. It is consumed as a git dependency on `zed-industries/zed`, pinned to a Zed stable release tag. GPUI is the only candidate whose whole stack is shaped like Genea: a 120 fps code editor on Metal, with CoreText shaping, its own `NSTextInputClient`, a native `NSMenu`, and AccessKit. Zed 1.x proves it in production every week. We accept that GPUI is pre-1.0 with frequent breaking changes, has thin docs, isn't usefully published to crates.io, and follows Zed's roadmap rather than ours.
 
