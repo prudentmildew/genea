@@ -14,7 +14,7 @@ use std::{
 };
 
 use genea_host::{
-    Child, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
+    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
     TimerCallback,
 };
 
@@ -37,6 +37,7 @@ struct Inner {
     processes: ScriptedProcesses,
     downloads: ScriptedDownloads,
     support: tempfile::TempDir,
+    clipboard: TestClipboard,
 }
 
 impl Default for Inner {
@@ -46,6 +47,7 @@ impl Default for Inner {
             processes: ScriptedProcesses::default(),
             downloads: ScriptedDownloads::default(),
             support: tempfile::Builder::new().prefix("genea-support-").tempdir().expect("create a temp dir"),
+            clipboard: TestClipboard::default(),
         }
     }
 }
@@ -71,6 +73,10 @@ impl TestHost {
     pub fn downloads(&self) -> &ScriptedDownloads {
         &self.inner.downloads
     }
+
+    pub fn clipboard(&self) -> &TestClipboard {
+        &self.inner.clipboard
+    }
 }
 
 impl Host for TestHost {
@@ -88,6 +94,40 @@ impl Host for TestHost {
 
     fn support_dir(&self) -> &Path {
         self.inner.support.path()
+    }
+
+    fn clipboard(&self) -> &dyn Clipboard {
+        &self.inner.clipboard
+    }
+}
+
+// --- Clipboard ---------------------------------------------------------------
+
+/// A clipboard the test can fill and read, standing in for the system one.
+#[derive(Default)]
+pub struct TestClipboard {
+    text: Mutex<Option<String>>,
+}
+
+impl TestClipboard {
+    /// Puts text on the clipboard, as another app would.
+    pub fn set_text(&self, text: &str) {
+        *self.text.lock().unwrap() = Some(text.to_owned());
+    }
+
+    /// The clipboard's text, if any.
+    pub fn text(&self) -> Option<String> {
+        self.text.lock().unwrap().clone()
+    }
+}
+
+impl Clipboard for TestClipboard {
+    fn read_text(&self) -> Option<String> {
+        self.text()
+    }
+
+    fn write_text(&self, text: &str) {
+        self.set_text(text);
     }
 }
 

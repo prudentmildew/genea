@@ -6,7 +6,7 @@
 //! freely. They are snapshots: re-read them after a command or a change
 //! notification.
 
-use std::path::PathBuf;
+use std::{ops::Range, path::PathBuf};
 
 /// One open project, as its window shows it.
 #[derive(Clone, Debug, PartialEq)]
@@ -30,6 +30,9 @@ pub struct EditorView {
     /// The tab title: the file name.
     pub title: String,
     pub read_only: bool,
+    /// The buffer has edits that aren't on disk yet: the tab and window
+    /// show it as unsaved.
+    pub modified: bool,
     /// Lines in the file. A file ending in a newline has an empty last line.
     pub line_count: usize,
     /// The first visible row, fractional while scrolling smoothly. The view
@@ -38,7 +41,24 @@ pub struct EditorView {
     /// The lines in the viewport, top to bottom, including a partly visible
     /// last one.
     pub lines: Vec<VisibleLine>,
+    /// Where the caret is in the file. While composing, the view draws it
+    /// after the preedit.
     pub caret: Caret,
+    /// The IME composition being typed, if any. Its text is already spliced
+    /// into the caret's line in `lines`; the view underlines it.
+    pub preedit: Option<Preedit>,
+}
+
+/// Marked text from the IME (a dead key waiting for the next key), shown
+/// inline at the caret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Preedit {
+    /// 0-based line index.
+    pub line: usize,
+    /// The display column it starts at: the caret's.
+    pub column: usize,
+    /// Display columns it takes.
+    pub width: usize,
 }
 
 /// A line in the viewport.
@@ -49,6 +69,10 @@ pub struct VisibleLine {
     /// The text as laid out on the grid: no line ending, tabs expanded to
     /// spaces, cut off after [`crate::MAX_VISIBLE_COLUMNS`] columns.
     pub text: String,
+    /// Selected display columns, left to right. When a selection goes on
+    /// past the end of the line, its range takes one more column for the
+    /// line break.
+    pub selections: Vec<Range<usize>>,
 }
 
 /// The caret's grid cell.

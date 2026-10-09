@@ -10,6 +10,8 @@ export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
     in property <bool> has-editor;
     in property <string> tab-title;
+    // The open file has unsaved edits.
+    in property <bool> tab-modified;
     in property <string> status-caret;
     in property <string> status-notice;
 
@@ -17,6 +19,8 @@ export component ProjectWindow inherits Window {
     in property <length> offset-y <=> surface.offset-y;
     in property <length> caret-x <=> surface.caret-x;
     in property <length> caret-y <=> surface.caret-y;
+    in property <length> compose-x <=> surface.compose-x;
+    in property <length> preedit-width <=> surface.preedit-width;
     out property <length> char-width: surface.char-width;
     out property <length> viewport-height: surface.viewport-height;
     out property <length> text-left: surface.text-left;
@@ -24,12 +28,21 @@ export component ProjectWindow inherits Window {
     // Menu commands.
     callback open-folder();
     callback open-file();
+    callback save();
+    callback cut();
+    callback copy();
+    callback paste();
+    callback select-all();
     callback show-about();
 
     // Editor input.
     callback scrolled <=> surface.scrolled;
     callback pressed <=> surface.pressed;
+    callback dragged <=> surface.dragged;
+    callback double-clicked <=> surface.double-clicked;
     callback key <=> surface.key;
+    callback committed <=> surface.committed;
+    callback preedit-changed <=> surface.preedit-changed;
     callback viewport-changed();
 
     title: root.window-title;
@@ -41,6 +54,12 @@ export component ProjectWindow inherits Window {
 
     changed viewport-height => {
         root.viewport-changed();
+    }
+
+    // Re-focuses the hidden TextInput once the native window exists, so the
+    // IME is enabled (ADR 0004).
+    public function refocus() {
+        surface.refocus();
     }
 
     MenuBar {
@@ -59,6 +78,54 @@ export component ProjectWindow inherits Window {
                 title: "Open File…";
                 activated => {
                     root.open-file();
+                }
+            }
+
+            MenuItem {
+                title: "Save";
+                shortcut: @keys(Control + S);
+                enabled: root.has-editor;
+                activated => {
+                    root.save();
+                }
+            }
+        }
+
+        Menu {
+            title: "Edit";
+            MenuItem {
+                title: "Cut";
+                shortcut: @keys(Control + X);
+                enabled: root.has-editor;
+                activated => {
+                    root.cut();
+                }
+            }
+
+            MenuItem {
+                title: "Copy";
+                shortcut: @keys(Control + C);
+                enabled: root.has-editor;
+                activated => {
+                    root.copy();
+                }
+            }
+
+            MenuItem {
+                title: "Paste";
+                shortcut: @keys(Control + V);
+                enabled: root.has-editor;
+                activated => {
+                    root.paste();
+                }
+            }
+
+            MenuItem {
+                title: "Select All";
+                shortcut: @keys(Control + A);
+                enabled: root.has-editor;
+                activated => {
+                    root.select-all();
                 }
             }
         }
@@ -87,7 +154,8 @@ export component ProjectWindow inherits Window {
 
             Text {
                 x: 12px;
-                text: root.has-editor ? root.tab-title : "";
+                // A dot marks unsaved edits.
+                text: !root.has-editor ? "" : root.tab-modified ? root.tab-title + "  ●" : root.tab-title;
                 color: Theme.chrome-foreground;
                 vertical-alignment: center;
             }
