@@ -24,6 +24,13 @@ _Avoid_: supported language (ambiguous; basic file types are also "supported")
 
 **Template**: A built-in starting point for a new project: frontend, backend, or full-stack. The full-stack template creates a workspace. Templates are fixed; users cannot add their own.
 
+**External change**: A change to a file's contents on disk made by anything other than editing in Genea: an agent in the terminal, a git checkout, a formatter run from a script. Edits made in Genea are never external changes.
+
+**Review**: The user's pass over external changes, independent of git. Each change is either kept (accepted into the baseline) or reverted (the file is restored to the baseline).
+_Avoid_: staging, commit (those are git concepts)
+
+**Review baseline**: A file's contents as of the user's last review; external changes are shown relative to it.
+
 **Reference machine**: The deliberately weak Mac that performance is measured against (an Apple Silicon baseline with limited memory and cores, driving a 120 Hz display).
 
 **Reference workspace**: A workspace performance is measured on. _Typical_ is the size a full-stack project grows to; _Large_ is a big real-world TypeScript repo. Genea budgets apply in full to Typical; Large must stay usable.
