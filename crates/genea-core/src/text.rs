@@ -31,6 +31,14 @@ impl LineEnding {
         }
     }
 
+    /// The status bar's name for it.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            LineEnding::Lf => "LF",
+            LineEnding::CrLf => "CRLF",
+        }
+    }
+
     /// `text` with every line break (LF, CRLF or a lone CR) made this one.
     pub(crate) fn normalize(self, text: &str) -> String {
         let mut out = String::with_capacity(text.len());

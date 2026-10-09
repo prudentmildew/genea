@@ -143,6 +143,8 @@ impl Project {
         let editor = self.editor.as_ref().map(|e| e.view(self.viewport_rows));
         let status = StatusBar {
             caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
+            encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
+            line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
         };
         ProjectView {
             root: self.root.clone(),

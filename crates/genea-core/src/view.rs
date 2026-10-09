@@ -89,6 +89,12 @@ pub struct Caret {
 pub struct StatusBar {
     /// The caret position as `line:column`, 1-based, or `None` with no editor.
     pub caret: Option<String>,
+    /// The open file's encoding (`UTF-8`, the only one Genea reads), or
+    /// `None` with no editor.
+    pub encoding: Option<String>,
+    /// The open file's line ending, `LF` or `CRLF`, or `None` with no
+    /// editor.
+    pub line_ending: Option<String>,
 }
 
 /// A message for the user.

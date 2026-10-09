@@ -174,6 +174,11 @@ impl Editor {
         self.reveal_caret(viewport_rows);
     }
 
+    /// The file's line ending, kept for every line break typed.
+    pub(crate) fn line_ending(&self) -> LineEnding {
+        self.line_ending
+    }
+
     /// The buffer as it is now, for writing in the background.
     pub(crate) fn snapshot(&self) -> Snapshot {
         Snapshot { path: self.path.clone(), text: self.text.clone(), version: self.version }
