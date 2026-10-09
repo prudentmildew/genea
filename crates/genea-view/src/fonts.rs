@@ -86,8 +86,15 @@ fn register_emoji(collection: &mut fontique::Collection) {
             return;
         }
     };
-    let families: Vec<_> =
-        collection.register_fonts(Blob::new(Arc::new(map)), None).into_iter().map(|(id, _)| id).collect();
+    // Only face 0, "Apple Color Emoji". Face 1 (".Apple Color Emoji UI")
+    // would take Skia's slower path for faces past the first in a .ttc,
+    // which copies the font more than once (i-slint-renderer-skia).
+    let families: Vec<_> = collection
+        .register_fonts(Blob::new(Arc::new(map)), None)
+        .into_iter()
+        .filter(|(_, faces)| faces.iter().any(|face| face.index() == 0))
+        .map(|(id, _)| id)
+        .collect();
     // Parley asks the emoji family for emoji clusters, and the fallbacks of
     // the Common script (where emoji are) for other symbols.
     collection.append_generic_families(GenericFamily::Emoji, families.iter().copied());
