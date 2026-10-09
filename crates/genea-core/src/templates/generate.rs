@@ -105,7 +105,15 @@ pub(super) fn generate(request: &NewProject) -> Result<(), String> {
     out.write("package.json", &package_json(with_pins(root, request)))?;
     out.write(".gitignore", GITIGNORE)?;
     out.write("README.md", &readme)?;
-    Ok(())
+    init_repository(folder)
+}
+
+/// `git init`, in-process: no `git` binary is run (ADR 0005). HEAD points at
+/// `main`, and there is no initial commit (#12).
+fn init_repository(folder: &Path) -> Result<(), String> {
+    gix::create::into(folder, gix::create::Kind::WithWorktree, gix::create::Options::default())
+        .map(|_| ())
+        .map_err(|e| format!("Couldn't create a git repository in {}: {e}", folder.display()))
 }
 
 /// Writes the frontend template and returns its `package.json`.

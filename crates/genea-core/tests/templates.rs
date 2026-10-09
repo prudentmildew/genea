@@ -250,3 +250,56 @@ fn the_full_stack_template_with_bun_keeps_the_workspace_and_catalog_in_package_j
     assert_eq!(root["scripts"]["typecheck"], "bun run --filter '@shop/*' typecheck");
     assert_eq!(root["scripts"]["lint"], "oxlint");
 }
+
+#[test]
+fn a_new_project_is_an_empty_git_repository_on_main() {
+    for template in [Template::Frontend, Template::Backend, Template::FullStack] {
+        let parent = create(template, "my-app", node(), pnpm());
+
+        assert_eq!(parent.read("my-app/.git/HEAD"), "ref: refs/heads/main\n", "{template:?}");
+        // No initial commit.
+        assert!(!parent.path("my-app/.git/refs/heads/main").exists(), "{template:?}");
+    }
+}
+
+#[test]
+fn generation_starts_no_process_and_downloads_nothing() {
+    let parent = FixtureProject::new().build();
+    let host = TestHost::new();
+    let mut workbench = Workbench::new(host.shared());
+
+    for (i, template) in [Template::Frontend, Template::Backend, Template::FullStack].into_iter().enumerate() {
+        for (j, package_manager) in [pnpm(), PackageManagerPin::Bun("1.4.2".into())].into_iter().enumerate() {
+            let folder = parent.path(format!("app-{i}-{j}"));
+            let request = NewProject { template, name: "app".into(), folder: folder.clone(), runtime: node(), package_manager };
+            workbench.create_project(request);
+            workbench.settle().unwrap();
+            assert_eq!(workbench.project_creation(), Some(ProjectCreation::Created { folder }));
+        }
+    }
+
+    assert_eq!(host.processes().spawned(), []);
+    assert_eq!(host.downloads().requests(), Vec::<String>::new());
+}
+
+/// Generates every template with whatever PATH the process has. Run by
+/// `generation_needs_no_git_binary` with an empty PATH.
+#[test]
+#[ignore = "run by generation_needs_no_git_binary"]
+fn generate_every_template() {
+    for template in [Template::Frontend, Template::Backend, Template::FullStack] {
+        create(template, "my-app", node(), pnpm());
+    }
+}
+
+#[test]
+fn generation_needs_no_git_binary() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["generate_every_template", "--exact", "--ignored"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success() && stdout.contains("1 passed"), "{stdout}\n{}", String::from_utf8_lossy(&output.stderr));
+}
