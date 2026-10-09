@@ -8,6 +8,7 @@ use alacritty_terminal::{
     event::EventListener,
     grid::Dimensions,
     term::{
+        TermMode,
         cell::{Cell, Flags},
         color::Colors,
     },
@@ -16,8 +17,17 @@ use alacritty_terminal::{
 
 use crate::view::{TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStyle};
 
-/// The visible rows and the cursor, as the user sees them.
-pub(super) fn snapshot<T: EventListener>(term: &Term<T>) -> (Vec<TerminalLine>, Option<TerminalCursor>) {
+/// What the terminal shows, as the user sees it.
+pub(super) struct Screen {
+    pub(super) lines: Vec<TerminalLine>,
+    pub(super) cursor: Option<TerminalCursor>,
+    pub(super) history: usize,
+    pub(super) scrolled_back: usize,
+    pub(super) mode: TermMode,
+}
+
+/// Copies what the terminal shows.
+pub(super) fn snapshot<T: EventListener>(term: &Term<T>) -> Screen {
     let content = term.renderable_content();
     let offset = content.display_offset as i32;
     let rows = term.screen_lines();
@@ -37,7 +47,13 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>) -> (Vec<TerminalLine>, 
     let line = cursor.point.line.0 + offset;
     let cursor = (cursor.shape != CursorShape::Hidden && (0..rows as i32).contains(&line))
         .then(|| TerminalCursor { line: line as usize, column: cursor.point.column.0 });
-    (lines, cursor)
+    Screen {
+        lines,
+        cursor,
+        history: term.grid().history_size(),
+        scrolled_back: content.display_offset,
+        mode: content.mode,
+    }
 }
 
 /// A row being copied.

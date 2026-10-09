@@ -151,6 +151,11 @@ pub enum Command {
     /// A key that isn't plain text, or one with ⌃ or ⌥ held: sent to the
     /// program the way xterm sends it.
     TerminalKey(TerminalKey, Modifiers),
+    /// The scroll wheel over the terminal, in rows (negative is up, towards
+    /// older output), over the cell at `line` and `column`. It scrolls the
+    /// scrollback, unless the program takes it: a program that reports the
+    /// mouse gets wheel events, and a full-screen one gets ↑ and ↓.
+    ScrollTerminal { rows: i32, line: usize, column: usize },
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.

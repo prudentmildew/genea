@@ -281,3 +281,33 @@ fn wide_characters_take_two_columns() {
     assert_eq!(view.lines[0].runs, [run(0..7, "日本 ok", TerminalStyle::default())]);
     assert_eq!(view.cursor.unwrap().column, 7);
 }
+
+#[test]
+fn the_scrollback_keeps_ten_thousand_lines() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    let output: String = (0..10_100).map(|n| format!("line {n}\r\n")).collect();
+    pty.output(output);
+    workbench.settle().unwrap();
+    assert_eq!(screen(&workbench, project).last().unwrap(), "line 10099");
+
+    workbench.dispatch(project, Command::ScrollTerminal { rows: -100_000, line: 0, column: 0 });
+
+    let view = terminal(&workbench, project);
+    assert_eq!(view.history, 10_000);
+    assert_eq!(view.scrolled_back, 10_000);
+    // 24 rows: the last holds the prompt's empty line, so the screen began
+    // at line 10077 and the scrollback 10,000 lines before it.
+    assert_eq!(view.lines[0].text, "line 77");
+    assert_eq!(view.cursor, None);
+
+    workbench.dispatch(project, Command::ScrollTerminal { rows: 9_990, line: 0, column: 0 });
+    assert_eq!(terminal(&workbench, project).lines[0].text, "line 10067");
+
+    // Typing goes back to the bottom.
+    workbench.dispatch(project, Command::TerminalText("x".into()));
+    let view = terminal(&workbench, project);
+    assert_eq!(view.scrolled_back, 0);
+    assert_eq!(view.lines[22].text, "line 10099");
+}

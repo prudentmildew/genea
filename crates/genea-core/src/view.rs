@@ -298,6 +298,16 @@ pub struct TerminalView {
     /// Where the terminal's cursor is on the visible rows; `None` while the
     /// program hides it or it is scrolled out of view.
     pub cursor: Option<TerminalCursor>,
+    /// Lines in the scrollback, above the screen (at most 10,000).
+    pub history: usize,
+    /// How many lines the view is scrolled back into the scrollback: 0
+    /// shows the screen.
+    pub scrolled_back: usize,
+    /// A full-screen program has switched to the alternate screen, which
+    /// has no scrollback.
+    pub alternate_screen: bool,
+    /// The program takes mouse clicks (mouse reporting is on).
+    pub mouse_reporting: bool,
 }
 
 /// Whether the terminal's shell runs.

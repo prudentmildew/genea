@@ -28,7 +28,7 @@ use std::{
 use alacritty_terminal::{
     Term,
     event::{Event, EventListener},
-    grid::Dimensions,
+    grid::{Dimensions, Scroll},
     term::{Config, TermMode},
     vte::ansi::{Processor, Timeout},
 };
@@ -37,11 +37,13 @@ use genea_host::{Exit, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
 mod grid;
 mod input;
 
+use grid::Screen;
+
 use crate::{
-    command::Command,
+    command::{Command, Modifiers, TerminalKey},
     environment::ProcessEnv,
     jobs::Jobs,
-    view::{TerminalCursor, TerminalLine, TerminalStatus, TerminalView},
+    view::{TerminalLine, TerminalStatus, TerminalView},
     workbench::{Core, ProjectId},
 };
 
@@ -64,9 +66,8 @@ pub(crate) struct Terminal {
     shell: Shell,
     /// Bumped by every start, so a stale session's results are dropped.
     generation: u64,
-    /// The visible grid, as last copied from the session.
-    lines: Vec<TerminalLine>,
-    cursor: Option<TerminalCursor>,
+    /// What the terminal showed when last copied from the session.
+    screen: Screen,
 }
 
 enum Shell {
@@ -171,8 +172,14 @@ impl Drop for Started {
 
 impl Terminal {
     pub(crate) fn new(project: ProjectId) -> Self {
-        let lines = blank_lines(DEFAULT_SIZE);
-        Terminal { project, size: DEFAULT_SIZE, shell: Shell::Waiting, generation: 0, lines, cursor: None }
+        let screen = Screen {
+            lines: blank_lines(DEFAULT_SIZE),
+            cursor: None,
+            history: 0,
+            scrolled_back: 0,
+            mode: TermMode::empty(),
+        };
+        Terminal { project, size: DEFAULT_SIZE, shell: Shell::Waiting, generation: 0, screen }
     }
 
     /// Whether the terminal waits for the project environment to start its
@@ -264,7 +271,7 @@ impl Terminal {
         }
         self.refresh();
         self.shell = Shell::Exited(exit);
-        self.cursor = None;
+        self.screen.cursor = None;
     }
 
     /// Copies the visible grid from the session.
@@ -273,7 +280,7 @@ impl Terminal {
         // Cleared before the copy: output parsed after it posts again.
         session.dirty.store(false, Ordering::SeqCst);
         let term = session.term.lock().unwrap();
-        (self.lines, self.cursor) = grid::snapshot(&term);
+        self.screen = grid::snapshot(&term);
     }
 
     /// A terminal command from the user.
@@ -281,6 +288,7 @@ impl Terminal {
         match command {
             Command::SetTerminalSize { rows, columns } => self.resize(Size { rows: rows.max(1), columns: columns.max(2) }),
             Command::TerminalText(text) => self.send(text.into_bytes()),
+            Command::ScrollTerminal { rows, line, column } => self.scroll(rows, line, column),
             Command::TerminalKey(key, modifiers) => {
                 if let Some(mode) = self.mode() {
                     self.send(input::key(key, modifiers, mode));
@@ -307,16 +315,39 @@ impl Terminal {
                 let _ = session.to_pty.send(ToPty::Resize(size.into()));
                 self.refresh();
             }
-            _ => self.lines.resize_with(size.rows, blank_line),
+            _ => self.screen.lines.resize_with(size.rows, blank_line),
         }
     }
 
-    /// Sends input to the program.
-    fn send(&self, bytes: Vec<u8>) {
-        if let Shell::Running(session) = &self.shell
-            && !bytes.is_empty()
-        {
-            let _ = session.to_pty.send(ToPty::Input(bytes));
+    /// The scroll wheel: the program's if it takes it, else the scrollback.
+    fn scroll(&mut self, rows: i32, line: usize, column: usize) {
+        let Some(mode) = self.mode() else { return };
+        if rows == 0 {
+            return;
+        }
+        let up = rows < 0;
+        let count = rows.unsigned_abs() as usize;
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            let _ = (line, column);
+        } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+            let key = if up { TerminalKey::Up } else { TerminalKey::Down };
+            self.send(input::key(key, Modifiers::default(), mode).repeat(count));
+        } else if let Shell::Running(session) = &self.shell {
+            session.term.lock().unwrap().scroll_display(Scroll::Delta(-rows));
+            self.refresh();
+        }
+    }
+
+    /// Sends input to the program, scrolling back to the bottom first.
+    fn send(&mut self, bytes: Vec<u8>) {
+        let Shell::Running(session) = &self.shell else { return };
+        if bytes.is_empty() {
+            return;
+        }
+        let _ = session.to_pty.send(ToPty::Input(bytes));
+        if self.screen.scrolled_back > 0 {
+            session.term.lock().unwrap().scroll_display(Scroll::Bottom);
+            self.refresh();
         }
     }
 
@@ -327,12 +358,17 @@ impl Terminal {
             Shell::Exited(exit) => TerminalStatus::Exited { code: exit.code },
             Shell::Failed(message) => TerminalStatus::Failed(message.clone()),
         };
+        let screen = &self.screen;
         TerminalView {
             status,
             rows: self.size.rows,
             columns: self.size.columns,
-            lines: self.lines.clone(),
-            cursor: self.cursor,
+            lines: screen.lines.clone(),
+            cursor: screen.cursor,
+            history: screen.history,
+            scrolled_back: screen.scrolled_back,
+            alternate_screen: screen.mode.contains(TermMode::ALT_SCREEN),
+            mouse_reporting: screen.mode.intersects(TermMode::MOUSE_MODE),
         }
     }
 }

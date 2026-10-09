@@ -295,7 +295,10 @@ impl Project {
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
-            Command::SetTerminalSize { .. } | Command::TerminalText(_) | Command::TerminalKey(..) => {
+            Command::SetTerminalSize { .. }
+            | Command::TerminalText(_)
+            | Command::TerminalKey(..)
+            | Command::ScrollTerminal { .. } => {
                 self.terminal.command(command)
             }
             Command::SetViewport { rows } => {
