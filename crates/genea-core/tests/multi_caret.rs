@@ -295,6 +295,18 @@ fn cloning_back_the_other_way_removes_the_last_clone() {
 }
 
 #[test]
+fn each_side_of_a_split_keeps_its_own_carets() {
+    let mut editing = open("a\nb\nc\n");
+    editing.run([Command::AddCaret { line: 1, column: 1 }]);
+
+    editing.run([Command::SplitRight, Command::CollapseCarets]);
+    assert_eq!(editing.carets(), [(1, 1)]);
+
+    editing.run([Command::FocusPane(0)]);
+    assert_eq!(editing.carets(), [(0, 0), (1, 1)]);
+}
+
+#[test]
 fn escape_collapses_to_the_primary_caret() {
     let mut editing = open("foo\nfoo\nfoo\n");
     // ⌃⌘G keeps the first "foo" primary; ⌃⇧G drops it, so the last one
