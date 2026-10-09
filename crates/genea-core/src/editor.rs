@@ -205,6 +205,12 @@ impl Editor {
         self.anchor = start;
     }
 
+    /// The selected text, or `None` with nothing selected.
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        let (start, end) = self.selection();
+        (start != end).then(|| self.text.slice(start..end).to_string())
+    }
+
     /// The selection as an ordered char range.
     fn selection(&self) -> (usize, usize) {
         (self.anchor.min(self.caret), self.anchor.max(self.caret))

@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    Child, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
+    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
     TimerCallback,
 };
 
@@ -20,6 +20,7 @@ pub struct RealHost {
     clock: SystemClock,
     processes: OsProcesses,
     downloads: HttpDownloads,
+    clipboard: ClipboardSlot,
 }
 
 impl RealHost {
@@ -29,6 +30,14 @@ impl RealHost {
 
     pub fn shared() -> SharedHost {
         Arc::new(Self::new())
+    }
+
+    /// Uses `clipboard` as the system clipboard. The pasteboard lives in
+    /// AppKit, which no core crate may link (ADR 0004), so the view layer
+    /// supplies it. Without one, the clipboard is private to the process.
+    pub fn with_clipboard(mut self, clipboard: impl Clipboard + 'static) -> Self {
+        self.clipboard = ClipboardSlot(Box::new(clipboard));
+        self
     }
 }
 
@@ -43,6 +52,36 @@ impl Host for RealHost {
 
     fn downloads(&self) -> &dyn Downloads {
         &self.downloads
+    }
+
+    fn clipboard(&self) -> &dyn Clipboard {
+        self.clipboard.0.as_ref()
+    }
+}
+
+// --- Clipboard ---------------------------------------------------------------
+
+struct ClipboardSlot(Box<dyn Clipboard>);
+
+impl Default for ClipboardSlot {
+    fn default() -> Self {
+        ClipboardSlot(Box::new(ProcessClipboard::default()))
+    }
+}
+
+/// A clipboard private to the process, until the app plugs in the system one.
+#[derive(Default)]
+struct ProcessClipboard {
+    text: Mutex<Option<String>>,
+}
+
+impl Clipboard for ProcessClipboard {
+    fn read_text(&self) -> Option<String> {
+        self.text.lock().unwrap().clone()
+    }
+
+    fn write_text(&self, text: &str) {
+        *self.text.lock().unwrap() = Some(text.to_owned());
     }
 }
 

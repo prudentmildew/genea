@@ -1,7 +1,8 @@
 //! The host boundary (spec #19, Architecture).
 //!
 //! Every effect outside Genea's process and the project folder goes through a
-//! [`Host`]: spawning child processes, HTTP downloads and the clock. The core
+//! [`Host`]: spawning child processes, HTTP downloads, the clock and the
+//! clipboard. The core
 //! receives one as a [`SharedHost`] and never reaches past it.
 //!
 //! - [`RealHost`] runs real things. The Slint app uses it.
@@ -18,6 +19,7 @@
 //! `genea-testkit`. Keep the traits small and blocking: the core calls them
 //! from background threads, never from the main thread.
 
+mod clipboard;
 mod clock;
 mod downloads;
 mod processes;
@@ -25,6 +27,7 @@ pub mod real;
 
 use std::sync::Arc;
 
+pub use clipboard::Clipboard;
 pub use clock::{Clock, TimerCallback};
 pub use downloads::{DownloadError, Downloads};
 pub use processes::{Child, Exit, ProcessControl, ProcessSpec, Processes};
@@ -40,6 +43,8 @@ pub trait Host: Send + Sync + 'static {
     fn processes(&self) -> &dyn Processes;
     /// HTTP downloads: toolchain archives and the release-update check.
     fn downloads(&self) -> &dyn Downloads;
+    /// The system clipboard, for Cut, Copy and Paste.
+    fn clipboard(&self) -> &dyn Clipboard;
 }
 
 /// How the core holds its host.

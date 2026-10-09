@@ -49,6 +49,13 @@ pub enum Command {
     Delete(CaretMove),
     /// Return: breaks the line at the caret with the file's line ending.
     NewLine,
+    /// ⌘C: puts the selection on the system clipboard. Does nothing with
+    /// nothing selected.
+    Copy,
+    /// ⌘X: moves the selection to the system clipboard.
+    Cut,
+    /// ⌘V: types the system clipboard's text, replacing the selection.
+    Paste,
     /// ⌘S: writes the open file to disk in the background. `settle` (tests)
     /// or the change notification (the app) says when it is written.
     Save,

@@ -6,10 +6,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use genea_host::Host;
 use ropey::Rope;
 
 use crate::{
-    command::Command,
+    command::{CaretMove, Command},
     editor::Editor,
     jobs::Jobs,
     view::{Notice, ProjectView, StatusBar},
@@ -45,7 +46,7 @@ impl Project {
         &self.root
     }
 
-    pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs) {
+    pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         match command {
             Command::OpenFile(path) => self.open_file(path, jobs),
             Command::SetViewport { rows } => {
@@ -107,6 +108,26 @@ impl Project {
             Command::NewLine => {
                 if let Some(editor) = &mut self.editor {
                     editor.insert("\n", self.viewport_rows);
+                }
+            }
+            Command::Copy => {
+                if let Some(text) = self.editor.as_ref().and_then(Editor::selected_text) {
+                    host.clipboard().write_text(&text);
+                }
+            }
+            Command::Cut => {
+                if let Some(editor) = &mut self.editor
+                    && let Some(text) = editor.selected_text()
+                {
+                    host.clipboard().write_text(&text);
+                    editor.delete(CaretMove::Left, self.viewport_rows);
+                }
+            }
+            Command::Paste => {
+                if let Some(editor) = &mut self.editor
+                    && let Some(text) = host.clipboard().read_text()
+                {
+                    editor.insert(&text, self.viewport_rows);
                 }
             }
             Command::Save => self.save(jobs),
