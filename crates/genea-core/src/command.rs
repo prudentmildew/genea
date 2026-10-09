@@ -43,6 +43,10 @@ pub enum Command {
     /// Types text at the caret, replacing the selection: a key press or an
     /// IME commit.
     InsertText(String),
+    /// The IME's marked text while a dead key composes (`´` before `e`),
+    /// drawn at the caret but not in the file. An empty string ends the
+    /// composition; the composed text then arrives as `InsertText`.
+    SetPreedit(String),
     /// Deletes the selection or, with nothing selected, the text between the
     /// caret and where the movement would put it: `Delete(Left)` is
     /// Backspace, `Delete(Right)` is Delete, `Delete(WordLeft)` is ⌥⌫.

@@ -41,7 +41,24 @@ pub struct EditorView {
     /// The lines in the viewport, top to bottom, including a partly visible
     /// last one.
     pub lines: Vec<VisibleLine>,
+    /// Where the caret is in the file. While composing, the view draws it
+    /// after the preedit.
     pub caret: Caret,
+    /// The IME composition being typed, if any. Its text is already spliced
+    /// into the caret's line in `lines`; the view underlines it.
+    pub preedit: Option<Preedit>,
+}
+
+/// Marked text from the IME (a dead key waiting for the next key), shown
+/// inline at the caret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Preedit {
+    /// 0-based line index.
+    pub line: usize,
+    /// The display column it starts at: the caret's.
+    pub column: usize,
+    /// Display columns it takes.
+    pub width: usize,
 }
 
 /// A line in the viewport.

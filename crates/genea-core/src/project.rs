@@ -100,6 +100,11 @@ impl Project {
                     editor.insert(&text, self.viewport_rows);
                 }
             }
+            Command::SetPreedit(text) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.set_preedit(text);
+                }
+            }
             Command::Delete(movement) => {
                 if let Some(editor) = &mut self.editor {
                     editor.delete(movement, self.viewport_rows);

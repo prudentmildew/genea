@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::{
     command::CaretMove,
     text::{self, LineEnding},
-    view::{Caret, EditorView, VisibleLine},
+    view::{Caret, EditorView, Preedit, VisibleLine},
 };
 
 /// Grid columns a tab advances to (the next multiple of this).
@@ -37,6 +37,8 @@ pub(crate) struct Editor {
     scroll_top: f64,
     /// Every line break typed or pasted is converted to this.
     line_ending: LineEnding,
+    /// The IME's marked text, drawn at the caret; never in `text`.
+    preedit: String,
     /// Bumped by every edit.
     version: u64,
     /// The version last written to disk (or read from it).
@@ -54,7 +56,7 @@ pub(crate) struct Snapshot {
 impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
         let line_ending = LineEnding::detect(&text);
-        Editor { path, text, caret: 0, anchor: 0, goal_column: None, scroll_top: 0.0, line_ending, version: 0, saved_version: 0 }
+        Editor { path, text, caret: 0, anchor: 0, goal_column: None, scroll_top: 0.0, line_ending, preedit: String::new(), version: 0, saved_version: 0 }
     }
 
     /// Moves the caret. With `extend`, the selection's anchor stays put, so
@@ -175,6 +177,7 @@ impl Editor {
     /// caret after it. Line breaks become the file's line ending.
     pub(crate) fn insert(&mut self, text: &str, viewport_rows: f64) {
         let text = self.line_ending.normalize(text);
+        self.preedit.clear();
         self.delete_selection();
         self.text.insert(self.caret, &text);
         self.version += 1;
@@ -182,6 +185,10 @@ impl Editor {
         self.anchor = self.caret;
         self.goal_column = None;
         self.reveal_caret(viewport_rows);
+    }
+
+    pub(crate) fn set_preedit(&mut self, text: String) {
+        self.preedit = text;
     }
 
     /// Deletes the selection, or the text the movement would pass over.
@@ -297,6 +304,11 @@ impl Editor {
             })
             .collect();
         let caret = Caret { line: self.text.char_to_line(self.caret), column: self.caret_display_column() };
+        let preedit = (!self.preedit.is_empty()).then(|| Preedit {
+            line: caret.line,
+            column: caret.column,
+            width: self.preedit.chars().fold(caret.column, display_columns_from) - caret.column,
+        });
         EditorView {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: self.path.clone(),
@@ -306,6 +318,7 @@ impl Editor {
             scroll_top: self.scroll_top,
             lines,
             caret,
+            preedit,
         }
     }
 
@@ -325,11 +338,18 @@ impl Editor {
     }
 
     /// A line as laid out on the grid: tabs expanded, no line ending, cut
-    /// at [`MAX_VISIBLE_COLUMNS`].
+    /// at [`MAX_VISIBLE_COLUMNS`], with the preedit spliced in at the caret.
     fn grid_text(&self, line: usize) -> String {
+        let chars = self.text.line(line).chars();
+        let (caret_line, caret_column) = self.caret_line_column();
+        let chars: Box<dyn Iterator<Item = char>> = if line == caret_line && !self.preedit.is_empty() {
+            Box::new(chars.clone().take(caret_column).chain(self.preedit.chars()).chain(chars.skip(caret_column)))
+        } else {
+            Box::new(chars)
+        };
         let mut text = String::new();
         let mut column = 0;
-        for c in self.text.line(line).chars() {
+        for c in chars {
             if matches!(c, '\n' | '\r') || column >= MAX_VISIBLE_COLUMNS {
                 break;
             }
