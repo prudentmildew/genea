@@ -190,6 +190,17 @@ fn closing_the_last_tab_on_a_side_closes_the_split() {
 }
 
 #[test]
+fn undo_on_either_side_undoes_the_files_last_edit() {
+    let (_fixture, mut workbench, project) = project(&[("a.ts", "a\n")]);
+    run(&mut workbench, project, [open("a.ts"), Command::SplitRight, Command::InsertText("x".into())]);
+
+    run(&mut workbench, project, [Command::FocusPane(0), Command::Undo]);
+
+    assert_eq!(first_lines(&workbench, project), ["a", "a"]);
+    assert!(view(&workbench, project).panes.iter().all(|p| !p.tabs[0].modified));
+}
+
+#[test]
 fn closing_one_of_two_tabs_on_an_edited_file_keeps_the_edits_without_asking() {
     let (_fixture, mut workbench, project) = project(&[("a.ts", "a\n")]);
     run(&mut workbench, project, [open("a.ts"), Command::SplitRight, Command::InsertText("x".into())]);

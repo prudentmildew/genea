@@ -13,6 +13,9 @@ export component ProjectWindow inherits Window {
     in property <bool> has-editor;
     in property <string> status-caret;
     in property <string> status-notice;
+    in property <string> status-notice-action;
+    in property <string> status-toolchain;
+    in property <string> status-update;
 
     // The editor area (ticket #31): the left pane, and the right one while
     // split. `focused-pane` is 0 (left) or 1 (right).
@@ -36,6 +39,8 @@ export component ProjectWindow inherits Window {
     callback open-folder();
     callback open-file();
     callback save();
+    callback undo();
+    callback redo();
     callback cut();
     callback copy();
     callback paste();
@@ -46,6 +51,10 @@ export component ProjectWindow inherits Window {
     callback move-tab();
     callback close-split();
     callback next-tab(forward: bool);
+    // The status-bar notice's button.
+    callback notice-action();
+    // Opens the release page of the update notice.
+    callback open-update();
 
     // Tab strips; `pane` is 0 (left) or 1 (right).
     callback tab-clicked(pane: int, index: int);
@@ -125,6 +134,26 @@ export component ProjectWindow inherits Window {
 
         Menu {
             title: "Edit";
+            MenuItem {
+                title: "Undo";
+                shortcut: @keys(Control + Z);
+                enabled: root.has-editor;
+                activated => {
+                    root.undo();
+                }
+            }
+
+            MenuItem {
+                title: "Redo";
+                shortcut: @keys(Control + Shift + Z);
+                enabled: root.has-editor;
+                activated => {
+                    root.redo();
+                }
+            }
+
+            MenuSeparator { }
+
             MenuItem {
                 title: "Cut";
                 shortcut: @keys(Control + X);
@@ -316,7 +345,16 @@ export component ProjectWindow inherits Window {
 
         StatusBar {
             notice: root.status-notice;
+            notice-action: root.status-notice-action;
+            notice-action-clicked => {
+                root.notice-action();
+            }
+            toolchain: root.status-toolchain;
             caret: root.status-caret;
+            update: root.status-update;
+            update-clicked => {
+                root.open-update();
+            }
         }
     }
 }

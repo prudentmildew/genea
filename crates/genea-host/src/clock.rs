@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Called once when a timer is due. It runs on a host-owned thread (the real
 /// clock) or on the thread that advances a manual clock, never on the main
@@ -15,4 +15,8 @@ pub trait Clock: Send + Sync {
 
     /// Calls `fire` once `delay` has passed on this clock.
     fn after(&self, delay: Duration, fire: TimerCallback);
+
+    /// Wall-clock time, only for facts that must outlive the process (when
+    /// the update check last ran). Measure durations with [`now`](Self::now).
+    fn system_time(&self) -> SystemTime;
 }

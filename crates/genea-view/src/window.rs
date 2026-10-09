@@ -33,6 +33,8 @@ pub struct WindowController {
     prompting: bool,
     /// A window-level message, e.g. why a folder couldn't be opened.
     pub notice: Option<String>,
+    /// The command behind the shown notice's button, if it has one.
+    pub notice_action: Option<Command>,
     /// When and on which line the last double-click was, to spot a third.
     last_double_click: Option<(Instant, usize)>,
 }
@@ -53,6 +55,7 @@ impl WindowController {
             focused_pane: 0,
             prompting: false,
             notice: None,
+            notice_action: None,
             last_double_click: None,
         })
     }
@@ -152,6 +155,8 @@ impl WindowController {
         if let Some(rows) = viewport_change {
             workbench.dispatch(self.project, Command::SetViewport { rows });
         }
+        let update = workbench.update_notice().map(|notice| notice.message).unwrap_or_default();
+        window.set_status_update(update.into());
         // The project closes with its window, so this is always there.
         let Some(view) = workbench.project(self.project) else { return };
 
@@ -166,6 +171,10 @@ impl WindowController {
         window.set_has_editor(editor.is_some());
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
+        let action = view.notices.last().and_then(|n| n.action.clone());
+        window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
+        self.notice_action = action.map(|a| a.command);
+        window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
 
         window.set_split(view.panes.len() > 1);
         window.set_can_split(view.can_split);

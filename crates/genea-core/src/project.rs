@@ -14,7 +14,9 @@ use ropey::Rope;
 use crate::{
     command::{CaretMove, Command},
     editor::Editor,
+    history::EditKind,
     jobs::Jobs,
+    toolchain::{Toolchain, ToolchainContext},
     view::{Notice, ProjectView, StatusBar},
     workbench::ProjectId,
 };
@@ -35,6 +37,8 @@ pub(crate) struct Project {
     notices: Vec<Notice>,
     /// Bumped by every OpenFile, so a slow read can't replace a newer one.
     open_generation: u64,
+    /// The runtime and package manager (ticket #35); set by `start_toolchain`.
+    pub(crate) toolchain: Option<Toolchain>,
 }
 
 impl Project {
@@ -47,7 +51,19 @@ impl Project {
             viewport_rows: DEFAULT_VIEWPORT_ROWS,
             notices: Vec::new(),
             open_generation: 0,
+            toolchain: None,
         }
+    }
+
+    /// Reads the toolchain pins and starts the downloads, in the background.
+    /// A folder without a root `package.json` has no toolchain. (Checking is
+    /// one stat on the main thread, like `open_project`'s folder check.)
+    pub(crate) fn start_toolchain(&mut self, context: ToolchainContext, jobs: &Jobs) {
+        if !self.root.join("package.json").exists() {
+            return;
+        }
+        let toolchain = self.toolchain.insert(Toolchain::new(self.id, self.root.clone(), context));
+        toolchain.load(jobs);
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -55,6 +71,7 @@ impl Project {
     }
 
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
+        let now = host.clock().now();
         match command {
             Command::OpenFile(path) => self.open_file(path, jobs),
             Command::SelectTab { .. }
@@ -96,6 +113,16 @@ impl Project {
                     editor.place_caret(line, column, false, self.viewport_rows);
                 }
             }
+            Command::RetryToolchain => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.retry(jobs);
+                }
+            }
+            Command::PinToolchainDefaults => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.pin_defaults(jobs);
+                }
+            }
             Command::ExtendSelection { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, true, self.viewport_rows);
@@ -113,7 +140,7 @@ impl Project {
             }
             Command::InsertText(text) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.insert(&text, self.viewport_rows);
+                    editor.insert(&text, EditKind::Typing, now, self.viewport_rows);
                 }
             }
             Command::SetPreedit(text) => {
@@ -123,12 +150,12 @@ impl Project {
             }
             Command::Delete(movement) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.delete(movement, self.viewport_rows);
+                    editor.delete(movement, EditKind::Deleting, now, self.viewport_rows);
                 }
             }
             Command::NewLine => {
                 if let Some(editor) = &mut self.editor {
-                    editor.insert("\n", self.viewport_rows);
+                    editor.insert("\n", EditKind::Typing, now, self.viewport_rows);
                 }
             }
             Command::Copy => {
@@ -141,14 +168,24 @@ impl Project {
                     && let Some(text) = editor.selected_text()
                 {
                     host.clipboard().write_text(&text);
-                    editor.delete(CaretMove::Left, self.viewport_rows);
+                    editor.delete(CaretMove::Left, EditKind::Other, now, self.viewport_rows);
                 }
             }
             Command::Paste => {
                 if let Some(editor) = &mut self.editor
                     && let Some(text) = host.clipboard().read_text()
                 {
-                    editor.insert(&text, self.viewport_rows);
+                    editor.insert(&text, EditKind::Other, now, self.viewport_rows);
+                }
+            }
+            Command::Undo => {
+                if let Some(editor) = &mut self.editor {
+                    editor.undo(self.viewport_rows);
+                }
+            }
+            Command::Redo => {
+                if let Some(editor) = &mut self.editor {
+                    editor.redo(self.viewport_rows);
                 }
             }
             Command::Save => {
@@ -165,13 +202,17 @@ impl Project {
         let tabs = self.tabs_view(editor.as_ref());
         let status = StatusBar {
             caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
+            toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
         };
+        let mut notices = self.notices.clone();
+        notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             editor,
             status,
-            notices: self.notices.clone(),
+            notices,
+            toolchain: self.toolchain.as_ref().map(Toolchain::view).unwrap_or_default(),
             panes: tabs.panes,
             focused_pane: tabs.focused_pane,
             can_split: tabs.can_split,
@@ -203,9 +244,10 @@ impl Project {
                     }
                     Err(error) => {
                         project.save_failed(&snapshot.path);
-                        project
-                            .notices
-                            .push(Notice { message: format!("Couldn't save {}: {error}", snapshot.path.display()) })
+                        project.notices.push(Notice {
+                            message: format!("Couldn't save {}: {error}", snapshot.path.display()),
+                            action: None,
+                        })
                     }
                 }
             })
@@ -236,7 +278,7 @@ impl Project {
                     Ok(text) => project.open_tab(Editor::new(shown, text)),
                     Err(error) => project
                         .notices
-                        .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()) }),
+                        .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()), action: None }),
                 }
             })
         });
