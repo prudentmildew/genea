@@ -202,15 +202,14 @@ fn an_edit_after_undo_drops_what_could_be_redone() {
 #[test]
 fn typing_right_after_an_undo_is_a_step_of_its_own() {
     let mut editing = open("\n");
-    editing.type_text("one");
-    editing.pause();
-    editing.type_text(" two");
+    editing.type_text("ab");
+    editing.run([Command::Delete(Left)]);
 
     editing.run([Command::Undo]);
-    editing.type_text("!");
+    editing.type_text("c");
     editing.run([Command::Undo]);
 
-    assert_eq!(editing.lines(), ["one", ""]);
+    assert_eq!(editing.lines(), ["ab", ""], "the typing before the undo is a separate step");
 }
 
 #[test]
