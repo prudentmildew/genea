@@ -22,6 +22,7 @@
 
 mod command;
 mod editor;
+mod history;
 mod jobs;
 mod project;
 mod recent;
