@@ -34,6 +34,33 @@ pub fn summary_json(samples: &[f64]) -> Value {
     Summary::of(samples).map_or(Value::Null, |s| s.to_json())
 }
 
+/// Genea's start times against the start floor's, from the same session.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Margin {
+    pub genea: Summary,
+    pub floor: Summary,
+    /// Genea's p95 minus the floor's: what the start budgets limit.
+    pub p95_ms: f64,
+    pub p50_ms: f64,
+}
+
+/// `None` unless both have runs.
+pub fn margin_over_floor(genea: &[f64], floor: &[f64]) -> Option<Margin> {
+    let (genea, floor) = (Summary::of(genea)?, Summary::of(floor)?);
+    Some(Margin { genea, floor, p95_ms: genea.p95 - floor.p95, p50_ms: genea.p50 - floor.p50 })
+}
+
+impl Margin {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "genea_ms": self.genea.to_json(),
+            "floor_ms": self.floor.to_json(),
+            "margin_p50_ms": round(self.p50_ms),
+            "margin_p95_ms": round(self.p95_ms),
+        })
+    }
+}
+
 /// Rounds to two decimals for reports.
 pub fn round(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
