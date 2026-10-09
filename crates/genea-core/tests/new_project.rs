@@ -67,3 +67,35 @@ fn create_opens_the_new_project_with_exact_pins() {
     assert_eq!(package["devEngines"]["runtime"], json!({ "name": "node", "version": "24.21.0" }));
     assert_eq!(workbench.welcome(), None);
 }
+
+/// What a program prints when run with `--version`.
+fn version_of(program: &Path) -> String {
+    let out = std::process::Command::new(program).arg("--version").output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// The install's PTY, once both it and the terminal's shell have started
+/// (in either order: they wait for the same toolchain).
+fn install_spec(host: &TestHost) -> genea_core::ProcessSpec {
+    host.ptys().wait_for_spawn(2);
+    let specs: Vec<_> = host.ptys().spawned().iter().map(|pty| pty.spec()).collect();
+    specs.into_iter().find(|spec| spec.args == ["install"]).expect("no install started")
+}
+
+#[test]
+fn the_install_starts_in_the_terminal_once_the_toolchain_is_ready() {
+    let host = host();
+    let parent = FixtureProject::new().build();
+    let mut workbench = Workbench::new(host.shared());
+    open_dialog(&mut workbench);
+
+    create(&mut workbench, "my-app", parent.root());
+
+    let spec = install_spec(&host);
+    assert!(spec.program.starts_with(host.support_dir()), "{} isn't from the toolchain store", spec.program.display());
+    assert_eq!(version_of(&spec.program), "12.10.1");
+    assert_eq!(spec.args, ["install"]);
+    assert_eq!(spec.cwd.as_deref(), Some(parent.root().canonicalize().unwrap().join("my-app").as_path()));
+    let terminal = workbench.project(only_project(&workbench)).unwrap().terminal;
+    assert_eq!(terminal.tabs[terminal.active_tab].title, "pnpm install");
+}

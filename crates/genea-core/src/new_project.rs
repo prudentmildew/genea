@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use genea_toolchain::Tool;
 
 use crate::{
+    command::Command,
     templates::{self, NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template},
     workbench::Core,
 };
@@ -141,7 +142,11 @@ fn create(core: &mut Core) {
     };
     templates::create_then(core, request, move |core, outcome| {
         let opened = match outcome {
-            ProjectCreation::Created { folder } => core.open_project(folder).map_err(|e| e.to_string()),
+            ProjectCreation::Created { folder } => core.open_project(folder).map_err(|e| e.to_string()).inspect(|&id| {
+                // Creating the project was the click (ADR 0005). The install
+                // waits for package.json and the toolchain.
+                core.dispatch(id, Command::InstallDependencies);
+            }),
             ProjectCreation::Failed { message, .. } => Err(message.clone()),
             ProjectCreation::Creating { .. } => return,
         };
