@@ -4,6 +4,7 @@ use std::{
     collections::BinaryHeap,
     cmp::Reverse,
     io::{self, Write},
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Condvar, Mutex, OnceLock},
     time::{Duration, Instant},
@@ -15,11 +16,23 @@ use crate::{
 };
 
 /// The host the app runs on.
-#[derive(Default)]
 pub struct RealHost {
     clock: SystemClock,
     processes: OsProcesses,
     downloads: HttpDownloads,
+    support_dir: PathBuf,
+}
+
+impl Default for RealHost {
+    fn default() -> Self {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+        RealHost {
+            clock: SystemClock::default(),
+            processes: OsProcesses,
+            downloads: HttpDownloads::default(),
+            support_dir: home.join("Library/Application Support/Genea"),
+        }
+    }
 }
 
 impl RealHost {
@@ -43,6 +56,10 @@ impl Host for RealHost {
 
     fn downloads(&self) -> &dyn Downloads {
         &self.downloads
+    }
+
+    fn support_dir(&self) -> &Path {
+        &self.support_dir
     }
 }
 
@@ -194,10 +211,22 @@ impl HttpDownloads {
 
 impl Downloads for HttpDownloads {
     fn fetch(&self, url: &str, sink: &mut dyn Write) -> Result<u64, DownloadError> {
+        self.fetch_with_length(url, sink, &mut |_| {})
+    }
+
+    fn fetch_with_length(
+        &self,
+        url: &str,
+        sink: &mut dyn Write,
+        length: &mut dyn FnMut(u64),
+    ) -> Result<u64, DownloadError> {
         let response = self.agent().get(url).call().map_err(|e| DownloadError::Transport(e.to_string()))?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(DownloadError::Status(status));
+        }
+        if let Some(len) = response.body().content_length() {
+            length(len);
         }
         let mut body = response.into_body().into_reader();
         Ok(io::copy(&mut body, sink)?)

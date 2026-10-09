@@ -17,8 +17,12 @@
 //! This crate depends on `genea-host` only, never on `genea-core`, so that
 //! core's tests and core itself agree on one copy of every core type.
 
+mod download_server;
 mod fixture;
 mod host;
+mod tools;
 
+pub use download_server::DownloadServer;
 pub use fixture::{FixtureBuilder, FixtureProject};
 pub use host::{FakeProcess, ManualClock, ScriptedDownloads, ScriptedProcesses, TestHost};
+pub use tools::FakeTools;

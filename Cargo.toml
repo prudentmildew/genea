@@ -19,6 +19,7 @@ publish = false
 genea-core = { path = "crates/genea-core" }
 genea-host = { path = "crates/genea-host" }
 genea-testkit = { path = "crates/genea-testkit" }
+genea-toolchain = { path = "crates/genea-toolchain" }
 
 # Core building blocks (spec #19, "Building blocks").
 ropey = "1.6.1"
@@ -30,6 +31,19 @@ ureq = { version = "3.4.2", default-features = false, features = ["native-tls-no
 
 # Test support.
 tempfile = "3.27.0"
+
+# Toolchain downloads (genea-toolchain, ADR 0005): JSON documents and
+# package.json, npm-style version ranges, checksums, and the archive formats
+# Node (.tar.xz), Bun (.zip) and pnpm (.tgz) ship in. All pure Rust.
+serde = "1.0.229"
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+nodejs-semver = "7.0.0"
+sha2 = "0.11.0"
+base64 = "0.23.1"
+tar = { version = "0.4.46", default-features = false }
+flate2 = "1.1.10"
+lzma-rust2 = { version = "0.21.0", default-features = false, features = ["std", "xz", "encoder"] }
+zip = { version = "9.0.0", default-features = false, features = ["deflate-flate2"] }
 
 # GUI (ADR 0004), used by genea-view only. Exact pin: a bump is deliberate,
 # must pass the benchmark harness, and re-applies the i-slint-common patch

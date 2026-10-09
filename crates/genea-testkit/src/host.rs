@@ -1,11 +1,13 @@
-//! The test host: a manual clock, scripted processes and scripted downloads.
+//! The test host: a manual clock, scripted processes, scripted downloads
+//! backed by the local download fixture server, and a temp support folder.
 
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
     io::{self, PipeReader, PipeWriter, Write},
+    path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -13,25 +15,45 @@ use std::{
 };
 
 use genea_host::{
-    Child, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
-    TimerCallback,
+    Child, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, RealHost,
+    SharedHost, TimerCallback,
 };
+
+use crate::{DownloadServer, FakeTools};
 
 /// A host whose effects are scripted by the test.
 ///
 /// It is a cheap handle: clone it, give [`shared`](Self::shared) to the
 /// workbench and keep a clone to script processes, serve downloads and
-/// advance the clock.
+/// advance the clock. Its support folder is a temp dir that lives as long as
+/// the last clone, so two workbenches on clones of one host share a
+/// toolchain store, like two runs of Genea on one machine.
 #[derive(Clone, Default)]
 pub struct TestHost {
     inner: Arc<Inner>,
 }
 
-#[derive(Default)]
 struct Inner {
     clock: ManualClock,
     processes: ScriptedProcesses,
     downloads: ScriptedDownloads,
+    // Held for its Drop, which deletes the folder.
+    _support: tempfile::TempDir,
+    support_dir: std::path::PathBuf,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        let support = tempfile::Builder::new().prefix("genea-support-").tempdir().expect("create a temp dir");
+        let support_dir = support.path().canonicalize().expect("canonicalize the temp dir");
+        Inner {
+            clock: ManualClock::default(),
+            processes: ScriptedProcesses::default(),
+            downloads: ScriptedDownloads::default(),
+            _support: support,
+            support_dir,
+        }
+    }
 }
 
 impl TestHost {
@@ -55,6 +77,22 @@ impl TestHost {
     pub fn downloads(&self) -> &ScriptedDownloads {
         &self.inner.downloads
     }
+
+    /// The local download fixture server, started on first use. Fetches
+    /// with no scripted answer go to it.
+    pub fn download_server(&self) -> &DownloadServer {
+        self.inner.downloads.server()
+    }
+
+    /// Publishes fake Node, Bun and pnpm releases on the download server.
+    pub fn tools(&self) -> FakeTools<'_> {
+        FakeTools::new(self.download_server())
+    }
+
+    /// The support folder (a temp dir); the toolchain store is under it.
+    pub fn support_dir(&self) -> &Path {
+        &self.inner.support_dir
+    }
 }
 
 impl Host for TestHost {
@@ -68,6 +106,10 @@ impl Host for TestHost {
 
     fn downloads(&self) -> &dyn Downloads {
         &self.inner.downloads
+    }
+
+    fn support_dir(&self) -> &Path {
+        &self.inner.support_dir
     }
 }
 
@@ -264,11 +306,15 @@ impl ProcessControl for FakeControl {
 
 // --- Downloads ---------------------------------------------------------------
 
-/// Downloads answered from a table. Unknown URLs answer HTTP 404.
+/// Downloads answered from a table, then from the local download fixture
+/// server once it is started. Other URLs answer HTTP 404.
 #[derive(Default)]
 pub struct ScriptedDownloads {
     table: Mutex<HashMap<String, Result<Vec<u8>, u16>>>,
     requests: Mutex<Vec<String>>,
+    server: OnceLock<DownloadServer>,
+    /// Real HTTP, to the fixture server on loopback only.
+    http: OnceLock<RealHost>,
 }
 
 impl ScriptedDownloads {
@@ -286,18 +332,38 @@ impl ScriptedDownloads {
     pub fn requests(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
     }
+
+    /// The local download fixture server, started on first use.
+    pub fn server(&self) -> &DownloadServer {
+        self.server.get_or_init(DownloadServer::start)
+    }
 }
 
 impl Downloads for ScriptedDownloads {
     fn fetch(&self, url: &str, sink: &mut dyn Write) -> Result<u64, DownloadError> {
+        self.fetch_with_length(url, sink, &mut |_| {})
+    }
+
+    fn fetch_with_length(
+        &self,
+        url: &str,
+        sink: &mut dyn Write,
+        length: &mut dyn FnMut(u64),
+    ) -> Result<u64, DownloadError> {
         self.requests.lock().unwrap().push(url.to_owned());
-        let answer = self.table.lock().unwrap().get(url).cloned().unwrap_or(Err(404));
-        match answer {
-            Ok(body) => {
+        let answer = self.table.lock().unwrap().get(url).cloned();
+        match (answer, self.server.get()) {
+            (Some(Ok(body)), _) => {
+                length(body.len() as u64);
                 sink.write_all(&body)?;
                 Ok(body.len() as u64)
             }
-            Err(status) => Err(DownloadError::Status(status)),
+            (Some(Err(status)), _) => Err(DownloadError::Status(status)),
+            (None, None) => Err(DownloadError::Status(404)),
+            (None, Some(server)) => {
+                let http = self.http.get_or_init(RealHost::new);
+                http.downloads().fetch_with_length(&server.local_url(url), sink, length)
+            }
         }
     }
 }

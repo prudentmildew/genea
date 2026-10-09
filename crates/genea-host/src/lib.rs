@@ -23,7 +23,7 @@ mod downloads;
 mod processes;
 pub mod real;
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 pub use clock::{Clock, TimerCallback};
 pub use downloads::{DownloadError, Downloads};
@@ -40,6 +40,11 @@ pub trait Host: Send + Sync + 'static {
     fn processes(&self) -> &dyn Processes;
     /// HTTP downloads: toolchain archives and the release-update check.
     fn downloads(&self) -> &dyn Downloads;
+    /// Genea's application-support folder (`~/Library/Application
+    /// Support/Genea` for the real host, a temp dir for the test host): the
+    /// toolchain store and Genea's other own files live under it. It is
+    /// used directly through the filesystem; this only says where it is.
+    fn support_dir(&self) -> &Path;
 }
 
 /// How the core holds its host.

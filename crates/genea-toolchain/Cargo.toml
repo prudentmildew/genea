@@ -1,0 +1,20 @@
+[package]
+name = "genea-toolchain"
+description = "The managed toolchain (ADR 0005): pins in package.json, version resolution, and checksum-verified downloads into the shared store."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# A core crate: no GUI dependency (genea-core/tests/no_gui_dependency.rs).
+[dependencies]
+genea-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+nodejs-semver.workspace = true
+sha2.workspace = true
+base64.workspace = true
+tar.workspace = true
+flate2.workspace = true
+lzma-rust2.workspace = true
+zip.workspace = true

@@ -14,6 +14,7 @@ use crate::{
     command::Command,
     jobs::{self, Inbox, Jobs},
     project::Project,
+    toolchain::ToolchainContext,
     view::ProjectView,
 };
 
@@ -41,10 +42,12 @@ pub struct Workbench {
 
 /// Core state. Background Applies get `&mut Core`.
 pub(crate) struct Core {
-    // Not used by ticket #20's features yet; the toolchain, LSP, undo and
-    // terminal tickets reach the outside world only through it.
+    // The toolchain, LSP, undo and terminal tickets reach the outside world
+    // only through it.
     #[allow(dead_code)]
     pub(crate) host: SharedHost,
+    /// The host and the shared toolchain store, for every project (#35).
+    pub(crate) toolchain: ToolchainContext,
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
@@ -59,7 +62,8 @@ impl Core {
 impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
-        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0 }, inbox }
+        let toolchain = ToolchainContext::new(host.clone());
+        Workbench { core: Core { host, toolchain, jobs, projects: BTreeMap::new(), next_id: 0 }, inbox }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -84,7 +88,8 @@ impl Workbench {
         }
         let id = ProjectId(self.core.next_id);
         self.core.next_id += 1;
-        self.core.projects.insert(id, Project::new(id, root));
+        let project = self.core.projects.entry(id).or_insert(Project::new(id, root));
+        project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
         Ok(id)
     }
 
