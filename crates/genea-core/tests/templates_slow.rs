@@ -93,3 +93,15 @@ fn frontend_with_pnpm() {
 fn frontend_with_bun() {
     keep(check(Template::Frontend, Pm::Bun));
 }
+
+#[test]
+#[ignore = "slow lane: installs from the network"]
+fn backend_with_pnpm() {
+    keep(check(Template::Backend, Pm::Pnpm));
+}
+
+#[test]
+#[ignore = "slow lane: installs from the network"]
+fn backend_with_bun() {
+    keep(check(Template::Backend, Pm::Bun));
+}

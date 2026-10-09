@@ -106,3 +106,34 @@ fn the_frontend_template_writes_a_pinned_package_named_after_the_project() {
         })
     );
 }
+
+#[test]
+fn the_backend_template_is_a_hono_server_with_no_build_step() {
+    let parent = create(Template::Backend, "my-api", node(), pnpm());
+
+    assert_eq!(
+        files(&parent, "my-api"),
+        [".gitignore", ".oxlintrc.json", "README.md", "package.json", "src/app.test.ts", "src/app.ts", "src/index.ts", "tsconfig.json"]
+    );
+    let package = json_file(&parent, "my-api/package.json");
+    assert_eq!(package["name"], "my-api");
+    assert_eq!(package["type"], "module");
+    assert_eq!(
+        package["scripts"],
+        json!({
+            "dev": "node --watch src/index.ts",
+            "start": "node src/index.ts",
+            "test": "vitest run",
+            "lint": "oxlint",
+            "format": "oxfmt",
+            "typecheck": "tsc --noEmit",
+        })
+    );
+    assert!(package["dependencies"]["hono"].as_str().unwrap().starts_with("^4."));
+    assert!(package["dependencies"]["@hono/node-server"].is_string());
+    // @types/node follows the pinned Node major.
+    assert_eq!(package["devDependencies"]["@types/node"], "^24.0.0");
+    let tsconfig = json_file(&parent, "my-api/tsconfig.json");
+    assert_eq!(tsconfig["compilerOptions"]["module"], "nodenext");
+    assert_eq!(tsconfig["compilerOptions"]["allowImportingTsExtensions"], true);
+}

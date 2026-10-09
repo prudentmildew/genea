@@ -27,6 +27,9 @@ mod versions {
     pub const VITE: &str = "^8.3.4";
     pub const VITEJS_PLUGIN_REACT: &str = "^6.1.2";
     pub const VITEST: &str = "^5.0.3";
+    /// `@types/node` follows the pinned Node major. A Bun runtime gets the
+    /// types of the Node major Genea defaults to.
+    pub const TYPES_NODE_WITH_BUN: &str = "^24.0.0";
 }
 
 /// Embeds files from `templates/<dir>/` as `(path in the project, contents)`.
@@ -53,16 +56,23 @@ const FRONTEND: Files = embed!("frontend":
     "vite.config.ts",
 );
 
+const BACKEND: Files = embed!("backend":
+    ".oxlintrc.json",
+    "src/app.test.ts",
+    "src/app.ts",
+    "src/index.ts",
+    "tsconfig.json",
+);
+
 pub(super) fn generate(request: &NewProject) -> Result<(), String> {
     let folder = &request.folder;
     fs::create_dir_all(folder).map_err(|e| format!("Couldn't create {}: {e}", folder.display()))?;
     let out = Writer { folder, name: &request.name };
-    match request.template {
+    let root = match request.template {
         Template::Frontend => {
             out.files(FRONTEND)?;
-            let mut package = package(&request.name);
-            package.insert(
-                "scripts".into(),
+            package(
+                &request.name,
                 json!({
                     "dev": "vite",
                     "build": "vite build",
@@ -72,16 +82,10 @@ pub(super) fn generate(request: &NewProject) -> Result<(), String> {
                     "format": "oxfmt",
                     "typecheck": "tsc --noEmit",
                 }),
-            );
-            package.insert(
-                "dependencies".into(),
                 json!({
                     "react": versions::REACT,
                     "react-dom": versions::REACT_DOM,
                 }),
-            );
-            package.insert(
-                "devDependencies".into(),
                 json!({
                     "@types/react": versions::TYPES_REACT,
                     "@types/react-dom": versions::TYPES_REACT_DOM,
@@ -92,28 +96,59 @@ pub(super) fn generate(request: &NewProject) -> Result<(), String> {
                     "vite": versions::VITE,
                     "vitest": versions::VITEST,
                 }),
-            );
-            pins(&mut package, request);
-            out.write("package.json", &package_json(package))?;
+            )
         }
-        Template::Backend | Template::FullStack => {}
-    }
+        Template::Backend => {
+            out.files(BACKEND)?;
+            package(
+                &request.name,
+                json!({
+                    "dev": "node --watch src/index.ts",
+                    "start": "node src/index.ts",
+                    "test": "vitest run",
+                    "lint": "oxlint",
+                    "format": "oxfmt",
+                    "typecheck": "tsc --noEmit",
+                }),
+                json!({
+                    "@hono/node-server": versions::HONO_NODE_SERVER,
+                    "hono": versions::HONO,
+                }),
+                json!({
+                    "@types/node": types_node(&request.runtime),
+                    "oxfmt": versions::OXFMT,
+                    "oxlint": versions::OXLINT,
+                    "typescript": versions::TYPESCRIPT,
+                    "vitest": versions::VITEST,
+                }),
+            )
+        }
+        Template::FullStack => Map::new(),
+    };
+    let readme = readme(request, &root);
+    out.write("package.json", &package_json(with_pins(root, request)))?;
     out.write(".gitignore", GITIGNORE)?;
-    out.write("README.md", &readme(request))?;
+    out.write("README.md", &readme)?;
     Ok(())
 }
 
-/// The start of every `package.json`: name, private, ESM.
-fn package(name: &str) -> Map<String, Value> {
+/// A `package.json`: name, private, ESM, then scripts and dependencies.
+fn package(name: &str, scripts: Value, dependencies: Value, dev_dependencies: Value) -> Map<String, Value> {
     let mut package = Map::new();
     package.insert("name".into(), json!(name));
     package.insert("private".into(), json!(true));
     package.insert("type".into(), json!("module"));
+    package.insert("scripts".into(), scripts);
+    for (key, value) in [("dependencies", dependencies), ("devDependencies", dev_dependencies)] {
+        if value.as_object().is_some_and(|deps| !deps.is_empty()) {
+            package.insert(key.into(), value);
+        }
+    }
     package
 }
 
 /// Adds the exact toolchain pins (ADR 0005).
-fn pins(package: &mut Map<String, Value>, request: &NewProject) {
+fn with_pins(mut package: Map<String, Value>, request: &NewProject) -> Map<String, Value> {
     let (runtime, version) = match &request.runtime {
         RuntimePin::Node(version) => ("node", version),
         RuntimePin::Bun(version) => ("bun", version),
@@ -124,6 +159,18 @@ fn pins(package: &mut Map<String, Value>, request: &NewProject) {
         PackageManagerPin::Bun(version) => format!("bun@{version}"),
     };
     package.insert("packageManager".into(), json!(package_manager));
+    package
+}
+
+/// The `@types/node` range for the pinned runtime: the Node major's types.
+fn types_node(runtime: &RuntimePin) -> String {
+    match runtime {
+        RuntimePin::Node(version) => {
+            let major = version.split('.').next().unwrap_or(version);
+            format!("^{major}.0.0")
+        }
+        RuntimePin::Bun(_) => versions::TYPES_NODE_WITH_BUN.into(),
+    }
 }
 
 /// `package.json` as package managers and Oxfmt write it: two-space indent,
@@ -134,32 +181,41 @@ fn package_json(package: Map<String, Value>) -> String {
     text
 }
 
-/// A short README: what the project is and its scripts.
-fn readme(request: &NewProject) -> String {
-    let (about, scripts): (&str, &[(&str, &str)]) = match request.template {
-        Template::Frontend => (
-            "A React single-page app built with Vite.",
-            &[
-                ("dev", "starts the dev server"),
-                ("build", "builds the app into `dist/`"),
-                ("preview", "serves the built app"),
-                ("test", "runs the tests with Vitest"),
-                ("lint", "lints with Oxlint"),
-                ("format", "formats with Oxfmt"),
-                ("typecheck", "type-checks with TypeScript"),
-            ],
-        ),
-        Template::Backend | Template::FullStack => ("", &[]),
+/// A short README: what the project is and the root package's scripts.
+fn readme(request: &NewProject, root: &Map<String, Value>) -> String {
+    let about = match request.template {
+        Template::Frontend => "A React single-page app built with Vite.",
+        Template::Backend => "A Hono server. Node runs the TypeScript source directly, with no build step.",
+        Template::FullStack => "",
     };
     let run = match request.package_manager {
         PackageManagerPin::Pnpm(_) => "pnpm run",
         PackageManagerPin::Bun(_) => "bun run",
     };
-    let mut text = format!("# {}\n\n{about}\n\n## Scripts\n\nRun them from Genea's script runner, or with `{run} <script>`.\n\n", request.name);
-    for (script, what) in scripts {
-        text.push_str(&format!("- `{script}` {what}.\n"));
+    let mut text = format!(
+        "# {}\n\n{about}\n\n## Scripts\n\nRun them from Genea's script runner, or with `{run} <script>`.\n\n",
+        request.name
+    );
+    for script in root["scripts"].as_object().into_iter().flat_map(|scripts| scripts.keys()) {
+        text.push_str(&format!("- `{script}` {}.\n", describe(request.template, script)));
     }
     text
+}
+
+/// What a script does, for the README.
+fn describe(template: Template, script: &str) -> &'static str {
+    match (template, script) {
+        (Template::Frontend, "dev") => "starts the dev server",
+        (Template::Backend, "dev") => "starts the server and restarts it when a file changes",
+        (_, "start") => "starts the server",
+        (_, "build") => "builds the app into `dist/`",
+        (_, "preview") => "serves the built app",
+        (_, "test") => "runs the tests with Vitest",
+        (_, "lint") => "lints with Oxlint",
+        (_, "format") => "formats with Oxfmt",
+        (_, "typecheck") => "type-checks with TypeScript",
+        _ => "",
+    }
 }
 
 /// Writes files into the new project.
