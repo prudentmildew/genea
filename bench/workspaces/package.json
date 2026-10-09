@@ -1,0 +1,14 @@
+{
+  "name": "genea-bench-workspaces",
+  "private": true,
+  "type": "module",
+  "description": "Generator and fetch scripts for the Typical and Large reference workspaces. No dependencies; runs on Node >= 24 (built-in type stripping).",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test \"typical/test/*.test.ts\"",
+    "typical": "./typical/setup.sh",
+    "large": "./large/fetch.sh"
+  }
+}
