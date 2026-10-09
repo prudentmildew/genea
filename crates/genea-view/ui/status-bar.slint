@@ -20,6 +20,10 @@ export component StatusBar inherits Rectangle {
     in property <string> line-ending;
     // The update notice ("Genea 0.2.0 is available"), or empty.
     in property <string> update;
+    // Why the open file has no highlighting: it is over 5 MB (ticket #27).
+    in property <string> large-file;
+    // The open file's rest is still being read; it is read-only meanwhile.
+    in property <bool> loading;
 
     callback notice-action-clicked();
     callback update-clicked();
@@ -111,6 +115,20 @@ export component StatusBar inherits Rectangle {
                     root.show-problems();
                 }
             }
+        }
+
+        if root.loading: Text {
+            text: "Loading…";
+            color: Theme.chrome-muted;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
+        if root.large-file != "": Text {
+            text: root.large-file;
+            color: Theme.chrome-muted;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
         }
 
         Text {

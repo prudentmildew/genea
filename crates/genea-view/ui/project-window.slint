@@ -31,6 +31,10 @@ export component ProjectWindow inherits Window {
     in property <string> status-notice-action;
     in property <string> status-toolchain;
     in property <string> status-update;
+    // Why a large file has no highlighting (ticket #27), or empty.
+    in property <string> status-large-file;
+    // The focused file's rest is still being read.
+    in property <bool> status-loading;
 
     // The toolchain picker (ticket #37), shown while `picker-visible`.
     in property <bool> picker-visible;
@@ -475,6 +479,8 @@ export component ProjectWindow inherits Window {
             encoding: root.status-encoding;
             line-ending: root.status-line-ending;
             update: root.status-update;
+            large-file: root.status-large-file;
+            loading: root.status-loading;
             update-clicked => {
                 root.open-update();
             }

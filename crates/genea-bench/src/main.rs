@@ -25,7 +25,7 @@ or a scenario couldn't run.
 
 options:
   --only NAME[,NAME…]   run only these scenarios (start, typing, scroll,
-                        dead-keys, idle)
+                        dead-keys, idle, open-1mb, open-100mb)
   --quick               fewer runs: a smoke test, not a release gate
   --no-cold             skip the cold start runs (they need `sudo -v`)
   --runs N              warm start pairs (default 30)

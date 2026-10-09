@@ -31,6 +31,13 @@ const TAB_WIDTH: usize = 4;
 /// a minified file can't make every sync copy and shape megabytes.
 pub const MAX_VISIBLE_COLUMNS: usize = 1000;
 
+/// Files over this size are *large files* (spec #19, Large files; ticket
+/// #27): they open with no syntax tree, no highlighting and no language
+/// intelligence, and the status bar says so. Decided once, at open, from the
+/// size read; edits don't change it. Anything that starts per-file language
+/// work (language servers, semantic tokens, …) checks [`Editor::is_large`].
+pub const LARGE_FILE_BYTES: usize = 5 * 1024 * 1024;
+
 /// One caret and its selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CaretSelection {
@@ -99,8 +106,15 @@ pub(crate) struct Editor {
     /// carets it left. While both still hold, occurrences match whole words
     /// only; any other caret change or edit ends that.
     whole_words: Option<(u64, Vec<CaretSelection>)>,
-    /// The tree and highlights, for files in a highlighted language.
+    /// The tree and highlights, for files in a highlighted language that
+    /// aren't large.
     syntax: Option<Syntax>,
+    /// Over [`LARGE_FILE_BYTES`] when opened: no syntax, no language
+    /// intelligence.
+    large: bool,
+    /// Only the file's first screen is in (ticket #27): the OpenFile with
+    /// this generation is still reading the rest. Read-only meanwhile.
+    loading: Option<u64>,
 }
 
 /// The buffer as it was when a save started.
@@ -114,7 +128,8 @@ pub(crate) struct Snapshot {
 impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
         let line_ending = LineEnding::detect(&text);
-        let syntax = Syntax::for_file(&path, &text);
+        let large = text.len_bytes() > LARGE_FILE_BYTES;
+        let syntax = if large { None } else { Syntax::for_file(&path) };
         Editor {
             path,
             text,
@@ -129,7 +144,40 @@ impl Editor {
             history: History::default(),
             whole_words: None,
             syntax,
+            large,
+            loading: None,
         }
+    }
+
+    /// An editor showing the first screen of a file that is still being
+    /// read by the OpenFile with this `generation`; `size` is the file's
+    /// size on disk, if known. Read-only, without syntax, until
+    /// [`Editor::finish_loading`].
+    pub(crate) fn loading(path: PathBuf, first_screen: Rope, size: Option<u64>, generation: u64) -> Self {
+        let mut editor = Editor::new(path, first_screen).read_only();
+        editor.syntax = None;
+        editor.large = size.is_some_and(|size| size > LARGE_FILE_BYTES as u64);
+        editor.loading = Some(generation);
+        editor
+    }
+
+    /// Whether this editor is waiting for the rest of its file from the
+    /// OpenFile with this generation.
+    pub(crate) fn is_loading(&self, generation: u64) -> bool {
+        self.loading == Some(generation)
+    }
+
+    /// Reading the rest of the file failed: stays as it is, read-only.
+    pub(crate) fn stop_loading(&mut self) {
+        self.loading = None;
+    }
+
+    /// The whole file is in: becomes `loaded` (an editor of the whole
+    /// file), keeping this editor's carets and scroll position, which the
+    /// first screen's text leaves valid (it is a prefix of the whole).
+    pub(crate) fn finish_loading(&mut self, mut loaded: Editor, viewport_rows: f64) {
+        loaded.set_cursor(&self.cursor(), viewport_rows);
+        *self = loaded;
     }
 
     /// The same editor, refusing edits and saves.
@@ -140,6 +188,12 @@ impl Editor {
 
     pub(crate) fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// A large file: no syntax, and no language intelligence may start for
+    /// it (see [`LARGE_FILE_BYTES`]).
+    pub(crate) fn is_large(&self) -> bool {
+        self.large
     }
 
     fn primary(&self) -> CaretSelection {
@@ -809,6 +863,7 @@ impl Editor {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: self.path.clone(),
             read_only: self.read_only,
+            loading: self.loading.is_some(),
             modified: self.version != self.saved_version,
             line_count,
             scroll_top: self.scroll_top,

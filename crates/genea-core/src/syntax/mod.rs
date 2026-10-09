@@ -32,10 +32,6 @@ pub(crate) use language::Language;
 use ropey::Rope;
 use tree_sitter::{InputEdit, Parser, Tree};
 
-/// Files above this size get no syntax tree and no highlighting (spec #19,
-/// Large files).
-pub(crate) const MAX_SYNTAX_BYTES: usize = 5 * 1024 * 1024;
-
 /// One open buffer's syntax, on the main thread.
 pub(crate) struct Syntax {
     /// Tells this buffer's parse results from another's.
@@ -76,12 +72,10 @@ pub(crate) struct Parsed {
 
 impl Syntax {
     /// The syntax for a file, or `None` if it isn't in a highlighted
-    /// language or is too big.
-    pub(crate) fn for_file(path: &std::path::Path, text: &Rope) -> Option<Self> {
+    /// language. Large files never get one (the editor decides:
+    /// [`crate::editor::LARGE_FILE_BYTES`]).
+    pub(crate) fn for_file(path: &std::path::Path) -> Option<Self> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-        if text.len_bytes() > MAX_SYNTAX_BYTES {
-            return None;
-        }
         Some(Syntax {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             language: Language::of_path(path)?,

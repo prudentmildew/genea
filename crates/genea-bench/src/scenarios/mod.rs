@@ -13,6 +13,7 @@
 
 mod dead_keys;
 mod idle;
+mod open;
 mod scroll;
 mod start;
 mod typing;
@@ -42,6 +43,8 @@ pub fn all() -> Vec<Box<dyn Scenario>> {
         Box::new(scroll::Scroll),
         Box::new(dead_keys::DeadKeys),
         Box::new(idle::Idle),
+        Box::new(open::OpenOneMb),
+        Box::new(open::OpenHundredMb),
     ]
 }
 
@@ -59,6 +62,9 @@ pub struct Options {
     pub scroll_seconds: u64,
     pub idle_runs: usize,
     pub idle_seconds: u64,
+    /// Opens of the 1 MB file and of the 100 MB file, each in a fresh Genea.
+    pub open_runs: usize,
+    pub open_large_runs: usize,
 }
 
 impl Options {
@@ -71,6 +77,8 @@ impl Options {
             scroll_seconds: 6,
             idle_runs: 3,
             idle_seconds: 10,
+            open_runs: 20,
+            open_large_runs: 5,
         }
     }
 
@@ -83,6 +91,8 @@ impl Options {
             scroll_seconds: 2,
             idle_runs: 1,
             idle_seconds: 4,
+            open_runs: 3,
+            open_large_runs: 2,
         }
     }
 }

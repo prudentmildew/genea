@@ -152,6 +152,9 @@ pub struct EditorView {
     /// The tab title: the file name.
     pub title: String,
     pub read_only: bool,
+    /// Only the file's beginning is in: the rest is still being read
+    /// (ticket #27). Read-only until it is.
+    pub loading: bool,
     /// The buffer has edits that aren't on disk yet: the tab and window
     /// show it as unsaved.
     pub modified: bool,
@@ -244,6 +247,10 @@ pub struct StatusBar {
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,
+    /// Set while the open file is a large file (over
+    /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
+    /// language intelligence.
+    pub large_file: Option<String>,
 }
 
 /// A message for the user.
