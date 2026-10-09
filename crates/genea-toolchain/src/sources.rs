@@ -73,8 +73,9 @@ pub(crate) enum Format {
     Zip,
 }
 
-/// Every version of `tool` published for macOS arm64.
-pub(crate) fn published(downloads: &dyn Downloads, tool: Tool) -> Result<Vec<Version>, ToolchainError> {
+/// Every version of `tool` published for macOS arm64, in no particular
+/// order. Blocking: it fetches the publisher's version index.
+pub fn published(downloads: &dyn Downloads, tool: Tool) -> Result<Vec<Version>, ToolchainError> {
     let parse = |s: &str| Version::parse(s).ok();
     let versions = match tool {
         Tool::Node => {

@@ -1,12 +1,12 @@
-//! Native Open panels (NSOpenPanel), and the sheet that asks to save a
-//! closing tab's edits (NSAlert).
+//! The native Open panel for project folders (NSOpenPanel), and the sheet
+//! that asks to save a closing tab's edits (NSAlert).
 //!
-//! The panels are modeless (`beginWithCompletionHandler:`), not
+//! The panel is modeless (`beginWithCompletionHandler:`), not
 //! `runModal`: a nested modal run loop inside winit's event handling is
 //! asking for re-entrancy trouble. The completion handler comes back through
 //! Slint's event loop, so callers can touch the app normally.
 
-use std::{cell::RefCell, path::{Path, PathBuf}};
+use std::{cell::RefCell, path::PathBuf};
 
 use block2::RcBlock;
 use genea_core::CloseChoice;
@@ -15,43 +15,25 @@ use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSModalResponse, NSModalResponseOK, NSOpenPanel,
     NSView, NSWindow,
 };
-use objc2_foundation::{NSString, NSURL};
+use objc2_foundation::NSString;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::ComponentHandle;
 
 use crate::ProjectWindow;
 
 /// Asks for a project folder. `done` gets the folder, or nothing is called
-/// on cancel.
+/// on cancel. (Files open from the Files view, ticket #30.)
 pub fn pick_folder(done: impl FnOnce(PathBuf) + Send + 'static) {
-    show(Kind::Folder, None, done);
-}
-
-/// Asks for a file, starting in `directory`.
-pub fn pick_file(directory: &Path, done: impl FnOnce(PathBuf) + Send + 'static) {
-    show(Kind::File, Some(directory), done);
-}
-
-enum Kind {
-    Folder,
-    File,
-}
-
-fn show(kind: Kind, directory: Option<&Path>, done: impl FnOnce(PathBuf) + Send + 'static) {
     let Some(mtm) = MainThreadMarker::new() else {
         eprintln!("genea: Open panels must be shown from the main thread");
         return;
     };
     let panel: Retained<NSOpenPanel> = NSOpenPanel::openPanel(mtm);
-    let folder = matches!(kind, Kind::Folder);
-    panel.setCanChooseDirectories(folder);
-    panel.setCanChooseFiles(!folder);
+    panel.setCanChooseDirectories(true);
+    panel.setCanChooseFiles(false);
     panel.setAllowsMultipleSelection(false);
-    panel.setCanCreateDirectories(folder);
+    panel.setCanCreateDirectories(true);
     panel.setPrompt(Some(&NSString::from_str("Open")));
-    if let Some(url) = directory.and_then(NSURL::from_directory_path) {
-        panel.setDirectoryURL(Some(&url));
-    }
 
     // The block type is `Fn`; the callback runs once.
     let done = RefCell::new(Some(done));

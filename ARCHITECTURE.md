@@ -70,11 +70,21 @@ use, and nothing else:
 - **Files changing on disk**: each project has one `notify` watcher
   (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
   batches at `Project::files_changed(FileChanges, jobs)`; react there (the
-  config does; the file index, open editors and review hook in beside it).
+  config and the file index do; open editors and review hook in beside them).
   `settle` waits for the watcher by writing a cookie file into
   `<support>/watch-sync`, which the same FSEvents stream watches: once its
   event is back, every earlier change has been delivered. So a test writes a
   file with `fixture.write(..)`, calls `settle()`, and asserts.
+- **The file index** (`src/files.rs`, ticket #30): every file and folder
+  outside `node_modules` and `.git`, read once in the background at open and
+  then kept up to date from the watcher's batches (a changed path re-lists
+  its folder; a new folder is read with its contents), one read at a time.
+  The Files view's tree (`ProjectView::files`, flattened rows, shared as an
+  `Arc` so an unchanged tree costs nothing to snapshot) is built from it on
+  the main thread, minus the config's `exclude` (a `.gitignore` matcher
+  applied when the rows are built, so `exclude` changes need no disk read).
+  The finder and search should take their file list from here and hide the
+  same paths; hidden files still open with `OpenFile`.
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -114,7 +124,8 @@ shifts the spans, so a keystroke never waits on a parse. Don't edit the
 rope anywhere else. One background parse per file runs at a time
 (`Project::reparse`, `spawn_parse`): it reparses incrementally and
 recomputes the highlights, edits made meanwhile are replayed onto its result,
-and the next parse starts if the text moved on. Files over 5 MB get no syntax.
+and the next parse starts if the text moved on. Large files get no syntax
+(below).
 
 - View state: `VisibleLine::highlights`, a list of `HighlightSpan`
   (display columns + `genea_core::Highlight`). The view colours each
@@ -150,6 +161,23 @@ carets and view state:
 - Edits that keep selections where they were (comments) go through
   `edit_text`; edits that put each caret somewhere in its replacement go
   through `replace_placing`.
+
+### Large files
+
+A file over `LARGE_FILE_BYTES` (5 MB, ticket #27) is a *large file*: it
+opens with no syntax tree, no highlighting and no language intelligence, and
+`StatusBar::large_file` says why. It is decided once, from the size read at
+open. **Anything that starts per-file language work (language servers,
+semantic tokens, …) checks `Editor::is_large` and skips large files.**
+
+Opening reads in the background (`src/reading.rs`), and the main thread only
+swaps the finished rope in. A file that may be large (over 5 MB, or of
+unknown size, like a pipe) opens as soon as its first screen of lines is
+read: `Editor::loading` shows those lines read-only (`EditorView::loading`),
+and `Editor::finish_loading` swaps the whole file in when it is read,
+keeping each tab's carets and scroll, which the first screen (a prefix of
+the whole text) leaves valid. The benchmark harness's `open-1mb` and
+`open-100mb` scenarios measure it.
 
 ## The host boundary
 
@@ -204,6 +232,19 @@ package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it 
 in a job when a project with a root `package.json` opens, starts one job per
 role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
 whose `NoticeAction` carries the `Command` a click dispatches.
+
+Pins change only through commands (ticket #37). `OpenToolchainPicker(kind)`
+lists versions in a job (`genea_toolchain::published` plus what the store
+has, so it works offline) into `ProjectView::toolchain_picker`; each
+`ToolchainOption` carries the `SetRuntime` / `SetPackageManager` command a
+pick dispatches, which writes the exact pin (`pins::write`) and restarts that
+role's download. `RemoveUnusedToolchains` is handled by the workbench (it
+needs the recent projects): it keeps what each recent or open project's
+`package.json` resolves to (exact pins, the newest stored match of a range,
+the defaults for an unpinned role) and `Store::remove`s the rest. The
+lockfile cross-check (root `pnpm-lock.yaml`, `bun.lock`, `bun.lockb` against
+the package-manager role) reports as `ProblemSource::Toolchain` and is
+re-run when the watcher sees a root lockfile change.
 
 ## The project environment
 
@@ -290,7 +331,8 @@ chrome, native menus via muda (Slint's `MenuBar`).
   indexes them, and 0 is plain text.
 - The left column (`ui/left-column.slint`): a view switcher and the active
   view, shown while the core's `left_column` is `Some`. A view's shortcut
-  is a menu item that dispatches `ToggleLeftColumn` (Problems is ⌘6). A new
+  is a menu item that dispatches `ToggleLeftColumn` (Files is ⌘1, and a
+  project opens showing it; Problems is ⌘6). A new
   view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
   switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`

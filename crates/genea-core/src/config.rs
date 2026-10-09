@@ -11,7 +11,8 @@
 //!
 //! A `genea.jsonc` below the root is ignored with a warning (the project
 //! does that part, since it needs the file tree). The features that own a
-//! key read it from [`Config`]; only `theme` is wired by #29.
+//! key read it from [`Config`]: `theme` (#29) and `exclude` (the file index,
+//! #30) are wired so far.
 
 use std::path::Path;
 
