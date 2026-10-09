@@ -126,3 +126,25 @@ fn oxfmtrc_wins_over_editorconfig_which_fills_in_only_what_it_leaves_unset() {
     // tabs from `.editorconfig`. README.md: its section's spaces.
     assert_eq!(shown, ["8 spaces", "Tabs", "8 spaces"]);
 }
+
+#[test]
+fn editing_either_config_file_updates_the_open_file_without_a_reopen() {
+    let (fixture, mut workbench, project) = open(FixtureProject::new().file("src/main.ts", ""), "src/main.ts");
+    assert_eq!(indentation(&workbench, project), "2 spaces");
+
+    fixture.write(".editorconfig", "[*]\nindent_style = tab\n");
+    workbench.settle().unwrap();
+    assert_eq!(indentation(&workbench, project), "Tabs");
+
+    fixture.write(".oxfmtrc.json", r#"{ "useTabs": false, "tabWidth": 4 }"#);
+    workbench.settle().unwrap();
+    assert_eq!(indentation(&workbench, project), "4 spaces");
+
+    fixture.write(".oxfmtrc.json", r#"{ "tabWidth": 4 }"#);
+    workbench.settle().unwrap();
+    assert_eq!(indentation(&workbench, project), "Tabs");
+
+    fixture.remove(".editorconfig");
+    workbench.settle().unwrap();
+    assert_eq!(indentation(&workbench, project), "4 spaces");
+}
