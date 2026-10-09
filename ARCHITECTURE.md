@@ -157,10 +157,10 @@ element's tags (HTML, JSX); comments, Markdown sections and code blocks, and
 YAML pairs fold too. `editor/structural.rs` turns the answers into edits,
 carets and view state:
 
-- Return (`Editor::new_line`) indents one `INDENT_UNIT` deeper inside a
-  block and splits a bracket pair. The tree may be a parse behind, so an
-  opening bracket at the end of the line (outside strings and comments)
-  counts too. #26 replaces `INDENT_UNIT` with the resolved indentation.
+- Return (`Editor::new_line`) indents one level of the file's
+  indentation (below) deeper inside a block and splits a bracket pair. The
+  tree may be a parse behind, so an opening bracket at the end of the line
+  (outside strings and comments) counts too.
 - ⌘/ (`ToggleLineComment`) uses `Language::comment`; ⌥↑/⌥↓ walk nodes, with
   the shrink history in the tab's `Cursor`; `EditorView::brackets` holds the
   bracket at the caret and its match.
@@ -172,6 +172,27 @@ carets and view state:
 - Edits that keep selections where they were (comments) go through
   `edit_text`; edits that put each caret somewhere in its replacement go
   through `replace_placing`.
+
+### Indentation
+
+Ticket #26 (`src/indentation.rs`, `editor/indent.rs`). A file's `useTabs`
+and `tabWidth` are resolved the way Oxfmt resolves them, with the crates
+Oxfmt uses (`editorconfig-parser`, `fast-glob`): `.oxfmtrc.json` (or
+`.oxfmtrc.jsonc`) overrides that match the file, in order, over its root
+options; then the nearest `.editorconfig`'s matching sections fill in what
+is unset (`indent_size` only when indenting with spaces, else `tab_width`);
+then 2 spaces. Both files are found from the project root upwards, like
+Oxfmt from its working directory, and one Oxfmt would reject counts as
+none. Genea never reads Prettier or Biome config and never guesses from a
+file's contents.
+
+`IndentationConfig::read` runs in a job when the project opens and again
+when the watcher sees a root `.oxfmtrc.json(c)` or `.editorconfig` change
+(folders above the root aren't watched). Resolving a file is cheap and
+needs no disk, so `Project::indentation_of(path)` is called per keystroke
+and per view: open files follow a config edit without a reopen. It drives
+`Command::Indent` (Tab), `Command::Outdent` (⇧Tab), Return's auto-indent
+and `StatusBar::indentation`. Tabs are still drawn 4 columns wide.
 
 ### Large files
 

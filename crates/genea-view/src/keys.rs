@@ -42,6 +42,13 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
     if is(Key::Escape) {
         return Some(Command::CollapseCarets);
     }
+    // Tab and ⇧Tab (ticket #26). ⇧Tab may come as Tab with ⇧ or as Backtab.
+    if is(Key::Backtab) || (is(Key::Tab) && m.shift) {
+        return Some(Command::Outdent);
+    }
+    if is(Key::Tab) {
+        return Some(Command::Indent);
+    }
     if is(Key::Backspace) {
         Some(Command::Delete(if m.alt { CaretMove::WordLeft } else { CaretMove::Left }))
     } else if is(Key::Delete) {

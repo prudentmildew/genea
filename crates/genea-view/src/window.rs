@@ -270,6 +270,7 @@ impl WindowController {
         }
         window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
         window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
+        window.set_status_indentation(view.status.indentation.clone().unwrap_or_default().into());
         let action = view.notices.last().and_then(|n| n.action.clone());
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
