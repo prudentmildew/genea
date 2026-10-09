@@ -144,6 +144,14 @@ pub enum Command {
     CloseSplit,
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
+
+    // Git (ticket #56).
+    /// A click on a git gutter marker of the focused file: shows the change
+    /// on that line (`EditorView::hunk`) with its lines at HEAD. A line
+    /// without a marker shows nothing.
+    ShowHunk { line: usize },
+    /// Closes the shown change (Esc, a click outside it).
+    HideHunk,
 }
 
 /// What to do with unsaved edits in a closing tab.

@@ -6,7 +6,7 @@
 
 use std::{path::Path, process};
 
-use genea_core::{CaretMove, Command, LineChange, ProjectId, Workbench};
+use genea_core::{CaretMove, Command, HunkView, LineChange, ProjectId, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 /// Runs `git` in `root`, isolated from the user's and the system's config.
@@ -181,6 +181,58 @@ fn git_init_in_the_terminal_shows_the_branch() {
     git(fixture.root(), &["init", "--quiet", "--initial-branch", "trunk"]);
     workbench.settle().unwrap();
     assert_eq!(branch(&workbench, project).as_deref(), Some("trunk"));
+}
+
+fn shown_hunk(workbench: &Workbench, project: ProjectId) -> Option<HunkView> {
+    workbench.project(project).unwrap().editor.unwrap().hunk
+}
+
+#[test]
+fn clicking_a_marker_shows_the_lines_at_head() {
+    let (_fixture, mut workbench, project) = editing_main();
+    workbench.dispatch(project, Command::SelectLine { line: 1 });
+    workbench.dispatch(project, Command::Select(CaretMove::Down));
+    workbench.dispatch(project, Command::InsertText("2\n3\n".into()));
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "one\n2\n3\nfour\n");
+    assert_eq!(shown_hunk(&workbench, project), None);
+
+    workbench.dispatch(project, Command::ShowHunk { line: 2 });
+    assert_eq!(
+        shown_hunk(&workbench, project),
+        Some(HunkView { lines: 1..3, change: LineChange::Modified, head: "two\nthree".into() })
+    );
+
+    workbench.dispatch(project, Command::HideHunk);
+    assert_eq!(shown_hunk(&workbench, project), None);
+}
+
+#[test]
+fn the_shown_hunk_closes_on_a_click_or_typing_but_not_on_scrolling() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 0, 0, "zero\n");
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::ShowHunk { line: 0 });
+    workbench.dispatch(project, Command::ScrollBy { rows: 1.0 });
+    assert_eq!(shown_hunk(&workbench, project), Some(HunkView { lines: 0..1, change: LineChange::Added, head: "".into() }));
+
+    workbench.dispatch(project, Command::PlaceCaret { line: 2, column: 0 });
+    assert_eq!(shown_hunk(&workbench, project), None);
+
+    workbench.dispatch(project, Command::ShowHunk { line: 0 });
+    workbench.dispatch(project, Command::InsertText("x".into()));
+    workbench.settle().unwrap();
+    assert_eq!(shown_hunk(&workbench, project), None);
+}
+
+#[test]
+fn a_line_without_a_marker_shows_nothing() {
+    let (_fixture, mut workbench, project) = editing_main();
+    type_at(&mut workbench, project, 0, 0, "zero\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::ShowHunk { line: 2 });
+    assert_eq!(shown_hunk(&workbench, project), None);
 }
 
 #[test]

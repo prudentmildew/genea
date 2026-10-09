@@ -54,7 +54,7 @@ pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, GutterMark, HighlightSpan, InlineProblem, LeftColumnView, LineChange, Notice, NoticeAction,
+    Caret, EditorView, GutterMark, HighlightSpan, HunkView, InlineProblem, LeftColumnView, LineChange, Notice, NoticeAction,
     Preedit, ProblemItem,
     ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
 };

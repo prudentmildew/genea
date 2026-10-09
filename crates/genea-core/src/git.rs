@@ -22,7 +22,7 @@ use ropey::Rope;
 
 use crate::{
     jobs::Jobs,
-    view::{GutterMark, LineChange},
+    view::{GutterMark, HunkView, LineChange},
     watcher::FileChanges,
     workbench::ProjectId,
 };
@@ -219,6 +219,25 @@ impl Git {
         }
     }
 
+    /// The change marked on `line` of `path`, with its lines at HEAD, if
+    /// the markers are up to date with the buffer (`version`).
+    fn current_hunk(&self, path: &Path, version: u64, line: usize) -> Option<(&Hunk, &Rope)> {
+        let file = self.files.get(path)?;
+        let base = file.base.as_ref()?;
+        if file.diffed != Some((version, file.base_id)) {
+            return None;
+        }
+        let hunk = file.hunks.iter().find(|h| h.lines.contains(&line) || h.lines == (line..line))?;
+        Some((hunk, base))
+    }
+
+    /// The change marked on `line` of `path`, as its popover shows it.
+    pub(crate) fn hunk_view(&self, path: &Path, version: u64, line: usize) -> Option<HunkView> {
+        let (hunk, base) = self.current_hunk(path, version, line)?;
+        let head = head_text(hunk, base).lines().collect::<Vec<_>>().join("\n");
+        Some(HunkView { lines: hunk.lines.clone(), change: hunk.change(), head })
+    }
+
     /// The gutter markers of `path` on `lines`, top to bottom.
     pub(crate) fn gutter(&self, path: &Path, lines: Range<usize>) -> Vec<GutterMark> {
         let Some(file) = self.files.get(path).filter(|f| f.base.is_some()) else { return Vec::new() };
@@ -250,6 +269,11 @@ impl DiffJob {
             .collect();
         Diffed { hunks, version: self.version, base_id: self.base_id }
     }
+}
+
+/// A hunk's lines at HEAD, with their line breaks.
+fn head_text(hunk: &Hunk, base: &Rope) -> String {
+    base.slice(base.line_to_char(hunk.head.start)..base.line_to_char(hunk.head.end)).to_string()
 }
 
 /// A line of text with its line break, as a diff token.

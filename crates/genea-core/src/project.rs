@@ -61,6 +61,8 @@ pub(crate) struct Project {
     problems: Problems,
     /// What the left column shows; `None` while it is collapsed.
     left_column: Option<LeftColumnView>,
+    /// The change whose popover is open, by file and line (ticket #56).
+    shown_hunk: Option<(PathBuf, usize)>,
     /// The project's files, for the Files view (ticket #30).
     pub(crate) files: FileIndex,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
@@ -92,6 +94,7 @@ impl Project {
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
+            shown_hunk: None,
         }
     }
 
@@ -274,7 +277,15 @@ impl Project {
 
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
+        // A shown change closes on anything but scrolling.
+        if !matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. }) {
+            self.shown_hunk = None;
+        }
         match command {
+            Command::ShowHunk { line } => {
+                self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
+            }
+            Command::HideHunk => {}
             Command::OpenFile(path) => self.open_file(path, None, jobs),
             Command::OpenFileAt { path, at } => self.open_file(path, Some(at), jobs),
             Command::OpenConfig => self.open_config(jobs),
@@ -486,6 +497,11 @@ impl Project {
             let mut view = e.view(self.viewport_rows);
             view.problems = self.inline_problems(e, &view.lines);
             view.gutter = self.gutter(e, &view.lines);
+            view.hunk = self
+                .shown_hunk
+                .as_ref()
+                .filter(|(path, _)| path == e.path())
+                .and_then(|(path, line)| self.git.hunk_view(path, e.version(), *line));
             view
         });
         let mut tabs = self.tabs_view(editor.as_ref());

@@ -178,6 +178,23 @@ pub struct EditorView {
     /// git repository and for files that aren't in HEAD. Worked out in the
     /// background as you type, so they can be a moment behind the text.
     pub gutter: Vec<GutterMark>,
+    /// The change shown by a click on its gutter marker
+    /// (`Command::ShowHunk`): the lines it replaced at HEAD, offered for
+    /// Rollback. Typing, a click in the text and most other commands close
+    /// it (`Command::HideHunk` does too); scrolling doesn't.
+    pub hunk: Option<HunkView>,
+}
+
+/// A change against HEAD, as its popover shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HunkView {
+    /// The buffer's lines it covers (0-based, end exclusive). Empty for
+    /// deleted lines: they were just above `lines.start`.
+    pub lines: Range<usize>,
+    pub change: LineChange,
+    /// The lines at HEAD, joined by `\n` without a final line break. Empty
+    /// for added lines.
+    pub head: String,
 }
 
 /// A git gutter marker on one line. Clicking it shows the change with

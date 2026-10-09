@@ -818,6 +818,7 @@ impl Editor {
             preedit,
             problems: Vec::new(),
             gutter: Vec::new(),
+            hunk: None,
         }
     }
 
