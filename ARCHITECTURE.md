@@ -65,6 +65,14 @@ use, and nothing else:
 - **Effects outside the process** go through the host (`core.host`), never
   `std::process`, an HTTP client or `std::time` directly. The filesystem is
   used directly.
+- **Tabs and the split** (`src/project/tabs.rs`): an open file has one
+  `Editor` however many tabs show it; each tab keeps its own `Cursor`
+  (caret, selection, scroll). `Project::editor` is always the *focused*
+  tab's editor, so commands that act on "the open file" keep using it. The
+  other open files are parked; reach any open file by path with
+  `Project::open_editor(_mut)`, e.g. in an Apply whose file may have lost
+  the focus meanwhile. `ProjectView::editor` is the focused file;
+  `ProjectView::panes` lists each side's tabs and editor.
 
 ### Syntax
 

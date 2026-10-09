@@ -14,7 +14,7 @@ use genea_core::{EditorView, Highlight, HighlightSpan};
 use slint::{Model, ModelRc, VecModel};
 use unicode_width::UnicodeWidthChar;
 
-use crate::{Line, ProjectWindow, Run, Span};
+use crate::{Line, ProjectWindow, Run, Span, SurfaceGeometry};
 
 /// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
 /// ui/theme.slint.
@@ -35,7 +35,9 @@ struct SlotState {
     char_width: f32,
 }
 
+/// One pane's surface (ticket #31): the left one is pane 0, the right one 1.
 pub struct Surface {
+    pane: usize,
     lines: Rc<VecModel<Line>>,
     slots: Vec<Option<SlotState>>,
     base: usize,
@@ -44,10 +46,14 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(window: &ProjectWindow) -> Self {
+    pub fn new(window: &ProjectWindow, pane: usize) -> Self {
         let lines = Rc::new(VecModel::default());
-        window.set_lines(ModelRc::from(lines.clone()));
-        Surface { lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0 }
+        if pane == 0 {
+            window.set_left_lines(ModelRc::from(lines.clone()));
+        } else {
+            window.set_right_lines(ModelRc::from(lines.clone()));
+        }
+        Surface { pane, lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0 }
     }
 
     /// The viewport's height in rows, if it changed since the last call.
@@ -133,15 +139,26 @@ impl Surface {
         }
 
         let base = self.base as f64;
-        window.set_offset_y(-((self.scroll_top - base) * LINE_HEIGHT as f64) as f32);
+        let mut geometry = if self.pane == 0 { window.get_left_geometry() } else { window.get_right_geometry() };
+        geometry.offset_y = -((self.scroll_top - base) * LINE_HEIGHT as f64) as f32;
         if let Some(editor) = editor {
             // While composing, the caret is drawn after the preedit.
             let preedit = editor.preedit.map_or(0, |p| p.width);
-            window.set_compose_x(editor.caret.column as f32 * char_width);
-            window.set_preedit_width(preedit as f32 * char_width);
-            window.set_caret_x((editor.caret.column + preedit) as f32 * char_width);
-            window.set_caret_y(((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32);
+            geometry.compose_x = editor.caret.column as f32 * char_width;
+            geometry.preedit_width = preedit as f32 * char_width;
+            geometry.caret_x = (editor.caret.column + preedit) as f32 * char_width;
+            geometry.caret_y = ((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32;
         }
+        set_geometry(window, self.pane, geometry);
+    }
+}
+
+/// Sets a pane's geometry; Slint skips an equal value, so nothing repaints.
+fn set_geometry(window: &ProjectWindow, pane: usize, geometry: SurfaceGeometry) {
+    if pane == 0 {
+        window.set_left_geometry(geometry);
+    } else {
+        window.set_right_geometry(geometry);
     }
 }
 

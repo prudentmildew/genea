@@ -180,6 +180,22 @@ fn opening_another_file_while_a_parse_runs_highlights_the_new_one() {
 }
 
 #[test]
+fn a_file_in_a_background_tab_catches_up_with_its_edits() {
+    let fixture = FixtureProject::new().file("a.ts", "let a = 1;\n").file("b.ts", "let b = 2;\n").build();
+    let mut workbench = Workbench::new(TestHost::new().shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.dispatch(project, Command::OpenFile("a.ts".into()));
+    workbench.settle().unwrap();
+
+    // The parse of the edit is still running when a.ts goes to the background.
+    run(&mut workbench, project, [Command::InsertText("// ".into()), Command::OpenFile("b.ts".into())]);
+    workbench.settle().unwrap();
+    run(&mut workbench, project, [Command::SelectTab { pane: 0, tab: 0 }]);
+
+    assert_highlighted(&spans(&workbench, project, 0), "// let a = 1;", Highlight::Comment);
+}
+
+#[test]
 fn files_over_5_mb_are_not_highlighted() {
     let line = "let a = 1;\n";
     let (_fixture, workbench, project) = open_file("big.ts", &line.repeat(5 * 1024 * 1024 / line.len() + 1));
