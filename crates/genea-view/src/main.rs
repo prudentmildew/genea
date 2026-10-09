@@ -9,11 +9,13 @@
 //!
 //! - `ui/*.slint`: the markup (one component per file; `app.slint` exports);
 //! - `app`: the workbench, the windows, callback wiring, the notifier;
+//! - `about`: the About window's third-party licences;
 //! - `window`: one project window's view-state → Slint sync;
 //! - `surface`: the editor surface's ring of line slots;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `links`: opening
 //!   web links in the browser.
 
+mod about;
 mod app;
 mod dialogs;
 mod keys;

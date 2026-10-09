@@ -19,7 +19,7 @@ use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, dialogs, links,
+    AboutWindow, about, dialogs, links,
     keys::{self, Modifiers},
     window::{WindowController, WindowKey},
 };
@@ -188,6 +188,7 @@ impl App {
             match AboutWindow::new() {
                 Ok(about) => {
                     about.set_version(env!("CARGO_PKG_VERSION").into());
+                    about.set_licences(about::licence_lines());
                     self.about = Some(about);
                 }
                 Err(error) => {
