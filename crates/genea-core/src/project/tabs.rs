@@ -88,7 +88,12 @@ pub(super) struct TabsView {
 impl Project {
     pub(super) fn tab_command(&mut self, command: Command, jobs: &Jobs) {
         match command {
-            Command::SelectTab { pane, tab } => self.focus(pane, tab),
+            Command::SelectTab { pane, tab } => {
+                self.focus(pane, tab);
+                if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
+                    self.opened_file(&path);
+                }
+            }
             Command::FocusPane(pane) => {
                 if let Some(side) = self.panes.sides.get(pane)
                     && !side.tabs.is_empty()

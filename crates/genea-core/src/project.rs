@@ -75,6 +75,8 @@ pub(crate) struct Project {
     finder_generation: u64,
     /// The file index version the last finder match used.
     finder_files: u64,
+    /// Files opened lately, most recent first: Recent Files (⌘E).
+    recent_files: Vec<PathBuf>,
 }
 
 impl Project {
@@ -100,6 +102,7 @@ impl Project {
             finder: None,
             finder_generation: 0,
             finder_files: 0,
+            recent_files: Vec::new(),
         }
     }
 
@@ -637,6 +640,7 @@ impl Project {
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
         self.open_generation += 1;
         if self.focus_open_file(&shown) {
+            self.opened_file(&shown);
             if let Some(at) = at {
                 self.go_to(at);
             }
@@ -655,6 +659,7 @@ impl Project {
                 match read {
                     Ok(Decoded::Text(text)) => {
                         project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)));
+                        project.opened_file(&shown);
                         project.reparse_file(&shown, &jobs);
                         if let Some(at) = at {
                             project.go_to(at);
@@ -666,6 +671,7 @@ impl Project {
                             action: None,
                         });
                         project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)).read_only());
+                        project.opened_file(&shown);
                         project.reparse_file(&shown, &jobs);
                         if let Some(at) = at {
                             project.go_to(at);

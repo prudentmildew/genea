@@ -45,13 +45,13 @@ impl Finder {
         self.new_query = true;
     }
 
-    /// Takes a match's results. A new query selects the best result; new
-    /// results for the same query (the files changed) keep the selection
-    /// where it was.
-    pub(crate) fn set_items(&mut self, items: Vec<FinderItem>) {
+    /// Takes a match's results. A new query selects result `first`
+    /// (usually the best); new results for the same query (the files
+    /// changed) keep the selection where it was.
+    pub(crate) fn set_items(&mut self, items: Vec<FinderItem>, first: usize) {
         self.items = items;
         if std::mem::take(&mut self.new_query) {
-            self.selected = 0;
+            self.selected = first;
         }
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
     }
@@ -90,21 +90,60 @@ impl Finder {
 pub(crate) struct Candidates {
     /// Every file in the project (relative paths), for the file modes.
     pub(crate) files: Arc<[String]>,
+    /// The files opened lately, most recent first.
+    pub(crate) recent: Vec<String>,
 }
 
 /// Matches `query` against the candidates (a background thread).
-pub(crate) fn run_match(query: &str, candidates: &Candidates) -> Vec<FinderItem> {
-    let pattern = Pattern::new(query, CaseMatching::Smart, Normalization::Smart, AtomKind::Fuzzy);
-    let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
-    let mut buf = Vec::new();
-    let mut matched: Vec<(u32, &str)> = candidates
-        .files
-        .iter()
-        .filter_map(|path| pattern.score(Utf32Str::new(path, &mut buf), &mut matcher).map(|score| (score, path.as_str())))
-        .collect();
-    // Best first; on a tie, the shorter path, then by path.
-    matched.sort_unstable_by_key(|(score, path)| (Reverse(*score), path.len(), *path));
-    matched.into_iter().take(MAX_RESULTS).map(|(_, path)| file_item(Path::new(path))).collect()
+pub(crate) fn run_match(mode: FinderMode, query: &str, candidates: &Candidates) -> Vec<FinderItem> {
+    let mut scorer = Scorer::new(query);
+    match mode {
+        // An empty query lists the recent files.
+        FinderMode::Files if scorer.is_empty() => recent_files(&mut scorer, candidates),
+        FinderMode::Files => {
+            let mut matched: Vec<(u32, &str)> = candidates
+                .files
+                .iter()
+                .filter_map(|path| scorer.path(path).map(|score| (score, path.as_str())))
+                .collect();
+            // Best first; on a tie, the shorter path, then by path.
+            matched.sort_unstable_by_key(|(score, path)| (Reverse(*score), path.len(), *path));
+            matched.into_iter().take(MAX_RESULTS).map(|(_, path)| file_item(Path::new(path))).collect()
+        }
+        FinderMode::RecentFiles => recent_files(&mut scorer, candidates),
+    }
+}
+
+/// The recent files that match, in their order: most recently opened
+/// first.
+fn recent_files(scorer: &mut Scorer, candidates: &Candidates) -> Vec<FinderItem> {
+    let matching = candidates.recent.iter().filter(|path| scorer.path(path).is_some());
+    matching.take(MAX_RESULTS).map(|path| file_item(Path::new(path))).collect()
+}
+
+/// Scores text against the query.
+struct Scorer {
+    pattern: Pattern,
+    /// Prefers matches that start after a `/`.
+    paths: Matcher,
+    buf: Vec<char>,
+}
+
+impl Scorer {
+    fn new(query: &str) -> Self {
+        let pattern = Pattern::new(query, CaseMatching::Smart, Normalization::Smart, AtomKind::Fuzzy);
+        Scorer { pattern, paths: Matcher::new(Config::DEFAULT.match_paths()), buf: Vec::new() }
+    }
+
+    /// The query is empty (or only spaces): everything matches.
+    fn is_empty(&self) -> bool {
+        self.pattern.atoms.is_empty()
+    }
+
+    /// A path's score, or `None` if it doesn't match.
+    fn path(&mut self, path: &str) -> Option<u32> {
+        self.pattern.score(Utf32Str::new(path, &mut self.buf), &mut self.paths)
+    }
 }
 
 /// A file as a result: its name, with its folder beside it.

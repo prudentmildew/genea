@@ -90,6 +90,80 @@ fn the_file_finder_hides_what_the_config_excludes() {
     assert_eq!(results(&workbench, project), ["app.ts  src", "app.js  dist", "app.test.ts  src"]);
 }
 
+/// Opens files one after the other, as the user would.
+fn open_files(workbench: &mut Workbench, project: ProjectId, paths: &[&str]) {
+    for path in paths {
+        workbench.dispatch(project, Command::OpenFile(path.into()));
+        workbench.settle().unwrap();
+    }
+}
+
+#[test]
+fn recent_files_lists_files_in_the_order_they_were_last_opened() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "").file("src/b.ts", "").file("c.ts", "").file("d.ts", ""));
+
+    open_files(&mut workbench, project, &["a.ts", "src/b.ts", "c.ts", "a.ts"]);
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::RecentFiles));
+    workbench.settle().unwrap();
+
+    assert_eq!(results(&workbench, project), ["a.ts", "c.ts", "b.ts  src"]);
+    // The file before the current one is selected, so ⌘E Return goes back.
+    assert_eq!(workbench.project(project).unwrap().finder.unwrap().selected, Some(1));
+}
+
+#[test]
+fn selecting_a_tab_counts_as_opening_its_file() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "").file("b.ts", ""));
+
+    open_files(&mut workbench, project, &["a.ts", "b.ts"]);
+    workbench.dispatch(project, Command::SelectTab { pane: 0, tab: 0 });
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::RecentFiles));
+    workbench.settle().unwrap();
+
+    assert_eq!(results(&workbench, project), ["a.ts", "b.ts"]);
+}
+
+#[test]
+fn a_query_narrows_recent_files_keeping_their_order() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new().file("api/user.ts", "").file("web/users.tsx", "").file("web/app.tsx", ""),
+    );
+
+    open_files(&mut workbench, project, &["web/users.tsx", "web/app.tsx", "api/user.ts"]);
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::RecentFiles));
+    search(&mut workbench, project, "user");
+
+    assert_eq!(results(&workbench, project), ["user.ts  api", "users.tsx  web"]);
+    assert_eq!(workbench.project(project).unwrap().finder.unwrap().selected, Some(0));
+}
+
+#[test]
+fn a_deleted_file_leaves_recent_files() {
+    let (fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "").file("b.ts", ""));
+
+    open_files(&mut workbench, project, &["a.ts", "b.ts"]);
+    fixture.remove("a.ts");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::RecentFiles));
+    workbench.settle().unwrap();
+
+    assert_eq!(results(&workbench, project), ["b.ts"]);
+}
+
+#[test]
+fn the_file_finder_starts_with_the_recent_files() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "").file("b.ts", "").file("c.ts", ""));
+
+    open_files(&mut workbench, project, &["c.ts", "a.ts"]);
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Files));
+    workbench.settle().unwrap();
+
+    assert_eq!(results(&workbench, project), ["a.ts", "c.ts"]);
+    assert_eq!(workbench.project(project).unwrap().finder.unwrap().selected, Some(0));
+}
+
 #[test]
 fn choosing_a_file_opens_it_and_closes_the_finder() {
     let (_fixture, mut workbench, project) =

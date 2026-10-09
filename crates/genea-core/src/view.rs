@@ -74,8 +74,12 @@ pub struct FinderView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FinderMode {
     /// ⌘⇧O: the project's files, without `node_modules` and the config's
-    /// `exclude`.
+    /// `exclude`. With an empty query, the recent files.
     Files,
+    /// ⌘E: the files opened lately (by opening them or selecting their
+    /// tab), most recent first. A query narrows them, keeping that order.
+    /// With an empty query the file before the current one is selected.
+    RecentFiles,
 }
 
 /// A result in the finder.

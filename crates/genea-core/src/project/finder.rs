@@ -2,6 +2,8 @@
 //! starting match jobs, and choosing a result. Matching itself is in
 //! `crate::finder`.
 
+use std::path::Path;
+
 use genea_host::Host;
 
 use super::Project;
@@ -9,8 +11,11 @@ use crate::{
     command::Command,
     finder::{self, Candidates, Finder},
     jobs::Jobs,
-    view::FinderItemKind,
+    view::{FinderItemKind, FinderMode},
 };
+
+/// How many files Recent Files remembers.
+const MAX_RECENT_FILES: usize = 50;
 
 impl Project {
     pub(super) fn finder_command(&mut self, command: Command, jobs: &Jobs, _host: &dyn Host) {
@@ -60,23 +65,40 @@ impl Project {
     /// result.
     fn match_finder(&mut self, jobs: &Jobs) {
         let Some(finder) = &self.finder else { return };
-        let query = finder.query.clone();
+        let (mode, query) = (finder.mode, finder.query.clone());
         self.finder_generation += 1;
         let generation = self.finder_generation;
         self.finder_files = self.files.version();
-        let candidates = Candidates { files: self.files.file_list() };
+        // Files that are gone leave the recent files.
+        let recent = self.recent_files.iter().filter(|path| self.files.contains(path));
+        let recent = recent.map(|path| path.to_string_lossy().into_owned()).collect();
+        let candidates = Candidates { files: self.files.file_list(), recent };
         let id = self.id;
         jobs.spawn("match finder", move || {
-            let items = finder::run_match(&query, &candidates);
+            let items = finder::run_match(mode, &query, &candidates);
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 if project.finder_generation != generation {
                     return;
                 }
+                // ⌘E, Return goes back to the file before the current one.
+                let current = project.editor.as_ref().map(|e| e.path());
+                let back = mode == FinderMode::RecentFiles
+                    && query.is_empty()
+                    && items.len() > 1
+                    && current.is_some_and(|path| items[0].kind == FinderItemKind::File(path.to_owned()));
                 if let Some(finder) = &mut project.finder {
-                    finder.set_items(items);
+                    finder.set_items(items, usize::from(back));
                 }
             })
         });
+    }
+
+    /// A file was opened, or its tab selected: it goes first in the recent
+    /// files.
+    pub(super) fn opened_file(&mut self, path: &Path) {
+        self.recent_files.retain(|p| p != path);
+        self.recent_files.insert(0, path.to_owned());
+        self.recent_files.truncate(MAX_RECENT_FILES);
     }
 }

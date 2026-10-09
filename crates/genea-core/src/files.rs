@@ -137,6 +137,12 @@ impl FileIndex {
         list
     }
 
+    /// Whether the index has this file (a relative path), `exclude` or not.
+    pub(crate) fn contains(&self, path: &Path) -> bool {
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else { return false };
+        self.folders.get(folder).is_some_and(|entries| entries.get(name) == Some(&false))
+    }
+
     fn push_files(&self, folder: &Path, list: &mut Vec<String>) {
         let Some(entries) = self.folders.get(folder) else { return };
         for (name, &is_dir) in entries {
