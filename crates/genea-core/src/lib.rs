@@ -34,6 +34,7 @@ mod view;
 mod workbench;
 
 pub use command::{CaretMove, Command};
+pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
@@ -41,4 +42,5 @@ pub use view::{
     Caret, EditorView, Notice, NoticeAction, Preedit, ProjectView, RecentProject, StatusBar, ToolState, ToolView,
     ToolchainView, VisibleLine, WelcomeView,
 };
+pub use view::{ClosePrompt, EditorTab, PaneView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

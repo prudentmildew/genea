@@ -1,5 +1,7 @@
 //! One open project: its folder and what its window shows.
 
+mod tabs;
+
 use std::{
     fs::File,
     io::{BufReader, BufWriter, Write},
@@ -18,6 +20,7 @@ use crate::{
     view::{Notice, ProjectView, StatusBar},
     workbench::ProjectId,
 };
+use tabs::Panes;
 
 /// Rows assumed until the view reports its viewport.
 const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
@@ -25,7 +28,11 @@ const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
 pub(crate) struct Project {
     id: ProjectId,
     root: PathBuf,
+    /// The focused tab's file (ticket #31: the other open files wait in
+    /// `panes`, and come back here when their tab is focused).
     editor: Option<Editor>,
+    /// Tabs, the split, and the open files that aren't focused.
+    panes: Panes,
     viewport_rows: f64,
     notices: Vec<Notice>,
     /// Bumped by every OpenFile, so a slow read can't replace a newer one.
@@ -40,6 +47,7 @@ impl Project {
             id,
             root,
             editor: None,
+            panes: Panes::default(),
             viewport_rows: DEFAULT_VIEWPORT_ROWS,
             notices: Vec::new(),
             open_generation: 0,
@@ -66,6 +74,14 @@ impl Project {
         let now = host.clock().now();
         match command {
             Command::OpenFile(path) => self.open_file(path, jobs),
+            Command::SelectTab { .. }
+            | Command::FocusPane(_)
+            | Command::CloseTab { .. }
+            | Command::ResolveClose(_)
+            | Command::SplitRight
+            | Command::MoveTabToOtherSide { .. }
+            | Command::CloseSplit
+            | Command::ScrollPane { .. } => self.tab_command(command, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -172,12 +188,18 @@ impl Project {
                     editor.redo(self.viewport_rows);
                 }
             }
-            Command::Save => self.save(jobs),
+            Command::Save => {
+                if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
+                    self.save(path, jobs);
+                }
+            }
         }
+        self.refresh_views();
     }
 
     pub(crate) fn view(&self) -> ProjectView {
         let editor = self.editor.as_ref().map(|e| e.view(self.viewport_rows));
+        let tabs = self.tabs_view(editor.as_ref());
         let status = StatusBar {
             caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
@@ -191,13 +213,17 @@ impl Project {
             status,
             notices,
             toolchain: self.toolchain.as_ref().map(Toolchain::view).unwrap_or_default(),
+            panes: tabs.panes,
+            focused_pane: tabs.focused_pane,
+            can_split: tabs.can_split,
+            close_prompt: tabs.close_prompt,
         }
     }
 
-    /// Writes the open file in the background, as it is now. Edits made
+    /// Writes an open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
-    fn save(&mut self, jobs: &Jobs) {
-        let Some(editor) = &self.editor else { return };
+    fn save(&mut self, path: PathBuf, jobs: &Jobs) {
+        let Some(editor) = self.open_editor(&path) else { return };
         let snapshot = editor.snapshot();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
@@ -211,25 +237,34 @@ impl Project {
                 let Some(project) = core.project_mut(id) else { return };
                 match written {
                     Ok(()) => {
-                        if let Some(editor) = &mut project.editor {
+                        if let Some(editor) = project.open_editor_mut(&snapshot.path) {
                             editor.saved(&snapshot);
                         }
+                        project.saved(&snapshot.path);
                     }
-                    Err(error) => project.notices.push(Notice {
-                        message: format!("Couldn't save {}: {error}", snapshot.path.display()),
-                        action: None,
-                    }),
+                    Err(error) => {
+                        project.save_failed(&snapshot.path);
+                        project.notices.push(Notice {
+                            message: format!("Couldn't save {}: {error}", snapshot.path.display()),
+                            action: None,
+                        })
+                    }
                 }
             })
         });
     }
 
-    /// Reads the file in the background. The current editor stays until the
-    /// new file is read; a failed read leaves it and adds a notice.
+    /// Reads the file in the background and opens it in a new tab. The
+    /// current editor stays until the new file is read; a failed read leaves
+    /// it and adds a notice. A file that is already open just has its tab
+    /// focused.
     fn open_file(&mut self, path: PathBuf, jobs: &Jobs) {
         let absolute = self.root.join(&path);
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
         self.open_generation += 1;
+        if self.focus_open_file(&shown) {
+            return;
+        }
         let generation = self.open_generation;
         let id = self.id;
         jobs.spawn("open file", move || {
@@ -240,7 +275,7 @@ impl Project {
                     return;
                 }
                 match read {
-                    Ok(text) => project.editor = Some(Editor::new(shown, text)),
+                    Ok(text) => project.open_tab(Editor::new(shown, text)),
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()), action: None }),
