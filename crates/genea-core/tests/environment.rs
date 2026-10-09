@@ -10,7 +10,7 @@
 
 use std::{io::Read, path::Path, time::Duration};
 
-use genea_core::{LOGIN_SHELL_TIMEOUT, ProcessSpec, ProjectId, Workbench};
+use genea_core::{Command, LOGIN_SHELL_TIMEOUT, ProcessSpec, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 /// A host whose launch environment names `/bin/zsh` as the login shell,
@@ -93,6 +93,55 @@ fn a_login_shell_that_hangs_times_out_to_the_launch_environment_with_a_notice() 
     );
     let vars = printenv(&workbench, project);
     assert_eq!(var(&vars, "FROM_LAUNCH").as_deref(), Some("launch"));
+}
+
+#[test]
+fn reload_environment_picks_up_a_changed_variable() {
+    let host = host();
+    host.processes().script_shell("zsh", [("API_URL", "http://old.test")]);
+    let fixture = FixtureProject::new().file("src/main.ts", "").build();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    // The user edits their rc file.
+    host.processes().script_shell("zsh", [("API_URL", "http://new.test")]);
+    assert_eq!(var(&printenv(&workbench, project), "API_URL").as_deref(), Some("http://old.test"));
+    workbench.dispatch(project, Command::ReloadEnvironment);
+    workbench.settle().unwrap();
+
+    assert_eq!(var(&printenv(&workbench, project), "API_URL").as_deref(), Some("http://new.test"));
+}
+
+#[test]
+fn the_fallback_notice_offers_reload_and_goes_once_the_shell_answers() {
+    let host = host();
+    host.processes().script("zsh", |_, mut io| {
+        use std::io::Write;
+        writeln!(io.stderr, "zsh: command not found: brew").unwrap();
+        1
+    });
+    let fixture = FixtureProject::new().file("src/main.ts", "").build();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let notices = workbench.project(project).unwrap().notices;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(
+        notices[0].message,
+        "Couldn't read the environment of your login shell (/bin/zsh): it exited with code 1: \
+         zsh: command not found: brew. Processes get the environment Genea was started with."
+    );
+    let action = notices[0].action.clone().expect("a Reload environment action");
+    assert_eq!(action.label, "Reload environment");
+
+    host.processes().script_shell("zsh", [("GREETING", "hello")]);
+    workbench.dispatch(project, action.command);
+    workbench.settle().unwrap();
+
+    assert_eq!(workbench.project(project).unwrap().notices, []);
+    assert_eq!(var(&printenv(&workbench, project), "GREETING").as_deref(), Some("hello"));
 }
 
 #[test]

@@ -127,6 +127,11 @@ impl Project {
                     toolchain.pin_defaults(jobs);
                 }
             }
+            Command::ReloadEnvironment => {
+                if let Some(environment) = &mut self.environment {
+                    environment.capture(jobs);
+                }
+            }
             Command::ExtendSelection { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, true, self.viewport_rows);

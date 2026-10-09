@@ -29,8 +29,9 @@ use std::{
 use genea_host::{Host, ProcessControl, ProcessSpec, SharedHost};
 
 use crate::{
+    command::Command,
     jobs::Jobs,
-    view::Notice,
+    view::{Notice, NoticeAction},
     workbench::{Core, ProjectId},
 };
 
@@ -146,7 +147,8 @@ impl Environment {
     }
 
     pub(crate) fn notices(&self) -> Vec<Notice> {
-        self.problem.iter().map(|message| Notice { message: message.clone(), action: None }).collect()
+        let reload = NoticeAction { label: "Reload environment".into(), command: Command::ReloadEnvironment };
+        self.problem.iter().map(|message| Notice { message: message.clone(), action: Some(reload.clone()) }).collect()
     }
 
     /// The environment with `first` (the pinned tools' folders) put first
