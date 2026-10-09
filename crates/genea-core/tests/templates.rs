@@ -34,6 +34,55 @@ fn json_file(parent: &FixtureProject, path: &str) -> Value {
     serde_json::from_str(&parent.read(path)).unwrap_or_else(|e| panic!("{path} is not JSON: {e}"))
 }
 
+/// Every file under `folder`, relative and sorted, leaving out `.git`.
+fn files(parent: &FixtureProject, folder: &str) -> Vec<String> {
+    fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let relative = path.strip_prefix(base).unwrap().to_str().unwrap().to_owned();
+            if relative == ".git" {
+                continue;
+            }
+            if path.is_dir() {
+                walk(&path, base, out);
+            } else {
+                out.push(relative);
+            }
+        }
+    }
+    let base = parent.path(folder);
+    let mut out = Vec::new();
+    walk(&base, &base, &mut out);
+    out.sort();
+    out
+}
+
+#[test]
+fn the_frontend_template_is_a_vite_react_app() {
+    let parent = create(Template::Frontend, "my-app", node(), pnpm());
+
+    assert_eq!(
+        files(&parent, "my-app"),
+        [
+            ".gitignore",
+            ".oxlintrc.json",
+            "README.md",
+            "index.html",
+            "package.json",
+            "public/favicon.svg",
+            "src/App.css",
+            "src/App.tsx",
+            "src/clicks.test.ts",
+            "src/clicks.ts",
+            "src/main.tsx",
+            "tsconfig.json",
+            "vite.config.ts",
+        ]
+    );
+    assert!(parent.read("my-app/index.html").contains("<title>my-app</title>"));
+    assert!(parent.read("my-app/src/App.tsx").contains("<h1>my-app</h1>"));
+}
+
 #[test]
 fn the_frontend_template_writes_a_pinned_package_named_after_the_project() {
     let parent = create(Template::Frontend, "my-app", node(), pnpm());
