@@ -181,8 +181,10 @@ fn patterns(value: &Value) -> Result<Vec<String>, Invalid> {
     let mut patterns = Vec::new();
     for element in &array.elements {
         let Value::StringLit(pattern) = element else { return Err(not_a_list()) };
+        // A glob is compiled only when the matcher is built.
         let mut builder = ignore::gitignore::GitignoreBuilder::new("/");
-        if let Err(error) = builder.add_line(None, &pattern.value) {
+        let checked = builder.add_line(None, &pattern.value).and_then(|builder| builder.build().map(drop));
+        if let Err(error) = checked {
             let reason = match error {
                 ignore::Error::Glob { err, .. } => err,
                 other => other.to_string(),
