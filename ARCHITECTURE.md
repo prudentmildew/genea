@@ -83,8 +83,21 @@ use, and nothing else:
   `Arc` so an unchanged tree costs nothing to snapshot) is built from it on
   the main thread, minus the config's `exclude` (a `.gitignore` matcher
   applied when the rows are built, so `exclude` changes need no disk read).
-  The finder and search should take their file list from here and hide the
-  same paths; hidden files still open with `OpenFile`.
+  The finder should take its file list from here and hide the same paths;
+  hidden files still open with `OpenFile`.
+- **Project search** (`src/search.rs`, ticket #34): `Command::Search(SearchQuery)`
+  cancels the search in flight (a flag, plus a generation that drops its
+  late results) and starts a new one. It does not use the file index: it
+  walks the disk with `ignore`'s parallel walker, which also applies
+  `.gitignore` (the project's own, with or without a git repo; not the
+  parents' or the user's global one), skips `node_modules` and `.git`, and
+  applies the config's `exclude`. Each file is matched with
+  `grep-searcher`/`grep-regex` (binary files are skipped). Files with
+  matches stream to the main thread through a channel, one Apply in flight
+  at a time, and are inserted in the tree's order (folders first,
+  case-insensitive). `ProjectView::search` holds the query, the results
+  (`Arc`, like the tree) and the state; a search stops at
+  `MAX_SEARCH_MATCHES`. It searches what is on disk, not unsaved edits.
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -275,7 +288,8 @@ chrome, native menus via muda (Slint's `MenuBar`).
 - The left column (`ui/left-column.slint`): a view switcher and the active
   view, shown while the core's `left_column` is `Some`. A view's shortcut
   is a menu item that dispatches `ToggleLeftColumn` (Files is ⌘1, and a
-  project opens showing it; Problems is ⌘6). A new
+  project opens showing it; Search is ⌘⇧F, and focuses its query field
+  when it appears; Problems is ⌘6). A new
   view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
   switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`
