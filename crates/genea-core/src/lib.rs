@@ -25,6 +25,7 @@ mod config;
 mod editor;
 mod environment;
 mod files;
+mod finder;
 mod grid;
 mod history;
 mod jobs;
@@ -57,4 +58,5 @@ pub use view::{
     ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
+pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

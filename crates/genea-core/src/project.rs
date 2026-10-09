@@ -1,5 +1,6 @@
 //! One open project: its folder and what its window shows.
 
+mod finder;
 mod tabs;
 
 use std::{
@@ -19,6 +20,7 @@ use crate::{
     editor::Editor,
     environment::{Environment, ProcessEnv},
     files::FileIndex,
+    finder::Finder,
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
@@ -66,6 +68,13 @@ pub(crate) struct Project {
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
+    /// The fuzzy finder, while it is open (ticket #33).
+    finder: Option<Finder>,
+    /// Bumped by every finder match, so an older match can't replace a
+    /// newer one.
+    finder_generation: u64,
+    /// The file index version the last finder match used.
+    finder_files: u64,
 }
 
 impl Project {
@@ -88,6 +97,9 @@ impl Project {
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
+            finder: None,
+            finder_generation: 0,
+            finder_files: 0,
         }
     }
 
@@ -282,6 +294,7 @@ impl Project {
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
+            Command::OpenFinder(_) | Command::SetFinderQuery(_) => self.finder_command(command, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -494,6 +507,7 @@ impl Project {
             problems: self.problems.items(),
             left_column: self.left_column,
             files: self.files.rows(),
+            finder: self.finder.as_ref().map(Finder::view),
         }
     }
 

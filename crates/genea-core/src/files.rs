@@ -52,6 +52,10 @@ pub(crate) struct FileIndex {
     walks: BTreeSet<PathBuf>,
     /// Everything may have changed: read the whole project again.
     rescan: bool,
+    /// Bumped whenever the files or `exclude` change.
+    version: u64,
+    /// The finder's list of files, and the version it was made at.
+    list: Option<(u64, Arc<[String]>)>,
 }
 
 /// What a read of the disk asks for.
@@ -86,6 +90,8 @@ impl FileIndex {
             changed: BTreeSet::new(),
             walks: BTreeSet::new(),
             rescan: false,
+            version: 0,
+            list: None,
         }
     }
 
@@ -109,6 +115,43 @@ impl FileIndex {
         self.rows.clone()
     }
 
+    /// A number that changes whenever [`file_list`](Self::file_list) may
+    /// have.
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Every file the views show, as relative paths, for the finder: what
+    /// the tree would list with every folder expanded. Made when first asked
+    /// for after a change.
+    pub(crate) fn file_list(&mut self) -> Arc<[String]> {
+        if let Some((version, list)) = &self.list
+            && *version == self.version
+        {
+            return list.clone();
+        }
+        let mut list = Vec::new();
+        self.push_files(Path::new(""), &mut list);
+        let list: Arc<[String]> = list.into();
+        self.list = Some((self.version, list.clone()));
+        list
+    }
+
+    fn push_files(&self, folder: &Path, list: &mut Vec<String>) {
+        let Some(entries) = self.folders.get(folder) else { return };
+        for (name, &is_dir) in entries {
+            let path = folder.join(name);
+            if self.exclude.matched(&path, is_dir).is_ignore() {
+                continue;
+            }
+            if is_dir {
+                self.push_files(&path, list);
+            } else {
+                list.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
     /// Applies the config's `exclude` patterns (`.gitignore` lines) to the
     /// tree.
     pub(crate) fn set_exclude(&mut self, patterns: &[String]) {
@@ -122,6 +165,7 @@ impl FileIndex {
         }
         self.exclude = builder.build().unwrap_or_else(|_| Gitignore::empty());
         self.exclude_patterns = patterns.to_vec();
+        self.version += 1;
         self.rebuild_rows();
     }
 
@@ -176,6 +220,7 @@ impl FileIndex {
                 for found in found {
                     files.apply(found);
                 }
+                files.version += 1;
                 files.rebuild_rows();
                 files.read_next(&jobs);
             })

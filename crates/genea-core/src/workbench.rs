@@ -266,9 +266,11 @@ impl Workbench {
         let _done = Done(&self.inbox);
         self.applied += 1;
         apply(&mut self.core);
-        // A pane without the focus shows a kept view (ticket #31).
+        // A pane without the focus shows a kept view (ticket #31), and the
+        // finder follows the files (ticket #33).
         for project in self.core.projects.values_mut() {
             project.refresh_views();
+            project.refresh_finder(&self.core.jobs);
         }
     }
 }

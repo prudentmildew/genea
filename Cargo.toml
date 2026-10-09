@@ -42,6 +42,10 @@ tree-sitter-css = "0.25.0"
 tree-sitter-html = "0.23.2"
 tree-sitter-md = "0.5.3"
 tree-sitter-yaml = "0.7.2"
+# The fuzzy finder (ticket #33). MPL-2.0: file-level copyleft, fine in a
+# binary as long as its source stays available; About lists it with its
+# repository (packaging/about.toml).
+nucleo-matcher = "0.3.1"
 # Git, in-process (ADR 0005): pure Rust, so no `git` binary or C toolchain is
 # needed. Each crate turns on the features it uses.
 gix = { version = "0.89.0", default-features = false }

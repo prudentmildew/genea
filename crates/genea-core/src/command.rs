@@ -6,7 +6,10 @@
 
 use std::path::PathBuf;
 
-use crate::{problems::TextPosition, view::LeftColumnView};
+use crate::{
+    problems::TextPosition,
+    view::{FinderMode, LeftColumnView},
+};
 
 /// Something the user does in a project's window.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,6 +147,15 @@ pub enum Command {
     CloseSplit,
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
+
+    // The fuzzy finder (ticket #33): `ProjectView::finder`.
+    /// Opens the finder in a mode with an empty query, replacing a finder
+    /// that is open.
+    OpenFinder(FinderMode),
+    /// The finder's query changed (typing in it). Results are matched in
+    /// the background: `settle` (tests) or the change notification (the
+    /// app) says when they are in.
+    SetFinderQuery(String),
 }
 
 /// What to do with unsaved edits in a closing tab.

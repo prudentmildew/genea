@@ -51,6 +51,50 @@ pub struct ProjectView {
     /// a snapshot doesn't copy a large tree, and unchanged trees compare
     /// equal at once.
     pub files: Arc<[FileRow]>,
+    /// The fuzzy finder overlay, while it is open (ticket #33).
+    pub finder: Option<FinderView>,
+}
+
+/// The fuzzy finder overlay: a query and the results matching it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderView {
+    pub mode: FinderMode,
+    /// What the user typed.
+    pub query: String,
+    /// Best first. While a new query is being matched, these are the last
+    /// query's results.
+    pub items: Vec<FinderItem>,
+    /// Index into `items` of the result Return opens or runs; `None`
+    /// without results.
+    pub selected: Option<usize>,
+}
+
+/// What the finder finds. Each mode has its shortcut, which opens the
+/// finder in it with `Command::OpenFinder`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FinderMode {
+    /// ⌘⇧O: the project's files, without `node_modules` and the config's
+    /// `exclude`.
+    Files,
+}
+
+/// A result in the finder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderItem {
+    /// A file's name.
+    pub label: String,
+    /// A file's folder, relative to the project root (empty at the root).
+    pub detail: String,
+    /// The keyboard shortcut of an action that has one, e.g. `⌘S`.
+    pub shortcut: Option<String>,
+    pub kind: FinderItemKind,
+}
+
+/// What choosing a result does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FinderItemKind {
+    /// Opens the file (relative to the project root).
+    File(PathBuf),
 }
 
 /// A row in the Files view: a file, or a folder the user can expand.
