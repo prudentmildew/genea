@@ -312,6 +312,7 @@ fn wire(controller: &WindowController) {
     window.on_copy(menu(Command::Copy));
     window.on_paste(menu(Command::Paste));
     window.on_select_all(menu(Command::SelectAll));
+    window.on_reload_environment(menu(Command::ReloadEnvironment));
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));

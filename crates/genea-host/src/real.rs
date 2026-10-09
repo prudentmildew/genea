@@ -308,6 +308,14 @@ mod tests {
     }
 
     #[test]
+    fn the_launch_environment_is_the_processs_own_and_names_a_shell() {
+        let vars = RealHost::new().launch_environment();
+        let path = vars.iter().find(|(key, _)| key == "PATH").map(|(_, value)| value.clone());
+        assert_eq!(path, std::env::var_os("PATH"));
+        assert!(vars.iter().any(|(key, value)| key == "SHELL" && !value.is_empty()));
+    }
+
+    #[test]
     fn fires_timers_in_deadline_order() {
         let host = RealHost::new();
         let (tx, rx) = mpsc::channel();

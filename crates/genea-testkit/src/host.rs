@@ -523,6 +523,32 @@ mod tests {
     }
 
     #[test]
+    fn a_scripted_shell_runs_its_command_with_only_its_variables_in_the_specs_folder() {
+        let host = TestHost::new();
+        let folder = tempfile::tempdir().unwrap();
+        host.processes().script_shell("zsh", [("GREETING", "hello")]);
+        let spec = ProcessSpec::new("/bin/zsh")
+            .args(["-l", "-c", "printf '%s %s %s' \"$GREETING\" \"${HOME-unset}\" \"$(pwd -P)\"; exit 4"])
+            .cwd(folder.path());
+
+        let mut child = Host::processes(&host).spawn(&spec).unwrap();
+        let mut out = String::new();
+        child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+
+        assert_eq!(out, format!("hello unset {}", folder.path().canonicalize().unwrap().display()));
+        assert_eq!(child.control.wait().unwrap(), Exit::code(4));
+    }
+
+    #[test]
+    fn the_launch_environment_has_no_shell_until_a_test_sets_one() {
+        let host = TestHost::new();
+        assert!(!Host::launch_environment(&host).iter().any(|(key, _)| key == "SHELL"));
+
+        host.set_launch_environment([("SHELL", "/bin/zsh")]);
+        assert_eq!(Host::launch_environment(&host), [("SHELL".into(), "/bin/zsh".into())]);
+    }
+
+    #[test]
     fn an_unscripted_process_is_not_found() {
         let host = TestHost::new();
         let error = Host::processes(&host).spawn(&ProcessSpec::new("node")).err().unwrap();

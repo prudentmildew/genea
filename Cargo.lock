@@ -1447,6 +1447,7 @@ dependencies = [
  "gix",
  "ropey",
  "serde_json",
+ "tempfile",
  "unicode-width",
 ]
 
