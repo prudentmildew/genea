@@ -19,7 +19,10 @@ use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 
-use crate::view::{FinderItem, FinderItemKind, FinderMode, FinderView};
+use crate::{
+    action::Action,
+    view::{FinderItem, FinderItemKind, FinderMode, FinderView},
+};
 
 /// The most results the finder lists.
 pub(crate) const MAX_RESULTS: usize = 100;
@@ -99,18 +102,67 @@ pub(crate) fn run_match(mode: FinderMode, query: &str, candidates: &Candidates) 
     let mut scorer = Scorer::new(query);
     match mode {
         // An empty query lists the recent files.
-        FinderMode::Files if scorer.is_empty() => recent_files(&mut scorer, candidates),
-        FinderMode::Files => {
-            let mut matched: Vec<(u32, &str)> = candidates
-                .files
-                .iter()
-                .filter_map(|path| scorer.path(path).map(|score| (score, path.as_str())))
-                .collect();
-            // Best first; on a tie, the shorter path, then by path.
-            matched.sort_unstable_by_key(|(score, path)| (Reverse(*score), path.len(), *path));
-            matched.into_iter().take(MAX_RESULTS).map(|(_, path)| file_item(Path::new(path))).collect()
-        }
+        FinderMode::Files | FinderMode::Everywhere if scorer.is_empty() => recent_files(&mut scorer, candidates),
+        FinderMode::Files => best(files(&mut scorer, candidates)),
         FinderMode::RecentFiles => recent_files(&mut scorer, candidates),
+        FinderMode::Actions => best(actions(&mut scorer)),
+        FinderMode::Everywhere => {
+            let mut matched = files(&mut scorer, candidates);
+            matched.extend(actions(&mut scorer));
+            best(matched)
+        }
+    }
+}
+
+/// A match: its score and what matched.
+type Scored<'a> = (u32, Hit<'a>);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Hit<'a> {
+    /// A file: (path length, path), so shorter paths win a tie.
+    File(usize, &'a str),
+    /// An action, by its place in the menus. On a tie, actions go after
+    /// files.
+    Action(usize),
+}
+
+/// The best matches as results, best first.
+fn best<'a>(mut matched: Vec<Scored<'a>>) -> Vec<FinderItem> {
+    let key = |(score, hit): &Scored<'a>| (Reverse(*score), *hit);
+    // Sorting only the best is quicker on a long list.
+    if matched.len() > MAX_RESULTS {
+        matched.select_nth_unstable_by_key(MAX_RESULTS, key);
+        matched.truncate(MAX_RESULTS);
+    }
+    matched.sort_unstable_by_key(key);
+    matched
+        .into_iter()
+        .map(|(_, hit)| match hit {
+            Hit::File(_, path) => file_item(Path::new(path)),
+            Hit::Action(i) => action_item(Action::ALL[i]),
+        })
+        .collect()
+}
+
+/// The files that match.
+fn files<'a>(scorer: &mut Scorer, candidates: &'a Candidates) -> Vec<Scored<'a>> {
+    let matching = candidates.files.iter().filter_map(|path| Some((scorer.path(path)?, Hit::File(path.len(), path))));
+    matching.collect()
+}
+
+/// The actions that match.
+fn actions(scorer: &mut Scorer) -> Vec<Scored<'static>> {
+    let matching = Action::ALL.iter().enumerate().filter_map(|(i, action)| Some((scorer.text(action.name())?, Hit::Action(i))));
+    matching.collect()
+}
+
+/// An action as a result, with its shortcut beside it.
+fn action_item(action: Action) -> FinderItem {
+    FinderItem {
+        label: action.name().to_owned(),
+        detail: String::new(),
+        shortcut: action.shortcut().map(str::to_owned),
+        kind: FinderItemKind::Action(action),
     }
 }
 
@@ -126,13 +178,21 @@ struct Scorer {
     pattern: Pattern,
     /// Prefers matches that start after a `/`.
     paths: Matcher,
+    /// For names.
+    text: Matcher,
     buf: Vec<char>,
 }
 
 impl Scorer {
     fn new(query: &str) -> Self {
         let pattern = Pattern::new(query, CaseMatching::Smart, Normalization::Smart, AtomKind::Fuzzy);
-        Scorer { pattern, paths: Matcher::new(Config::DEFAULT.match_paths()), buf: Vec::new() }
+        let (paths, text) = (Matcher::new(Config::DEFAULT.match_paths()), Matcher::new(Config::DEFAULT));
+        Scorer { pattern, paths, text, buf: Vec::new() }
+    }
+
+    /// A name's score, or `None` if it doesn't match.
+    fn text(&mut self, text: &str) -> Option<u32> {
+        self.pattern.score(Utf32Str::new(text, &mut self.buf), &mut self.text)
     }
 
     /// The query is empty (or only spaces): everything matches.

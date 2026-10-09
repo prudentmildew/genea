@@ -1,0 +1,176 @@
+//! Actions: the commands a user can run by name from Find Action (⌘⇧A)
+//! and Search Everywhere (⇧⇧), each with its shortcut (ticket #33).
+//!
+//! An action is a [`Command`] that needs nothing but the project's state:
+//! the menu items and the editor's shortcuts, not typing or caret moves.
+//! The shortcuts are the labels of the WebStorm macOS keymap that
+//! `genea-view` binds (its menus and `src/keys.rs`); keep them in step.
+//! Menu items that only the app can do (Open…, About Genea) aren't actions
+//! here.
+
+use crate::{
+    command::Command,
+    view::{FinderMode, LeftColumnView},
+};
+
+/// Something the user can run from the finder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Action {
+    Save,
+    CloseTab,
+    OpenConfig,
+    ReloadEnvironment,
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    SelectNextOccurrence,
+    UnselectLastOccurrence,
+    SelectAllOccurrences,
+    CloneCaretAbove,
+    CloneCaretBelow,
+    GoToFile,
+    RecentFiles,
+    FindAction,
+    SearchEverywhere,
+    ShowFiles,
+    ShowProblems,
+    SplitRight,
+    MoveTabToOtherSide,
+    CloseSplit,
+    SelectNextTab,
+    SelectPreviousTab,
+}
+
+impl Action {
+    /// Every action, in the order Find Action lists them with an empty
+    /// query: by menu.
+    pub const ALL: [Action; 26] = [
+        Action::Save,
+        Action::CloseTab,
+        Action::OpenConfig,
+        Action::ReloadEnvironment,
+        Action::Undo,
+        Action::Redo,
+        Action::Cut,
+        Action::Copy,
+        Action::Paste,
+        Action::SelectAll,
+        Action::SelectNextOccurrence,
+        Action::UnselectLastOccurrence,
+        Action::SelectAllOccurrences,
+        Action::CloneCaretAbove,
+        Action::CloneCaretBelow,
+        Action::GoToFile,
+        Action::RecentFiles,
+        Action::FindAction,
+        Action::SearchEverywhere,
+        Action::ShowFiles,
+        Action::ShowProblems,
+        Action::SplitRight,
+        Action::MoveTabToOtherSide,
+        Action::CloseSplit,
+        Action::SelectNextTab,
+        Action::SelectPreviousTab,
+    ];
+
+    /// The action's name, as menus show it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Action::Save => "Save",
+            Action::CloseTab => "Close Tab",
+            Action::OpenConfig => "Open Config",
+            Action::ReloadEnvironment => "Reload Environment",
+            Action::Undo => "Undo",
+            Action::Redo => "Redo",
+            Action::Cut => "Cut",
+            Action::Copy => "Copy",
+            Action::Paste => "Paste",
+            Action::SelectAll => "Select All",
+            Action::SelectNextOccurrence => "Add Selection for Next Occurrence",
+            Action::UnselectLastOccurrence => "Unselect Occurrence",
+            Action::SelectAllOccurrences => "Select All Occurrences",
+            Action::CloneCaretAbove => "Clone Caret Above",
+            Action::CloneCaretBelow => "Clone Caret Below",
+            Action::GoToFile => "Go to File…",
+            Action::RecentFiles => "Recent Files",
+            Action::FindAction => "Find Action…",
+            Action::SearchEverywhere => "Search Everywhere",
+            Action::ShowFiles => "Files",
+            Action::ShowProblems => "Problems",
+            Action::SplitRight => "Split Right",
+            Action::MoveTabToOtherSide => "Move Tab to Other Side",
+            Action::CloseSplit => "Close Split",
+            Action::SelectNextTab => "Select Next Tab",
+            Action::SelectPreviousTab => "Select Previous Tab",
+        }
+    }
+
+    /// The keyboard shortcut, as macOS menus write it (modifiers in the
+    /// order ⌃⌥⇧⌘), if the action has one.
+    pub fn shortcut(self) -> Option<&'static str> {
+        Some(match self {
+            Action::Save => "⌘S",
+            Action::CloseTab => "⌘W",
+            Action::Undo => "⌘Z",
+            Action::Redo => "⇧⌘Z",
+            Action::Cut => "⌘X",
+            Action::Copy => "⌘C",
+            Action::Paste => "⌘V",
+            Action::SelectAll => "⌘A",
+            Action::SelectNextOccurrence => "⌃G",
+            Action::UnselectLastOccurrence => "⌃⇧G",
+            Action::SelectAllOccurrences => "⌃⌘G",
+            // Press ⌥ twice and hold it, then the arrow.
+            Action::CloneCaretAbove => "⌥⌥↑",
+            Action::CloneCaretBelow => "⌥⌥↓",
+            Action::GoToFile => "⇧⌘O",
+            Action::RecentFiles => "⌘E",
+            Action::FindAction => "⇧⌘A",
+            Action::SearchEverywhere => "⇧⇧",
+            Action::ShowFiles => "⌘1",
+            Action::ShowProblems => "⌘6",
+            Action::SelectNextTab => "⇧⌘]",
+            Action::SelectPreviousTab => "⇧⌘[",
+            Action::OpenConfig
+            | Action::ReloadEnvironment
+            | Action::SplitRight
+            | Action::MoveTabToOtherSide
+            | Action::CloseSplit => return None,
+        })
+    }
+
+    /// The command the action runs, for actions that don't depend on
+    /// which tab is active. `None` for the tab actions.
+    pub(crate) fn command(self) -> Option<Command> {
+        Some(match self {
+            Action::Save => Command::Save,
+            Action::OpenConfig => Command::OpenConfig,
+            Action::ReloadEnvironment => Command::ReloadEnvironment,
+            Action::Undo => Command::Undo,
+            Action::Redo => Command::Redo,
+            Action::Cut => Command::Cut,
+            Action::Copy => Command::Copy,
+            Action::Paste => Command::Paste,
+            Action::SelectAll => Command::SelectAll,
+            Action::SelectNextOccurrence => Command::SelectNextOccurrence,
+            Action::UnselectLastOccurrence => Command::UnselectLastOccurrence,
+            Action::SelectAllOccurrences => Command::SelectAllOccurrences,
+            Action::CloneCaretAbove => Command::CloneCaretAbove,
+            Action::CloneCaretBelow => Command::CloneCaretBelow,
+            Action::GoToFile => Command::OpenFinder(FinderMode::Files),
+            Action::RecentFiles => Command::OpenFinder(FinderMode::RecentFiles),
+            Action::FindAction => Command::OpenFinder(FinderMode::Actions),
+            Action::SearchEverywhere => Command::OpenFinder(FinderMode::Everywhere),
+            Action::ShowFiles => Command::ToggleLeftColumn(LeftColumnView::Files),
+            Action::ShowProblems => Command::ToggleLeftColumn(LeftColumnView::Problems),
+            Action::SplitRight => Command::SplitRight,
+            Action::CloseSplit => Command::CloseSplit,
+            Action::CloseTab | Action::MoveTabToOtherSide | Action::SelectNextTab | Action::SelectPreviousTab => {
+                return None;
+            }
+        })
+    }
+}

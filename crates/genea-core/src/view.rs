@@ -10,6 +10,7 @@ use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{
     Highlight,
+    action::Action,
     command::Command,
     config::Config,
     problems::{ProblemSource, Severity, TextPosition},
@@ -80,14 +81,20 @@ pub enum FinderMode {
     /// tab), most recent first. A query narrows them, keeping that order.
     /// With an empty query the file before the current one is selected.
     RecentFiles,
+    /// ⌘⇧A: every action, with its shortcut. Choosing one runs it.
+    Actions,
+    /// ⇧⇧: files and actions together, best match first. With an empty
+    /// query, the recent files.
+    Everywhere,
 }
 
 /// A result in the finder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinderItem {
-    /// A file's name.
+    /// A file's name, or an action's.
     pub label: String,
-    /// A file's folder, relative to the project root (empty at the root).
+    /// A file's folder, relative to the project root (empty at the root,
+    /// and for actions).
     pub detail: String,
     /// The keyboard shortcut of an action that has one, e.g. `⌘S`.
     pub shortcut: Option<String>,
@@ -99,6 +106,8 @@ pub struct FinderItem {
 pub enum FinderItemKind {
     /// Opens the file (relative to the project root).
     File(PathBuf),
+    /// Runs the action's command.
+    Action(Action),
 }
 
 /// A row in the Files view: a file, or a folder the user can expand.

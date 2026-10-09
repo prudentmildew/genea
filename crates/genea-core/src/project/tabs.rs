@@ -111,6 +111,13 @@ impl Project {
         }
     }
 
+    /// The focused pane, its active tab and how many tabs it has; `None`
+    /// without tabs.
+    pub(super) fn active_tab(&self) -> Option<(usize, usize, usize)> {
+        let side = &self.panes.sides[self.panes.focused];
+        (!side.tabs.is_empty()).then_some((self.panes.focused, side.active, side.tabs.len()))
+    }
+
     /// The editor of an open file, focused or not.
     pub(super) fn open_editor(&self, path: &Path) -> Option<&Editor> {
         self.editor.iter().chain(&self.panes.parked).find(|e| e.path() == path)

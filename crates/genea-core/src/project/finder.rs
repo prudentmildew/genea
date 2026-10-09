@@ -8,6 +8,7 @@ use genea_host::Host;
 
 use super::Project;
 use crate::{
+    action::Action,
     command::Command,
     finder::{self, Candidates, Finder},
     jobs::Jobs,
@@ -18,7 +19,7 @@ use crate::{
 const MAX_RECENT_FILES: usize = 50;
 
 impl Project {
-    pub(super) fn finder_command(&mut self, command: Command, jobs: &Jobs, _host: &dyn Host) {
+    pub(super) fn finder_command(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         match command {
             Command::OpenFinder(mode) => {
                 self.finder = Some(Finder::new(mode));
@@ -44,12 +45,33 @@ impl Project {
                 let Some(finder) = self.finder.take() else { return };
                 match finder.selected_item().map(|item| item.kind.clone()) {
                     Some(FinderItemKind::File(path)) => self.open_file(path, None, jobs),
+                    Some(FinderItemKind::Action(action)) => {
+                        if let Some(command) = self.action_command(action) {
+                            self.dispatch(command, jobs, host);
+                        }
+                    }
                     None => {}
                 }
             }
             Command::CloseFinder => self.finder = None,
             _ => {}
         }
+    }
+
+    /// The command an action runs now. Tab actions act on the focused
+    /// pane's active tab, and do nothing without one.
+    fn action_command(&self, action: Action) -> Option<Command> {
+        if let Some(command) = action.command() {
+            return Some(command);
+        }
+        let (pane, tab, count) = self.active_tab()?;
+        Some(match action {
+            Action::CloseTab => Command::CloseTab { pane, tab },
+            Action::MoveTabToOtherSide => Command::MoveTabToOtherSide { pane, tab },
+            Action::SelectNextTab => Command::SelectTab { pane, tab: (tab + 1) % count },
+            Action::SelectPreviousTab => Command::SelectTab { pane, tab: (tab + count - 1) % count },
+            _ => return None,
+        })
     }
 
     /// Matches the finder's query again if the files changed since its

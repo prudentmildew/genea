@@ -20,6 +20,7 @@
 //!   build projects with `genea_testkit::FixtureProject` and drive them with
 //!   commands.
 
+mod action;
 mod command;
 mod config;
 mod editor;
@@ -41,6 +42,7 @@ mod view;
 mod watcher;
 mod workbench;
 
+pub use action::Action;
 pub use command::{CaretMove, Command};
 pub use config::{Config, TerminalPosition, Theme};
 pub use command::CloseChoice;

@@ -2,7 +2,7 @@
 //! (⌘⇧A) and Search Everywhere (⇧⇧), matched off the main thread over the
 //! live file index.
 
-use genea_core::{Command, FinderItem, FinderMode, ProjectId, Workbench};
+use genea_core::{Command, FinderItem, FinderItemKind, FinderMode, ProjectId, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 fn open(fixture: FixtureBuilder) -> (FixtureProject, Workbench, ProjectId) {
@@ -162,6 +162,74 @@ fn the_file_finder_starts_with_the_recent_files() {
 
     assert_eq!(results(&workbench, project), ["a.ts", "c.ts"]);
     assert_eq!(workbench.project(project).unwrap().finder.unwrap().selected, Some(0));
+}
+
+#[test]
+fn find_action_lists_every_action_with_its_shortcut() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new());
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    workbench.settle().unwrap();
+
+    let items = items(&workbench, project);
+    let shortcut = |label: &str| {
+        let item = items.iter().find(|item| item.label == label).unwrap_or_else(|| panic!("{label} is listed"));
+        item.shortcut.clone()
+    };
+    assert_eq!(shortcut("Save"), Some("⌘S".into()));
+    assert_eq!(shortcut("Redo"), Some("⇧⌘Z".into()));
+    assert_eq!(shortcut("Go to File…"), Some("⇧⌘O".into()));
+    assert_eq!(shortcut("Recent Files"), Some("⌘E".into()));
+    assert_eq!(shortcut("Search Everywhere"), Some("⇧⇧".into()));
+    assert_eq!(shortcut("Split Right"), None);
+    assert!(items.iter().all(|item| matches!(item.kind, FinderItemKind::Action(_))));
+}
+
+#[test]
+fn choosing_an_action_runs_its_command() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "let a = 1;\n"));
+    open_files(&mut workbench, project, &["a.ts"]);
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    search(&mut workbench, project, "split right");
+    assert_eq!(items(&workbench, project)[0].label, "Split Right");
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.finder, None);
+    assert_eq!(view.panes.len(), 2);
+}
+
+#[test]
+fn an_action_on_the_current_tab_acts_on_the_focused_one() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "").file("b.ts", "").file("c.ts", ""));
+    open_files(&mut workbench, project, &["a.ts", "b.ts", "c.ts"]);
+    workbench.dispatch(project, Command::SelectTab { pane: 0, tab: 1 });
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    search(&mut workbench, project, "close tab");
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+
+    let tabs: Vec<String> = workbench.project(project).unwrap().panes[0].tabs.iter().map(|t| t.title.clone()).collect();
+    assert_eq!(tabs, ["a.ts", "c.ts"]);
+}
+
+#[test]
+fn choosing_a_finder_action_switches_the_finder_to_it() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", ""));
+    open_files(&mut workbench, project, &["a.ts"]);
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    search(&mut workbench, project, "recent files");
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+
+    let finder = workbench.project(project).unwrap().finder.unwrap();
+    assert_eq!((finder.mode, finder.query.as_str()), (FinderMode::RecentFiles, ""));
+    assert_eq!(results(&workbench, project), ["a.ts"]);
 }
 
 #[test]
