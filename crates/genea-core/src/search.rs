@@ -3,11 +3,12 @@
 //! A search walks the project on a background thread with `ignore` (so
 //! `.gitignore` applies, with or without a git repo), skipping
 //! `node_modules`, `.git` and the config's `exclude`, and matches each file
-//! with ripgrep's searcher. The walk is in name order, so files arrive in
-//! the order the results list shows them. Results stream back to the main
+//! with ripgrep's searcher, several files at a time (opening files one by
+//! one is what costs on a large project). Results stream back to the main
 //! thread: whenever the main thread has taken the last batch, the next one
 //! goes, so the first match shows as soon as its file is searched and the
-//! rest follow at the pace the main thread takes them.
+//! rest follow at the pace the main thread takes them. Each file goes into
+//! the list at its place in the project's tree.
 //!
 //! A new query cancels the search in flight (a flag the walk checks before
 //! every file and after every match) and drops anything it still sends.
@@ -17,14 +18,17 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
 use grep_matcher::{LineTerminator, Matcher};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::{
+    WalkState,
+    gitignore::{Gitignore, GitignoreBuilder},
+};
 
 use crate::{
     command::SearchQuery,
@@ -128,7 +132,7 @@ impl Search {
         let sender = jobs.clone();
         jobs.spawn("search", move || {
             let pending_for_walk = pending.clone();
-            let limited = walk.run(&cancel, |file| {
+            let limited = walk.run(&cancel, &|file| {
                 let mut queue = pending_for_walk.lock().unwrap();
                 queue.files.push(file);
                 if !std::mem::replace(&mut queue.posted, true) {
@@ -158,8 +162,11 @@ impl Search {
             return;
         }
         if !files.is_empty() {
-            self.match_count += files.iter().map(|f| f.matches.len()).sum::<usize>();
-            self.files.extend(files);
+            for file in files {
+                self.match_count += file.matches.len();
+                let at = self.files.partition_point(|f| tree_order(&f.path, &file.path).is_lt());
+                self.files.insert(at, file);
+            }
             self.shown = self.files.as_slice().into();
         }
         if let Some(limited) = done {
@@ -173,6 +180,22 @@ impl Drop for Search {
     /// A closed project's search stops.
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The order of the project's tree (the Files view): folder by folder,
+/// folders before files, names case-insensitively.
+fn tree_order(a: &Path, b: &Path) -> std::cmp::Ordering {
+    let (mut a, mut b) = (a.components().peekable(), b.components().peekable());
+    loop {
+        let (Some(x), Some(y)) = (a.next(), b.next()) else { return a.peek().cmp(&b.peek()) };
+        // A name with more after it is a folder.
+        let (x_file, y_file) = (a.peek().is_none(), b.peek().is_none());
+        let (x, y) = (x.as_os_str().to_string_lossy(), y.as_os_str().to_string_lossy());
+        let order = x_file.cmp(&y_file).then_with(|| x.to_lowercase().cmp(&y.to_lowercase())).then_with(|| x.cmp(&y));
+        if order.is_ne() {
+            return order;
+        }
     }
 }
 
@@ -197,7 +220,7 @@ fn exclude_matcher(root: &Path, patterns: &[String]) -> Gitignore {
     builder.build().unwrap_or_else(|_| Gitignore::empty())
 }
 
-/// One search's walk of the project (background thread).
+/// One search's walk of the project (background threads).
 struct Walk {
     root: PathBuf,
     exclude: Gitignore,
@@ -205,9 +228,10 @@ struct Walk {
 }
 
 impl Walk {
-    /// Searches every file in name order, passing each file with matches to
-    /// `found`. Returns whether it stopped at [`MAX_SEARCH_MATCHES`].
-    fn run(self, cancel: &AtomicBool, mut found: impl FnMut(SearchFile)) -> bool {
+    /// Searches every file, several at a time, passing each file with
+    /// matches to `found`. Returns whether it stopped at
+    /// [`MAX_SEARCH_MATCHES`].
+    fn run(self, cancel: &AtomicBool, found: &(dyn Fn(SearchFile) + Sync)) -> bool {
         let root = self.root.clone();
         let exclude = self.exclude;
         let walk = ignore::WalkBuilder::new(&self.root)
@@ -227,35 +251,35 @@ impl Walk {
                 let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
                 relative.as_os_str().is_empty() || !exclude.matched(relative, is_dir).is_ignore()
             })
-            .sort_by_file_name(|a, b| {
-                let (a, b) = (a.to_string_lossy(), b.to_string_lossy());
-                a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(&b))
+            .build_parallel();
+        let remaining = AtomicUsize::new(MAX_SEARCH_MATCHES);
+        let (root, matcher, remaining) = (&self.root, &self.matcher, &remaining);
+        walk.run(|| {
+            let mut searcher = SearcherBuilder::new()
+                .line_terminator(LineTerminator::crlf())
+                .line_number(true)
+                .binary_detection(BinaryDetection::quit(0))
+                .build();
+            let matcher = matcher.clone();
+            Box::new(move |entry| {
+                if cancel.load(Ordering::Relaxed) || remaining.load(Ordering::Relaxed) == 0 {
+                    return WalkState::Quit;
+                }
+                let Ok(entry) = entry else { return WalkState::Continue };
+                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                    return WalkState::Continue;
+                }
+                let Ok(path) = entry.path().strip_prefix(root) else { return WalkState::Continue };
+                let mut sink = FileSink { matcher: &matcher, cancel, remaining, matches: Vec::new() };
+                // An unreadable file has no results.
+                let _ = searcher.search_path(&matcher, entry.path(), &mut sink);
+                if !sink.matches.is_empty() {
+                    found(SearchFile { path: path.to_owned(), matches: sink.matches });
+                }
+                WalkState::Continue
             })
-            .build();
-        let mut searcher = SearcherBuilder::new()
-            .line_terminator(LineTerminator::crlf())
-            .line_number(true)
-            .binary_detection(BinaryDetection::quit(0))
-            .build();
-        let mut remaining = MAX_SEARCH_MATCHES;
-        for entry in walk {
-            if cancel.load(Ordering::Relaxed) || remaining == 0 {
-                break;
-            }
-            let Ok(entry) = entry else { continue };
-            if !entry.file_type().is_some_and(|t| t.is_file()) {
-                continue;
-            }
-            let Ok(path) = entry.path().strip_prefix(&self.root) else { continue };
-            let mut sink = FileSink { matcher: &self.matcher, cancel, remaining, matches: Vec::new() };
-            // An unreadable file has no results.
-            let _ = searcher.search_path(&self.matcher, entry.path(), &mut sink);
-            if !sink.matches.is_empty() {
-                remaining -= sink.matches.len();
-                found(SearchFile { path: path.to_owned(), matches: sink.matches });
-            }
-        }
-        remaining == 0
+        });
+        remaining.load(Ordering::Relaxed) == 0
     }
 }
 
@@ -263,8 +287,8 @@ impl Walk {
 struct FileSink<'a> {
     matcher: &'a RegexMatcher,
     cancel: &'a AtomicBool,
-    /// Matches left before the limit.
-    remaining: usize,
+    /// Matches left before the limit, shared by every file.
+    remaining: &'a AtomicUsize,
     matches: Vec<SearchMatch>,
 }
 
@@ -277,16 +301,18 @@ impl Sink for FileSink<'_> {
         while let [rest @ .., b'\n' | b'\r'] = line {
             line = rest;
         }
+        let mut more = true;
         self.matcher
             .find_iter(line, |range| {
-                if self.matches.len() == self.remaining {
-                    return false;
+                // Takes one of the matches left, if there is one.
+                more = self.remaining.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1)).is_ok();
+                if more {
+                    self.matches.push(search_match(line, line_index, range.start(), range.end()));
                 }
-                self.matches.push(search_match(line, line_index, range.start(), range.end()));
-                true
+                more
             })
             .map_err(|error| io::Error::other(error.to_string()))?;
-        Ok(self.matches.len() < self.remaining && !self.cancel.load(Ordering::Relaxed))
+        Ok(more && !self.cancel.load(Ordering::Relaxed))
     }
 }
 

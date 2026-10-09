@@ -62,17 +62,35 @@ fn a_literal_search_lists_every_match_grouped_by_file() {
     assert_eq!(
         results(&workbench, project),
         [
-            "README.md",
-            "  1:1 [Total]: none",
             "src/a.ts",
             "  1:7 const [total] = 1;",
             "  2:11 let sum = [total] + total;",
             "  2:19 let sum = total + [total];",
+            "README.md",
+            "  1:1 [Total]: none",
         ]
     );
     let view = workbench.project(project).unwrap().search;
     assert!(!view.searching);
     assert_eq!(view.match_count, 4);
+}
+
+#[test]
+fn files_are_listed_in_the_order_of_the_project_tree() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new()
+            .file("b.ts", "x\n")
+            .file("A.ts", "x\n")
+            .file("src/z.ts", "x\n")
+            .file("src/lib/y.ts", "x\n")
+            .file("Lib/x.ts", "x\n"),
+    );
+
+    search(&mut workbench, project, literal("x"));
+
+    let view = workbench.project(project).unwrap().search;
+    let paths: Vec<String> = view.files.iter().map(|f| f.path.display().to_string()).collect();
+    assert_eq!(paths, ["Lib/x.ts", "src/lib/y.ts", "src/z.ts", "A.ts", "b.ts"]);
 }
 
 #[test]
@@ -160,7 +178,7 @@ fn ignored_excluded_and_node_modules_files_never_appear_in_results() {
 
     assert_eq!(
         results(&workbench, project),
-        [".env", "  1:1 [NEEDLE]=1", "packages/p/src/b.ts", "  1:1 [needle]", "src/a.ts", "  1:1 [needle]"]
+        ["packages/p/src/b.ts", "  1:1 [needle]", "src/a.ts", "  1:1 [needle]", ".env", "  1:1 [NEEDLE]=1"]
     );
 }
 
@@ -250,8 +268,8 @@ fn a_search_stops_at_the_match_limit_and_says_so() {
 
     let view = workbench.project(project).unwrap().search;
     assert_eq!(view.match_count, MAX_SEARCH_MATCHES);
+    assert_eq!(view.files.iter().map(|f| f.matches.len()).sum::<usize>(), MAX_SEARCH_MATCHES);
     assert!(view.limited);
-    assert_eq!(view.files.iter().map(|f| f.path.display().to_string()).collect::<Vec<_>>(), ["a.ts", "b.ts"]);
 
     search(&mut workbench, project, literal("x x"));
     assert!(!workbench.project(project).unwrap().search.limited);
