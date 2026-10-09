@@ -11,6 +11,7 @@ crates/
   genea-core/     framework-free core; the Workbench is its single entry point
   genea-host/     the host boundary: processes, downloads, the clock; RealHost
   genea-testkit/  TestHost (manual clock, scripted processes/downloads) + FixtureProject
+  genea-toolchain/ toolchain pins, version resolution, the shared store (ADR 0005)
   genea-view/     the thin Slint view layer and the `genea` binary
 patches/          the one Slint patch (ADR 0004); see patches/README.md
 scripts/          reapply-slint-patch.sh
@@ -64,14 +65,24 @@ use, and nothing else:
 - **Effects outside the process** go through the host (`core.host`), never
   `std::process`, an HTTP client or `std::time` directly. The filesystem is
   used directly.
+- **Tabs and the split** (`src/project/tabs.rs`): an open file has one
+  `Editor` however many tabs show it; each tab keeps its own `Cursor`
+  (caret, selection, scroll). `Project::editor` is always the *focused*
+  tab's editor, so commands that act on "the open file" keep using it. The
+  other open files are parked; reach any open file by path with
+  `Project::open_editor(_mut)`, e.g. in an Apply whose file may have lost
+  the focus meanwhile. `ProjectView::editor` is the focused file;
+  `ProjectView::panes` lists each side's tabs and editor.
 
 ## The host boundary
 
 `genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
 `clipboard()` (below), and `support_dir()`, Genea's application-support
-folder, where the core keeps its own files (recent projects; session state,
-review baselines, …). The folder is used through the real filesystem; the
-host only says where it is, so tests never touch the user's.
+folder, where the core keeps its own files (recent projects, the toolchain
+store; session state, review baselines, …). The folder is used through the
+real filesystem; the host only says where it is, so tests never touch the
+user's. `Downloads::fetch_with_length` also reports the response's
+`Content-Length`, for progress.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
   idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
@@ -87,11 +98,30 @@ host only says where it is, so tests never touch the user's.
   table (unknown URLs answer 404) and records every request. Each test host
   has its own temp support folder; a second workbench on a clone of the same
   host is a restart.
+  Once started, `TestHost::download_server()` (the **local download fixture
+  server**, a real HTTP server on 127.0.0.1) answers every URL not in the
+  table, over real HTTP. Tests publish files under the real URLs
+  (`server.publish(url, bytes)`), `hold`/`release` a response halfway to
+  look at Genea mid-download, and `TestHost::tools()` publishes fake Node,
+  Bun and pnpm releases (indexes, checksums, archives; `*_with_bad_checksum`
+  for a mismatch).
 
 A new kind of effect (a PTY, say) gets a trait in `genea-host`, an accessor on
 `Host`, a real implementation in `genea-host/src/real.rs` and a scripted one
 in `genea-testkit/src/host.rs`. Keep the traits small and blocking: the core
 calls them from background threads.
+
+## The toolchain
+
+`genea-toolchain` (blocking, no threads) reads and writes the pins in
+`package.json` (`pins`), resolves a `Request` (newest match in the store,
+else newest published), and installs into the `Store` at
+`<support_dir>/toolchains/<tool>/<version>/`; `Installed::bin_dir` is the
+folder to put on PATH (`bin/` for Node and Bun, the unpacked `@pnpm/exe`
+package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it reads the pins
+in a job when a project with a root `package.json` opens, starts one job per
+role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
+whose `NoticeAction` carries the `Command` a click dispatches.
 
 ## Tests
 

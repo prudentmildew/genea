@@ -8,6 +8,19 @@ pub trait Downloads: Send + Sync {
     /// Blocking: call it from a background thread. Checksum verification is
     /// the caller's job, not the host's.
     fn fetch(&self, url: &str, sink: &mut dyn Write) -> Result<u64, DownloadError>;
+
+    /// Like [`fetch`](Self::fetch), and first calls `length` with the body's
+    /// length when the server sends one (`Content-Length`), so the caller can
+    /// show progress as a fraction.
+    fn fetch_with_length(
+        &self,
+        url: &str,
+        sink: &mut dyn Write,
+        length: &mut dyn FnMut(u64),
+    ) -> Result<u64, DownloadError> {
+        let _ = length;
+        self.fetch(url, sink)
+    }
 }
 
 /// Why a download failed.

@@ -32,6 +32,11 @@ pub enum Command {
     /// view rounds a click to the nearest cell boundary first. Cells past the
     /// end of a line or below the last line clamp to the text.
     PlaceCaret { line: usize, column: usize },
+    /// Retries the toolchain downloads that failed (a notice's Retry).
+    RetryToolchain,
+    /// Writes Genea's default versions as exact pins to `package.json` for
+    /// the roles the project doesn't pin (the unpinned notice's action).
+    PinToolchainDefaults,
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },
@@ -95,6 +100,41 @@ pub enum Command {
     /// ⌘S: writes the open file to disk in the background. `settle` (tests)
     /// or the change notification (the app) says when it is written.
     Save,
+
+    // Tabs and the split (ticket #31). Panes are indexed left to right and
+    // tabs left to right within a pane, as `ProjectView::panes` lists them.
+    // `OpenFile` opens a tab in the focused pane, or focuses the file's tab
+    // if it is already open on either side.
+    /// Shows a tab and focuses its pane.
+    SelectTab { pane: usize, tab: usize },
+    /// Focuses a pane (a click in it), keeping its active tab.
+    FocusPane(usize),
+    /// Closes a tab. If it is the file's last tab and the file has unsaved
+    /// edits, nothing closes yet: `ProjectView::close_prompt` asks first.
+    CloseTab { pane: usize, tab: usize },
+    /// Answers the close prompt.
+    ResolveClose(CloseChoice),
+    /// Opens the focused tab's file again in a new right-hand pane and
+    /// focuses it. Only one split exists: with two panes this does nothing.
+    SplitRight,
+    /// Moves a tab to the other pane, splitting if there is only one. A pane
+    /// left without tabs closes.
+    MoveTabToOtherSide { pane: usize, tab: usize },
+    /// Ends the split: the right pane's tabs join the left one.
+    CloseSplit,
+    /// Scrolls a pane that may not have the focus (the trackpad over it).
+    ScrollPane { pane: usize, rows: f64 },
+}
+
+/// What to do with unsaved edits in a closing tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseChoice {
+    /// Write the file, then close the tab once it is written.
+    Save,
+    /// Close the tab and lose the edits.
+    Discard,
+    /// Keep the tab open.
+    Cancel,
 }
 
 /// Caret movements, for moving, selecting and deleting.
