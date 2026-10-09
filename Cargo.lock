@@ -1296,6 +1296,7 @@ dependencies = [
  "genea-host",
  "genea-testkit",
  "ropey",
+ "serde_json",
  "unicode-width",
 ]
 

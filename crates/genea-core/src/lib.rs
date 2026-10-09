@@ -24,10 +24,12 @@ mod command;
 mod editor;
 mod jobs;
 mod project;
+mod update;
 mod view;
 mod workbench;
 
 pub use command::{CaretMove, Command};
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use view::{Caret, EditorView, Notice, ProjectView, StatusBar, VisibleLine};
+pub use update::{RELEASES_URL, UpdateCheck, UpdateNotice};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

@@ -23,6 +23,8 @@ genea-testkit = { path = "crates/genea-testkit" }
 # Core building blocks (spec #19, "Building blocks").
 ropey = "1.6.1"
 unicode-width = "0.2.2"
+# The release-update check reads GitHub's JSON (ticket #64).
+serde_json = "1.0.151"
 
 # Host boundary (genea-host's RealHost). The system TLS stack, so no C crypto
 # library is built.

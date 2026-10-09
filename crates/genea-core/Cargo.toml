@@ -11,6 +11,7 @@ publish.workspace = true
 genea-host.workspace = true
 ropey.workspace = true
 unicode-width.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 genea-testkit.workspace = true

@@ -14,6 +14,7 @@ use crate::{
     command::Command,
     jobs::{self, Inbox, Jobs},
     project::Project,
+    update::{self, UpdateCheck, UpdateNotice},
     view::ProjectView,
 };
 
@@ -48,6 +49,11 @@ pub(crate) struct Core {
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
+    /// A newer Genea release, once the update check has found one.
+    pub(crate) update_notice: Option<UpdateNotice>,
+    /// Lives as long as the core. Host timers hold a weak reference to it,
+    /// so they do nothing once the workbench is gone.
+    alive: Arc<()>,
 }
 
 impl Core {
@@ -59,7 +65,9 @@ impl Core {
 impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
-        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0 }, inbox }
+        let core =
+            Core { host, jobs, projects: BTreeMap::new(), next_id: 0, update_notice: None, alive: Arc::new(()) };
+        Workbench { core, inbox }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -111,6 +119,21 @@ impl Workbench {
     /// project isn't open.
     pub fn project(&self, project: ProjectId) -> Option<ProjectView> {
         self.core.projects.get(&project).map(Project::view)
+    }
+
+    /// Starts the release-update check: at most once a day, the first one a
+    /// little after start, always off the main thread. A newer release shows
+    /// up as [`update_notice`](Self::update_notice), with the change
+    /// notification. Call it once, after the first window is up.
+    pub fn start_update_checks(&mut self, check: UpdateCheck) {
+        let core = &self.core;
+        update::start(core.host.clone(), core.jobs.clone(), Arc::downgrade(&core.alive), check);
+    }
+
+    /// The newer release the update check found, if any. It isn't tied to a
+    /// project: every window shows it.
+    pub fn update_notice(&self) -> Option<UpdateNotice> {
+        self.core.update_notice.clone()
     }
 
     /// Applies finished background work without waiting. Returns whether
