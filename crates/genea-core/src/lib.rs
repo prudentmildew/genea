@@ -33,6 +33,7 @@ mod problems;
 mod project;
 mod reading;
 mod recent;
+mod review;
 mod syntax;
 mod templates;
 mod text;
@@ -59,5 +60,5 @@ pub use view::{
     ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
     ToolchainView, VisibleLine, WelcomeView,
 };
-pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
+pub use view::{ChangeItem, ChangeKind, ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

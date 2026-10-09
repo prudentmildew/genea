@@ -54,6 +54,39 @@ pub struct ProjectView {
     /// a snapshot doesn't copy a large tree, and unchanged trees compare
     /// equal at once.
     pub files: Arc<[FileRow]>,
+    /// The Changes view (ticket #53): files changed on disk outside Genea
+    /// since the review baseline, by path. Shared like `files`.
+    pub changes: Arc<[ChangeItem]>,
+    /// The review banner, e.g. "2 files changed outside Genea", shown while
+    /// `changes` isn't empty.
+    pub review_banner: Option<String>,
+}
+
+/// A file in the Changes view: it differs on disk from its review baseline
+/// because something other than Genea changed it. `Command::KeepChange`
+/// and `Command::RevertChange` settle it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeItem {
+    /// Relative to the project root.
+    pub path: PathBuf,
+    pub kind: ChangeKind,
+    /// Both sides are text and at most 5 MB, so it can be shown as a diff.
+    /// Binary and large files are listed with Keep only.
+    pub diffable: bool,
+    /// Revert is available: the baseline's content is in the store (or the
+    /// file was created, and Revert deletes it).
+    pub can_revert: bool,
+}
+
+/// How a listed file differs from its review baseline. A rename is a
+/// delete plus a create.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeKind {
+    Modified,
+    /// It has no baseline: it was created.
+    Created,
+    /// It has a baseline but is gone from disk.
+    Deleted,
 }
 
 /// A row in the Files view: a file, or a folder the user can expand.
@@ -115,6 +148,8 @@ pub enum LeftColumnView {
     Files,
     /// ⌘6.
     Problems,
+    /// The files changed outside Genea, to review (ticket #53).
+    Changes,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem

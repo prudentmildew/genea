@@ -125,7 +125,7 @@ impl Workbench {
         }
         let id = ProjectId(self.core.next_id);
         self.core.next_id += 1;
-        let project = self.core.projects.entry(id).or_insert(Project::new(id, root));
+        let project = self.core.projects.entry(id).or_insert(Project::new(id, root, &self.core.jobs));
         project.start(&self.core.jobs, self.core.host.as_ref());
         project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
         project.start_environment(self.core.host.clone(), &self.core.jobs);

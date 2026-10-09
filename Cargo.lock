@@ -1521,6 +1521,7 @@ dependencies = [
  "notify",
  "ropey",
  "serde_json",
+ "sha2",
  "streaming-iterator",
  "tempfile",
  "tree-sitter",
