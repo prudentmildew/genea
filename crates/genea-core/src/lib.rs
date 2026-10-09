@@ -36,6 +36,7 @@ mod reading;
 mod recent;
 mod syntax;
 mod templates;
+mod terminal;
 mod text;
 mod toolchain;
 mod update;
@@ -43,7 +44,7 @@ mod view;
 mod watcher;
 mod workbench;
 
-pub use command::{CaretMove, Command};
+pub use command::{CaretMove, Command, Modifiers, MouseAction, MouseButton, TerminalKey};
 pub use config::{Config, TerminalPosition, Theme};
 pub use command::{CloseChoice, ConflictChoice};
 pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
@@ -61,4 +62,7 @@ pub use view::{
     ToolchainPicker, ToolchainPickerKind, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
+pub use view::{
+    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
+};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

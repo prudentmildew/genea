@@ -1,5 +1,6 @@
 // A project window: the native menu bar (muda), the editor area (one pane
-// of tabs, or two side by side after a split) and the status bar. Every property is set from Rust (src/window.rs)
+// of tabs, or two side by side after a split), the terminal pane on the
+// right (ticket #38) and the status bar. Every property is set from Rust (src/window.rs)
 // out of the core's ProjectView; every callback turns input into a command.
 
 import { Theme } from "theme.slint";
@@ -8,6 +9,7 @@ import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ProblemRow } from "problems-view.slint";
+import { TerminalPane, TermRow, TermCursor } from "terminal-pane.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
 
@@ -78,6 +80,20 @@ export component ProjectWindow inherits Window {
     out property <length> viewport-height: left.viewport-height;
     out property <length> text-left: left.text-left;
 
+    // The terminal pane (ticket #38). Its width is the view's own: the
+    // splitter drags it.
+    in property <bool> terminal-visible: true;
+    in property <bool> terminal-focused;
+    in property <string> terminal-title;
+    in property <string> terminal-message;
+    in property <[TermRow]> terminal-rows;
+    in property <TermCursor> terminal-cursor;
+    in property <bool> terminal-mouse-reporting;
+    in-out property <length> terminal-width: 520px;
+    out property <length> terminal-char-width: terminal.char-width;
+    out property <length> terminal-grid-width: terminal.grid-width;
+    out property <length> terminal-grid-height: terminal.grid-height;
+
     // Menu commands.
     callback open-folder();
     callback save();
@@ -117,6 +133,16 @@ export component ProjectWindow inherits Window {
     // Opens the release page of the update notice.
     callback open-update();
 
+    // The terminal pane.
+    callback toggle-terminal();
+    callback terminal-focus();
+    callback terminal-key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
+    callback terminal-committed(text: string);
+    callback terminal-preedit-changed(text: string);
+    callback terminal-mouse(kind: int, button: int, x: length, y: length, shift: bool, alt: bool, ctrl: bool, cmd: bool);
+    callback terminal-scrolled(delta-y: length, x: length, y: length);
+    callback terminal-size-changed();
+
     // Tab strips; `pane` is 0 (left) or 1 (right).
     callback tab-clicked(pane: int, index: int);
     callback tab-closed(pane: int, index: int);
@@ -148,12 +174,20 @@ export component ProjectWindow inherits Window {
     changed viewport-height => {
         root.viewport-changed();
     }
+    changed terminal-grid-width => {
+        root.terminal-size-changed();
+    }
+    changed terminal-grid-height => {
+        root.terminal-size-changed();
+    }
 
     // Re-focuses the focused pane's hidden TextInput: once the native
     // window exists, so the IME is enabled (ADR 0004), and whenever the
     // core moves the focus to the other pane.
     public function refocus() {
-        if root.focused-pane == 1 {
+        if root.terminal-focused {
+            terminal.refocus();
+        } else if root.focused-pane == 1 {
             right.refocus();
         } else {
             left.refocus();
@@ -368,6 +402,14 @@ export component ProjectWindow inherits Window {
                     root.toggle-view(LeftView.problems);
                 }
             }
+
+            MenuItem {
+                title: "Terminal";
+                shortcut: @keys(Alt + F12);
+                activated => {
+                    root.toggle-terminal();
+                }
+            }
         }
 
         Menu {
@@ -561,6 +603,59 @@ export component ProjectWindow inherits Window {
                 }
                 preedit-changed(text) => {
                     root.preedit-changed(text);
+                }
+            }
+
+            // The splitter: drag it to share the width between the editor
+            // and the terminal.
+            if root.terminal-visible: Rectangle {
+                width: 5px;
+
+                Rectangle {
+                    x: 2px;
+                    width: 1px;
+                    background: Theme.chrome-border;
+                }
+
+                splitter := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => {
+                        if self.pressed {
+                            root.terminal-width = clamp(
+                                root.terminal-width - (self.mouse-x - self.pressed-x),
+                                160px,
+                                max(160px, root.width - 320px));
+                        }
+                    }
+                }
+            }
+
+            terminal := TerminalPane {
+                width: root.terminal-visible ? root.terminal-width : 0px;
+                visible: root.terminal-visible;
+                title: root.terminal-title;
+                message: root.terminal-message;
+                focused: root.terminal-focused;
+                rows: root.terminal-rows;
+                cursor: root.terminal-cursor;
+                mouse-reporting: root.terminal-mouse-reporting;
+                focus-requested => {
+                    root.terminal-focus();
+                }
+                key(text, shift, cmd, alt, ctrl) => {
+                    root.terminal-key(text, shift, cmd, alt, ctrl);
+                }
+                committed(text) => {
+                    root.terminal-committed(text);
+                }
+                preedit-changed(text) => {
+                    root.terminal-preedit-changed(text);
+                }
+                mouse(kind, button, x, y, shift, alt, ctrl, cmd) => {
+                    root.terminal-mouse(kind, button, x, y, shift, alt, ctrl, cmd);
+                }
+                scrolled(delta-y, x, y) => {
+                    root.terminal-scrolled(delta-y, x, y);
                 }
             }
         }

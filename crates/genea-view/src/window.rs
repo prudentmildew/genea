@@ -23,7 +23,8 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     FileEntry, LeftView, PickerRow, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts,
-    surface::Surface,
+    keys::Modifiers, links, surface::Surface,
+    terminal::{self, TerminalSurface},
 };
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
@@ -39,6 +40,10 @@ pub struct WindowController {
     tabs: [Vec<TabEntry>; 2],
     /// The pane last given the keyboard focus.
     focused_pane: usize,
+    /// The terminal pane (ticket #38).
+    terminal: TerminalSurface,
+    /// The terminal had the keyboard focus at the last sync.
+    terminal_focused: bool,
     /// The close prompt's sheet is showing.
     prompting: bool,
     /// A window-level message, e.g. why a folder couldn't be opened.
@@ -78,6 +83,7 @@ impl WindowController {
         let window = ProjectWindow::new()?;
         crate::journal::attach(window.window());
         let surfaces = [Surface::new(&window, 0), Surface::new(&window, 1)];
+        let terminal = TerminalSurface::new(&window);
         let problem_rows = Rc::new(VecModel::default());
         window.set_problems(ModelRc::from(problem_rows.clone()));
         let picker_rows = Rc::new(VecModel::default());
@@ -91,6 +97,8 @@ impl WindowController {
             surfaces,
             tabs: Default::default(),
             focused_pane: 0,
+            terminal,
+            terminal_focused: false,
             prompting: false,
             notice: None,
             notice_action: None,
@@ -202,8 +210,44 @@ impl WindowController {
 
     /// A press in a pane without the focus focuses it first.
     fn focus_pane(&mut self, workbench: &mut Workbench, pane: usize) {
-        if pane != self.focused_pane {
+        if pane != self.focused_pane || self.terminal_focused {
             workbench.dispatch(self.project, Command::FocusPane(pane));
+        }
+    }
+
+    /// Whether keys go to the terminal.
+    pub fn terminal_focused(&self) -> bool {
+        self.terminal_focused
+    }
+
+    /// A key press in the terminal.
+    pub fn terminal_key(&mut self, workbench: &mut Workbench, text: &str, modifiers: Modifiers) {
+        if let Some(command) = terminal::command_for(text, modifiers) {
+            self.dispatch(workbench, command);
+        }
+    }
+
+    /// The mouse over the terminal's grid. A ⌘-click opens a link.
+    pub fn terminal_mouse(&mut self, workbench: &mut Workbench, kind: i32, button: i32, x: f32, y: f32, modifiers: Modifiers) {
+        let (line, column) = self.terminal.cell_at(&self.window, x, y);
+        if modifiers.cmd {
+            if kind == 0
+                && let Some(link) = self.terminal.link_at(line, column)
+            {
+                links::open_url(&link);
+            }
+            return;
+        }
+        if let Some(command) = self.terminal.mouse(kind, button, line, column, modifiers) {
+            self.dispatch(workbench, command);
+        }
+    }
+
+    /// The scroll wheel over the terminal's grid.
+    pub fn terminal_scrolled(&mut self, workbench: &mut Workbench, delta_y: f32, x: f32, y: f32) {
+        let (line, column) = self.terminal.cell_at(&self.window, x, y);
+        if let Some(rows) = self.terminal.scroll(delta_y) {
+            self.dispatch(workbench, Command::ScrollTerminal { rows, line, column });
         }
     }
 
@@ -227,6 +271,9 @@ impl WindowController {
         self.surfaces[1].take_viewport_change(window);
         if let Some(rows) = viewport_change {
             workbench.dispatch(self.project, Command::SetViewport { rows });
+        }
+        if let Some((rows, columns)) = self.terminal.take_size_change(window) {
+            workbench.dispatch(self.project, Command::SetTerminalSize { rows, columns });
         }
         let update = workbench.update_notice().map(|notice| notice.message).unwrap_or_default();
         window.set_status_update(update.into());
@@ -359,12 +406,14 @@ impl WindowController {
             }
             self.surfaces[pane].sync(window, editor);
         }
+        self.terminal.sync(window, &view.terminal);
         crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
         if let Some(editor) = editor.filter(|e| !e.lines.is_empty()) {
             crate::journal::mark_shown(&editor.path);
         }
-        if view.focused_pane != self.focused_pane {
+        if view.focused_pane != self.focused_pane || view.terminal.focused != self.terminal_focused {
             self.focused_pane = view.focused_pane;
+            self.terminal_focused = view.terminal.focused;
             window.invoke_refocus();
         }
 

@@ -47,6 +47,8 @@ pub struct ProjectView {
     pub problems: Vec<ProblemItem>,
     /// The view the left column shows, or `None` while it is collapsed.
     pub left_column: Option<LeftColumnView>,
+    /// The terminal pane (ticket #38).
+    pub terminal: TerminalView,
     /// The open toolchain picker ("Set runtime…", "Set package manager…",
     /// "Update toolchain…"), if any.
     pub toolchain_picker: Option<ToolchainPicker>,
@@ -435,4 +437,123 @@ pub struct RecentProject {
     pub root: PathBuf,
     /// The folder's name.
     pub name: String,
+}
+
+/// The terminal pane next to the editor (ticket #38): one shell, drawn on a
+/// grid like the editor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalView {
+    /// The pane is showing; ⌥F12 collapses it.
+    pub visible: bool,
+    /// Keys and text go to the terminal, not the editor.
+    pub focused: bool,
+    pub status: TerminalStatus,
+    /// The title the program set (OSC 0 or 2), else the shell's name.
+    pub title: String,
+    /// The grid's size in cells.
+    pub rows: usize,
+    pub columns: usize,
+    /// The visible rows, top to bottom: always `rows` of them.
+    pub lines: Vec<TerminalLine>,
+    /// Where the terminal's cursor is on the visible rows; `None` while the
+    /// program hides it or it is scrolled out of view.
+    pub cursor: Option<TerminalCursor>,
+    /// Lines in the scrollback, above the screen (at most 10,000).
+    pub history: usize,
+    /// How many lines the view is scrolled back into the scrollback: 0
+    /// shows the screen.
+    pub scrolled_back: usize,
+    /// A full-screen program has switched to the alternate screen, which
+    /// has no scrollback.
+    pub alternate_screen: bool,
+    /// The program takes mouse clicks (mouse reporting is on).
+    pub mouse_reporting: bool,
+    /// The IME composition being typed (a dead key), drawn at the cursor.
+    pub preedit: Option<String>,
+}
+
+/// Whether the terminal's shell runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalStatus {
+    /// Waiting for the project environment, or starting.
+    Starting,
+    Running,
+    /// The shell exited, with its code if it exited normally.
+    Exited { code: Option<i32> },
+    /// The shell couldn't start: why.
+    Failed(String),
+}
+
+/// One visible row of the terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalLine {
+    /// The row's text in grid columns, without trailing blanks. A wide
+    /// character takes two columns.
+    pub text: String,
+    /// The row in stretches of one style, left to right, covering `text`
+    /// and any blank cells after it that have a background colour.
+    pub runs: Vec<TerminalRun>,
+}
+
+/// A stretch of a terminal row in one style.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalRun {
+    /// The grid columns it covers.
+    pub columns: Range<usize>,
+    pub text: String,
+    pub style: TerminalStyle,
+}
+
+/// How terminal text looks. Inverse video is already applied (the colours
+/// are swapped), and hidden text has its background as its foreground.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalStyle {
+    pub foreground: TerminalColor,
+    pub background: TerminalColor,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikeout: bool,
+    /// Faint text.
+    pub dim: bool,
+    /// The target of an OSC 8 hyperlink.
+    pub link: Option<String>,
+}
+
+impl Default for TerminalStyle {
+    fn default() -> Self {
+        TerminalStyle {
+            foreground: TerminalColor::Foreground,
+            background: TerminalColor::Background,
+            bold: false,
+            italic: false,
+            underline: false,
+            strikeout: false,
+            dim: false,
+            link: None,
+        }
+    }
+}
+
+/// A terminal colour. The theme decides the default colours and the 16
+/// ANSI ones; 256-colour indices above 15 and 24-bit colours are exact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalColor {
+    /// The theme's terminal text colour.
+    Foreground,
+    /// The theme's terminal background.
+    Background,
+    /// ANSI colour 0–15: black, red, green, yellow, blue, magenta, cyan,
+    /// white, then their bright versions.
+    Ansi(u8),
+    Rgb(u8, u8, u8),
+}
+
+/// The terminal's cursor cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalCursor {
+    /// 0-based visible row.
+    pub line: usize,
+    /// 0-based grid column.
+    pub column: usize,
 }
