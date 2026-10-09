@@ -102,6 +102,12 @@ export component Finder inherits Rectangle {
                         root.close();
                         return accept;
                     }
+                    // Tab and ⇧Tab stay in the finder: let through, the
+                    // window's focus traversal would move the focus to
+                    // the editor, where they indent (ticket #26).
+                    if event.text == Key.Tab || event.text == Key.Backtab {
+                        return accept;
+                    }
                     reject
                 }
             }
