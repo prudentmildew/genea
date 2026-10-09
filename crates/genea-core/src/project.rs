@@ -23,7 +23,7 @@ use crate::{
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     syntax::ParseJob,
     text::Decoded,
-    toolchain::{Toolchain, ToolchainContext},
+    toolchain::{LOCKFILES, Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
@@ -111,6 +111,11 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         let root_config = self.root.join(CONFIG_FILE);
+        if let Some(toolchain) = &mut self.toolchain
+            && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
+        {
+            toolchain.check_lockfiles(jobs);
+        }
         if changes.rescan {
             self.load_config(jobs);
             self.find_nested_configs(jobs);
@@ -255,6 +260,11 @@ impl Project {
 
     pub(crate) fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Replaces a whole-project source's problems.
+    pub(crate) fn replace_problems(&mut self, source: ProblemSource, problems: Vec<Problem>) {
+        self.problems.replace(source, problems);
     }
 
     /// Shows a message in the project's window.

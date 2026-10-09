@@ -15,7 +15,12 @@
 //! A folder without a root `package.json` has no toolchain and downloads
 //! nothing.
 
-use std::{collections::HashSet, fs, io, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use genea_host::SharedHost;
 use genea_toolchain::{Installed, Pin, Pins, Progress, Request, Store, Tool, Version, pins};
@@ -23,6 +28,7 @@ use genea_toolchain::{Installed, Pin, Pins, Progress, Request, Store, Tool, Vers
 use crate::{
     command::Command,
     jobs::Jobs,
+    problems::{Problem, ProblemSource, Severity, TextPosition},
     templates::{PackageManagerPin, RuntimePin},
     view::{
         Notice, NoticeAction, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
@@ -83,6 +89,38 @@ pub(crate) struct Toolchain {
     /// Bumped by every picker opened, so a slow listing can't fill a newer
     /// picker.
     picker_generation: u64,
+    /// The lockfiles at the project root, checked against `packageManager`.
+    lockfiles: Lockfiles,
+    /// Where `packageManager` is in `package.json`: lockfile warnings point
+    /// there.
+    package_manager_at: TextPosition,
+    /// Bumped by every lockfile check, so a slow one can't undo a newer one.
+    lockfile_generation: u64,
+}
+
+/// The lockfiles Genea cross-checks, at the project root only: pnpm's, and
+/// Bun's text and (older) binary ones.
+pub(crate) const LOCKFILES: [&str; 3] = ["pnpm-lock.yaml", "bun.lock", "bun.lockb"];
+
+/// Which lockfiles are at the project root.
+#[derive(Clone, Copy, Debug, Default)]
+struct Lockfiles {
+    pnpm: bool,
+    /// `bun.lock` or `bun.lockb`.
+    bun: Option<&'static str>,
+}
+
+impl Lockfiles {
+    /// Stats the root for lockfiles (blocking).
+    fn find(root: &Path) -> Self {
+        let exists = |name: &str| root.join(name).is_file();
+        Lockfiles { pnpm: exists(LOCKFILES[0]), bun: LOCKFILES[1..].iter().copied().find(|name| exists(name)) }
+    }
+}
+
+/// Where `packageManager` is in `package.json`'s text, else the start.
+fn package_manager_position(text: &str) -> TextPosition {
+    text.find("\"packageManager\"").map(|offset| TextPosition::of_byte_offset(text, offset)).unwrap_or_default()
 }
 
 /// An open toolchain picker.
@@ -139,6 +177,9 @@ impl Toolchain {
             load_generation: 0,
             picker: None,
             picker_generation: 0,
+            lockfiles: Lockfiles::default(),
+            package_manager_at: TextPosition::default(),
+            lockfile_generation: 0,
         }
     }
 
@@ -146,19 +187,31 @@ impl Toolchain {
     pub(crate) fn load(&mut self, jobs: &Jobs) {
         self.load_generation += 1;
         let generation = self.load_generation;
-        let (id, path) = (self.project, self.root.join("package.json"));
+        self.lockfile_generation += 1;
+        let lockfile_generation = self.lockfile_generation;
+        let (id, root) = (self.project, self.root.clone());
         jobs.spawn("read toolchain pins", move || {
-            let pins = match fs::read_to_string(&path) {
-                Ok(text) => Some(pins::read(&text)),
+            let mut package_manager_at = TextPosition::default();
+            let pins = match fs::read_to_string(root.join("package.json")) {
+                Ok(text) => {
+                    package_manager_at = package_manager_position(&text);
+                    Some(pins::read(&text))
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 Err(error) => Some(Err(error.to_string())),
             };
+            let lockfiles = Lockfiles::find(&root);
             Box::new(move |core| {
                 let jobs = core.jobs.clone();
                 let Some(toolchain) = toolchain_mut(core, id) else { return };
                 if toolchain.load_generation == generation {
+                    toolchain.package_manager_at = package_manager_at;
+                    if toolchain.lockfile_generation == lockfile_generation {
+                        toolchain.lockfiles = lockfiles;
+                    }
                     toolchain.loaded(pins, &jobs);
                 }
+                update_problems(core, id);
             })
         });
     }
@@ -385,15 +438,20 @@ impl Toolchain {
                     Role::Runtime => pins::write(&text, pin, None),
                     Role::PackageManager => pins::write(&text, None, pin),
                 }?;
-                fs::write(&path, text).map_err(|e| e.to_string())
+                fs::write(&path, &text).map_err(|e| e.to_string())?;
+                Ok(package_manager_position(&text))
             });
             Box::new(move |core| {
                 let jobs = core.jobs.clone();
                 let Some(toolchain) = toolchain_mut(core, id) else { return };
                 match written {
-                    Ok(()) => toolchain.pinned(role, tool, version, &jobs),
+                    Ok(package_manager_at) => {
+                        toolchain.package_manager_at = package_manager_at;
+                        toolchain.pinned(role, tool, version, &jobs);
+                    }
                     Err(reason) => toolchain.problems.push(format!("Couldn't write the pin to package.json: {reason}")),
                 }
+                update_problems(core, id);
             })
         });
     }
@@ -480,6 +538,61 @@ impl Toolchain {
             Request::Range { .. } => Version::parse(&slot.version).ok()?,
         };
         Some((*tool, version))
+    }
+
+    /// Looks at the root's lockfiles again in the background (one changed
+    /// on disk).
+    pub(crate) fn check_lockfiles(&mut self, jobs: &Jobs) {
+        self.lockfile_generation += 1;
+        let generation = self.lockfile_generation;
+        let (id, root) = (self.project, self.root.clone());
+        jobs.spawn("check lockfiles", move || {
+            let lockfiles = Lockfiles::find(&root);
+            Box::new(move |core| {
+                let Some(toolchain) = toolchain_mut(core, id) else { return };
+                if toolchain.lockfile_generation == generation {
+                    toolchain.lockfiles = lockfiles;
+                }
+                update_problems(core, id);
+            })
+        });
+    }
+
+    /// The lockfile cross-check: `packageManager` (or Genea's default)
+    /// decides, and a root lockfile of the other package manager is a
+    /// warning on `package.json`. A foreign or invalid pin isn't checked
+    /// here.
+    fn lockfile_problems(&self) -> Vec<Problem> {
+        let Some(slot) = &self.slots[Role::PackageManager.index()] else { return Vec::new() };
+        let Some((tool, _)) = &slot.want else { return Vec::new() };
+        let Lockfiles { pnpm, bun } = self.lockfiles;
+        let (stale, stale_kind) = match tool {
+            Tool::Bun => (pnpm.then_some(LOCKFILES[0]), Tool::Pnpm),
+            _ => (bun, Tool::Bun),
+        };
+        let Some(stale) = stale else { return Vec::new() };
+        let message = match (pnpm && bun.is_some(), slot.defaulted) {
+            (true, defaulted) => {
+                let decides = if defaulted {
+                    "This project doesn't pin its package manager".to_owned()
+                } else {
+                    format!("packageManager pins {tool}")
+                };
+                format!(
+                    "Both {} and {} are at the project root. {decides}, so Genea uses {tool} and {stale} goes stale.",
+                    LOCKFILES[0],
+                    bun.unwrap_or_default(),
+                )
+            }
+            (false, true) => format!(
+                "This project doesn't pin its package manager, so Genea uses {tool}, but {stale} is a {stale_kind} lockfile."
+            ),
+            (false, false) => format!(
+                "packageManager pins {tool}, but {stale} is a {stale_kind} lockfile. Genea uses {tool}, so {stale} goes stale."
+            ),
+        };
+        let at = if slot.defaulted { TextPosition::default() } else { self.package_manager_at };
+        vec![Problem { severity: Severity::Warning, path: "package.json".into(), start: at, end: at, message }]
     }
 
     /// The roles' tools that are in the store, runtime first: the project
@@ -638,6 +751,13 @@ pub(crate) fn remove_unused(core: &mut Core, id: ProjectId) {
             }
         })
     });
+}
+
+/// Puts the toolchain's warnings into the project's Problems.
+fn update_problems(core: &mut Core, id: ProjectId) {
+    let Some(project) = core.project_mut(id) else { return };
+    let problems = project.toolchain.as_ref().map(Toolchain::lockfile_problems).unwrap_or_default();
+    project.replace_problems(ProblemSource::Toolchain, problems);
 }
 
 fn toolchain_mut(core: &mut Core, id: ProjectId) -> Option<&mut Toolchain> {
