@@ -15,8 +15,12 @@ genea-core.workspace = true
 genea-host.workspace = true
 # raw-window-handle-06: to reach a window's NSWindow and bring it to the
 # front (Slint's `show` does nothing for a window that is already shown).
-slint = { workspace = true, features = ["raw-window-handle-06"] }
+# unstable-winit-030 and unstable-wgpu-30: the benchmark journal's winit event
+# filter and rendering notifier (src/journal.rs, the only module using them).
+slint = { workspace = true, features = ["raw-window-handle-06", "unstable-winit-030", "unstable-wgpu-30"] }
 raw-window-handle = "0.6.2"
+# The benchmark journal: mach time and proc_pid_rusage.
+libc = "0.2.190"
 
 # Native Open panels. The same objc2 stack Slint's winit backend already
 # links, so these add features, not crates.
@@ -25,6 +29,7 @@ block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSValue"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std", "block2", "NSApplication", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow",
+    "NSEvent", "NSScreen",
 ] }
 
 [build-dependencies]

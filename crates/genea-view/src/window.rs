@@ -35,6 +35,7 @@ const TRIPLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 impl WindowController {
     pub fn new(key: WindowKey, project: ProjectId) -> Result<Self, slint::PlatformError> {
         let window = ProjectWindow::new()?;
+        crate::journal::attach(window.window());
         let surface = Surface::new(&window);
         Ok(WindowController { key, window, project, surface, notice: None, last_double_click: None })
     }
@@ -130,5 +131,6 @@ impl WindowController {
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
         self.surface.sync(window, editor);
+        crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
     }
 }

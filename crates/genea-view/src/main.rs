@@ -15,12 +15,16 @@
 //! - `blink`: keeps the hidden TextInput from repainting on a timer;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
 //!   system clipboard behind the host's `Clipboard`.
+//! - `journal` and `remote`: the benchmark harness's instrumentation journal
+//!   and control channel, both off unless `GENEA_JOURNAL=1`.
 
 mod app;
 mod blink;
 mod dialogs;
+mod journal;
 mod keys;
 mod pasteboard;
+mod remote;
 mod surface;
 mod welcome;
 mod window;
@@ -33,6 +37,9 @@ fn main() {
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
     let folder = args.next();
     let file = args.next();
+
+    // The benchmark journal (`GENEA_JOURNAL=1`); off, it installs nothing.
+    journal::start();
 
     blink::turn_off_text_input_blink();
 
@@ -49,6 +56,10 @@ fn main() {
     if let Err(error) = app::start(folder, file) {
         eprintln!("genea: {error}");
         std::process::exit(1);
+    }
+    // The harness's commands need the event loop, which exists from here.
+    if journal::on() {
+        remote::listen();
     }
     // Not `run_event_loop`: closing the last project window brings back the
     // welcome instead of quitting. The app quits from the welcome or ⌘Q.
