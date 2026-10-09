@@ -8,9 +8,11 @@
 use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    sync::mpsc,
+    time::Duration,
 };
 
-use genea_core::{ToolState, ToolView, Workbench};
+use genea_core::{Command, ProjectId, ProjectView, ToolState, ToolView, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 fn project(package_json: &str) -> FixtureProject {
@@ -212,6 +214,98 @@ fn a_version_that_isnt_published_fails_only_its_role() {
     assert_eq!(view.notices.len(), 1);
     assert_eq!(view.notices[0].action.as_ref().unwrap().label, "Retry");
     assert_eq!(installed(&host), ["pnpm/12.10.1"]);
+}
+
+// --- In the background ---------------------------------------------------------
+
+/// Pumps on every change notification until `done` holds for the view.
+fn pump_until(
+    workbench: &mut Workbench,
+    notified: &mpsc::Receiver<()>,
+    project: ProjectId,
+    done: impl Fn(&ProjectView) -> bool,
+) -> ProjectView {
+    loop {
+        workbench.pump();
+        let view = workbench.project(project).unwrap();
+        if done(&view) {
+            return view;
+        }
+        notified.recv_timeout(Duration::from_secs(10)).unwrap_or_else(|_| panic!("stuck at {view:#?}"));
+    }
+}
+
+fn node_downloading(view: &ProjectView) -> bool {
+    matches!(view.toolchain.runtime, Some(ToolView { state: ToolState::Downloading { .. }, .. }))
+}
+
+#[test]
+fn downloads_run_in_the_background_with_progress_in_the_status_bar() {
+    let host = TestHost::new();
+    let node = host.tools().node("24.18.0");
+    host.tools().pnpm("12.10.1");
+    host.download_server().hold(&node);
+    let fixture = FixtureProject::new()
+        .file("package.json", pins("node", "24.18.0", "pnpm@12.10.1"))
+        .file("src/main.ts", "let a = 1;\n")
+        .build();
+    let mut workbench = Workbench::new(host.shared());
+    let (notify, notified) = mpsc::channel();
+    workbench.set_notifier(move || {
+        let _ = notify.send(());
+    });
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    pump_until(&mut workbench, &notified, project, node_downloading);
+    host.download_server().wait_held(&node);
+
+    // Node is stuck halfway, and the window keeps working: a file opens,
+    // pnpm finishes, and the status bar shows how far Node has got.
+    workbench.dispatch(project, Command::OpenFile("src/main.ts".into()));
+    let view = pump_until(&mut workbench, &notified, project, |view| {
+        let node_halfway = matches!(
+            view.toolchain.runtime,
+            Some(ToolView { state: ToolState::Downloading { percent: Some(49..=50) }, .. })
+        );
+        view.editor.is_some() && view.toolchain.package_manager == ready("pnpm", "12.10.1") && node_halfway
+    });
+    let Some(ToolView { state: ToolState::Downloading { percent: Some(percent) }, .. }) = view.toolchain.runtime else {
+        unreachable!()
+    };
+    assert_eq!(view.status.toolchain, Some(format!("Downloading Node 24.18.0 {percent}%")));
+    assert_eq!(view.editor.unwrap().lines[0].text, "let a = 1;");
+
+    host.download_server().release(&node);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.runtime, ready("Node", "24.18.0"));
+    assert_eq!(view.status.toolchain, None);
+}
+
+#[test]
+fn closing_a_project_mid_download_drops_its_results() {
+    let host = TestHost::new();
+    let node = host.tools().node("24.18.0");
+    host.tools().pnpm("12.10.1");
+    host.download_server().hold(&node);
+    let fixture = project(&pins("node", "24.18.0", "pnpm@12.10.1"));
+    let mut workbench = Workbench::new(host.shared());
+    let (notify, notified) = mpsc::channel();
+    workbench.set_notifier(move || {
+        let _ = notify.send(());
+    });
+    let project = workbench.open_project(fixture.root()).unwrap();
+    pump_until(&mut workbench, &notified, project, node_downloading);
+    host.download_server().wait_held(&node);
+
+    workbench.close_project(project);
+    host.download_server().release(&node);
+    workbench.settle().unwrap();
+
+    assert_eq!(workbench.project(project), None);
+    // The download itself still completes into the store for next time.
+    assert_eq!(installed(&host), ["node/24.18.0", "pnpm/12.10.1"]);
 }
 
 // --- Range pins --------------------------------------------------------------

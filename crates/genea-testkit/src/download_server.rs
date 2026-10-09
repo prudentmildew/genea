@@ -75,51 +75,52 @@ impl DownloadServer {
     /// Serves `body` for `url` (the URL Genea fetches, e.g.
     /// `https://nodejs.org/dist/index.json`), replacing what was there.
     pub fn publish(&self, url: impl Into<String>, body: impl Into<Vec<u8>>) {
-        self.state.files.lock().unwrap().insert(url.into(), Arc::new(body.into()));
+        lock(&self.state.files).insert(url.into(), Arc::new(body.into()));
     }
 
     /// Stops serving `url`; it answers 404 again.
     pub fn unpublish(&self, url: &str) {
-        self.state.files.lock().unwrap().remove(url);
+        lock(&self.state.files).remove(url);
     }
 
     /// The body published for `url`, if any.
     pub fn published(&self, url: &str) -> Option<Vec<u8>> {
-        self.state.files.lock().unwrap().get(url).map(|b| b.to_vec())
+        lock(&self.state.files).get(url).map(|b| b.to_vec())
     }
 
     /// Makes responses for `url` stop after half their body until
     /// [`release`](Self::release).
     pub fn hold(&self, url: impl Into<String>) {
-        self.state.holds.lock().unwrap().held.insert(url.into());
+        lock(&self.state.holds).held.insert(url.into());
     }
 
     /// Lets held responses for `url` finish, and stops holding new ones.
     pub fn release(&self, url: &str) {
-        self.state.holds.lock().unwrap().held.remove(url);
+        lock(&self.state.holds).held.remove(url);
         self.state.changed.notify_all();
     }
 
     /// Blocks until a response for `url` has sent half its body and is
     /// waiting to be released. Panics after a timeout.
     pub fn wait_held(&self, url: &str) {
-        let holds = self.state.holds.lock().unwrap();
-        let (_holds, timeout) = self
+        let holds = lock(&self.state.holds);
+        let (holds, timeout) = self
             .state
             .changed
             .wait_timeout_while(holds, WAIT_TIMEOUT, |h| h.waiting.get(url).copied().unwrap_or(0) == 0)
-            .unwrap();
+            .unwrap_or_else(|e| e.into_inner());
+        drop(holds);
         assert!(!timeout.timed_out(), "no response for {url} reached its hold");
     }
 
     /// Every URL requested so far, in order, published or not.
     pub fn requests(&self) -> Vec<String> {
-        self.state.requests.lock().unwrap().clone()
+        lock(&self.state.requests).clone()
     }
 
     /// How many times `url` was requested.
     pub fn request_count(&self, url: &str) -> usize {
-        self.state.requests.lock().unwrap().iter().filter(|r| *r == url).count()
+        lock(&self.state.requests).iter().filter(|r| *r == url).count()
     }
 
     /// The loopback URL the server answers `url` at.
@@ -131,7 +132,7 @@ impl DownloadServer {
 impl Drop for DownloadServer {
     fn drop(&mut self) {
         self.state.stopped.store(true, Ordering::SeqCst);
-        self.state.holds.lock().unwrap().held.clear();
+        lock(&self.state.holds).held.clear();
         self.state.changed.notify_all();
         // Wake the accept loop so it sees the flag.
         let _ = TcpStream::connect(self.addr);
@@ -156,8 +157,8 @@ fn serve(state: &State, mut stream: TcpStream) {
     }
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
     let url = original_url(path);
-    state.requests.lock().unwrap().push(url.clone());
-    let body = state.files.lock().unwrap().get(&url).cloned();
+    lock(&state.requests).push(url.clone());
+    let body = lock(&state.files).get(&url).cloned();
     let Some(body) = body else {
         let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         return;
@@ -180,14 +181,20 @@ fn serve(state: &State, mut stream: TcpStream) {
 }
 
 fn wait_while_held(state: &State, url: &str) {
-    let mut holds = state.holds.lock().unwrap();
+    let mut holds = lock(&state.holds);
     if !holds.held.contains(url) {
         return;
     }
     *holds.waiting.entry(url.to_owned()).or_default() += 1;
     state.changed.notify_all();
-    let mut holds = state.changed.wait_while(holds, |h| h.held.contains(url)).unwrap();
+    let mut holds = state.changed.wait_while(holds, |h| h.held.contains(url)).unwrap_or_else(|e| e.into_inner());
     *holds.waiting.get_mut(url).unwrap() -= 1;
+}
+
+/// Locks, ignoring poisoning: a failed assertion in one test thread must not
+/// turn the server's cleanup into a second panic.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// `/https/nodejs.org/dist/index.json` → `https://nodejs.org/dist/index.json`.
