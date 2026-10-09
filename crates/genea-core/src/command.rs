@@ -156,6 +156,15 @@ pub enum Command {
     /// the background: `settle` (tests) or the change notification (the
     /// app) says when they are in.
     SetFinderQuery(String),
+    /// ↑ and ↓ in the finder: moves the selection by a number of results
+    /// (negative is up), wrapping around at either end.
+    MoveFinderSelection(isize),
+    /// Selects a result by its index (the pointer over it).
+    SelectFinderItem(usize),
+    /// Return, or a click: closes the finder and opens the selected file.
+    AcceptFinder,
+    /// Esc: closes the finder.
+    CloseFinder,
 }
 
 /// What to do with unsaved edits in a closing tab.

@@ -51,3 +51,55 @@ fn the_file_finder_lists_the_files_matching_the_query_without_node_modules() {
     assert_eq!(results(&workbench, project), ["button.ts  src", "IconButton.tsx  src/components"]);
     assert_eq!(finder.selected, Some(0));
 }
+
+#[test]
+fn choosing_a_file_opens_it_and_closes_the_finder() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("src/a.ts", "let a = 1;\n").file("src/b.ts", "let b = 2;\n"));
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Files));
+    search(&mut workbench, project, "ts");
+    assert_eq!(results(&workbench, project), ["a.ts  src", "b.ts  src"]);
+
+    workbench.dispatch(project, Command::MoveFinderSelection(1));
+    assert_eq!(workbench.project(project).unwrap().finder.unwrap().selected, Some(1));
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.finder, None);
+    assert_eq!(view.editor.unwrap().lines[0].text, "let b = 2;");
+}
+
+#[test]
+fn the_selection_wraps_around_and_a_click_picks_a_result() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "").file("b.ts", "").file("c.ts", ""));
+    let selected = |workbench: &Workbench| workbench.project(project).unwrap().finder.unwrap().selected;
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Files));
+    search(&mut workbench, project, "ts");
+    workbench.dispatch(project, Command::MoveFinderSelection(-1));
+    assert_eq!(selected(&workbench), Some(2));
+    workbench.dispatch(project, Command::MoveFinderSelection(1));
+    assert_eq!(selected(&workbench), Some(0));
+
+    workbench.dispatch(project, Command::SelectFinderItem(1));
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+    assert_eq!(workbench.project(project).unwrap().editor.unwrap().title, "b.ts");
+}
+
+#[test]
+fn escape_closes_the_finder_without_opening_anything() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", ""));
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Files));
+    search(&mut workbench, project, "a");
+    workbench.dispatch(project, Command::CloseFinder);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.finder, None);
+    assert_eq!(view.editor, None);
+}

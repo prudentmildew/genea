@@ -2,15 +2,18 @@
 //! starting match jobs, and choosing a result. Matching itself is in
 //! `crate::finder`.
 
+use genea_host::Host;
+
 use super::Project;
 use crate::{
     command::Command,
     finder::{self, Candidates, Finder},
     jobs::Jobs,
+    view::FinderItemKind,
 };
 
 impl Project {
-    pub(super) fn finder_command(&mut self, command: Command, jobs: &Jobs) {
+    pub(super) fn finder_command(&mut self, command: Command, jobs: &Jobs, _host: &dyn Host) {
         match command {
             Command::OpenFinder(mode) => {
                 self.finder = Some(Finder::new(mode));
@@ -22,6 +25,24 @@ impl Project {
                     self.match_finder(jobs);
                 }
             }
+            Command::MoveFinderSelection(by) => {
+                if let Some(finder) = &mut self.finder {
+                    finder.move_selection(by);
+                }
+            }
+            Command::SelectFinderItem(index) => {
+                if let Some(finder) = &mut self.finder {
+                    finder.select(index);
+                }
+            }
+            Command::AcceptFinder => {
+                let Some(finder) = self.finder.take() else { return };
+                match finder.selected_item().map(|item| item.kind.clone()) {
+                    Some(FinderItemKind::File(path)) => self.open_file(path, None, jobs),
+                    None => {}
+                }
+            }
+            Command::CloseFinder => self.finder = None,
             _ => {}
         }
     }

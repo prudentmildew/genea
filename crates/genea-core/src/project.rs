@@ -294,7 +294,12 @@ impl Project {
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
-            Command::OpenFinder(_) | Command::SetFinderQuery(_) => self.finder_command(command, jobs),
+            Command::OpenFinder(_)
+            | Command::SetFinderQuery(_)
+            | Command::MoveFinderSelection(_)
+            | Command::SelectFinderItem(_)
+            | Command::AcceptFinder
+            | Command::CloseFinder => self.finder_command(command, jobs, host),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {

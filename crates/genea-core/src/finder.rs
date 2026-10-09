@@ -56,6 +56,26 @@ impl Finder {
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
     }
 
+    /// Moves the selection by `by` results, wrapping around.
+    pub(crate) fn move_selection(&mut self, by: isize) {
+        if let Ok(len) = isize::try_from(self.items.len())
+            && len > 0
+        {
+            self.selected = (self.selected as isize + by).rem_euclid(len) as usize;
+        }
+    }
+
+    pub(crate) fn select(&mut self, index: usize) {
+        if index < self.items.len() {
+            self.selected = index;
+        }
+    }
+
+    /// The result Return would choose.
+    pub(crate) fn selected_item(&self) -> Option<&FinderItem> {
+        self.items.get(self.selected)
+    }
+
     pub(crate) fn view(&self) -> FinderView {
         FinderView {
             mode: self.mode,
