@@ -12,8 +12,9 @@ crates/
   genea-host/     the host boundary: processes, downloads, the clock; RealHost
   genea-testkit/  TestHost (manual clock, scripted processes/downloads) + FixtureProject
   genea-view/     the thin Slint view layer and the `genea` binary
+  genea-bench/    the benchmark harness and the start-floor binary (bench/README.md)
 patches/          the one Slint patch (ADR 0004); see patches/README.md
-scripts/          reapply-slint-patch.sh
+scripts/          reapply-slint-patch.sh, bench.sh
 ```
 
 Dependencies point one way: `genea-view → genea-core → genea-host`.
@@ -147,6 +148,11 @@ Rules: push to Slint only on change. Use no repeating timers (the caret is
 steady). Install no rendering notifier or run-loop observer unless the
 benchmark journal is on. Idle must be 0 % CPU.
 
+- `src/journal.rs` and `src/remote.rs`: the benchmark harness's
+  instrumentation journal and control channel, off unless `GENEA_JOURNAL=1`.
+  `journal.rs` is the only module that uses Slint's `unstable-*` APIs
+  (`unstable-winit-030`, `unstable-wgpu-30`).
+
 The editor font is Menlo 13 pt with a line height of 1.2 (`Theme` in
 `ui/theme.slint` and `LINE_HEIGHT` in `src/surface.rs`; keep them in step).
 
@@ -156,6 +162,7 @@ The editor font is Menlo 13 pt with a line height of 1.2 (`Theme` in
 cargo build                  # first build downloads prebuilt Skia
 cargo test                   # core API tests + host adapter smoke tests
 cargo run --bin genea -- [FOLDER [FILE]]
+scripts/bench.sh             # the benchmark harness (bench/README.md)
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`.

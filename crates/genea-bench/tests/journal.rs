@@ -57,6 +57,7 @@ fn a_stall_is_a_main_thread_busy_span_from_waking_to_waiting() {
 
     let stalls = j.stalls(all());
     assert_eq!(stalls.max_ms, 20.5);
+    assert_eq!(stalls.longest, Some((ns(50.0), ns(70.5))), "where the longest one was");
     assert_eq!(stalls.over_16ms, 2);
     assert_eq!(stalls.top_ms, vec![20.5, 17.0, 4.0]);
 
@@ -159,19 +160,27 @@ fn wakeups_count_the_times_the_main_thread_woke() {
 }
 
 #[test]
+fn window_events_in_a_window_tell_whether_something_from_outside_disturbed_it() {
+    // The pointer crossing the window while Genea should be idle.
+    let j = Journal { events: vec![ns(100.0), ns(2500.0)], ..Journal::default() };
+    assert_eq!(j.events_in(Window { from: ns(1000.0), to: ns(3000.0) }), 1);
+    assert_eq!(j.events_in(Window { from: ns(3000.0), to: ns(4000.0) }), 0);
+}
+
+#[test]
 fn a_journal_reads_from_genea_s_dump() {
     let dump = serde_json::json!({
         "process_start": 5_000_000,
         "started": 6_000_000,
         "activities": [[10_000_000, AFTER_WAITING], [11_000_000, BEFORE_WAITING]],
-        "keys": [7], "before": [8], "after": [9], "synced": [10],
+        "keys": [7], "before": [8], "after": [9], "synced": [10], "events": [11],
         "content": 12, "visible": null,
     });
     let j = Journal::from_json(&dump).unwrap();
     assert_eq!(j.process_start, 5_000_000);
     assert_eq!(j.started, 6_000_000);
     assert_eq!(j.activities, vec![(10_000_000, AFTER_WAITING), (11_000_000, BEFORE_WAITING)]);
-    assert_eq!((j.keys[0], j.before[0], j.after[0], j.synced[0]), (7, 8, 9, 10));
+    assert_eq!((j.keys[0], j.before[0], j.after[0], j.synced[0], j.events[0]), (7, 8, 9, 10, 11));
     assert_eq!((j.content, j.visible), (Some(12), None));
     assert!(Journal::from_json(&serde_json::json!({ "keys": "nope" })).is_err());
 }

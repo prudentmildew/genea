@@ -10,10 +10,12 @@ publish.workspace = true
 name = "genea-bench"
 path = "src/main.rs"
 
-# The start floor (GLOSSARY.md): a bare winit window with nothing drawn.
+# The start floor (GLOSSARY.md): a bare winit window with nothing drawn. Not
+# under src/bin/, where a common global gitignore rule (`bin/`) hides it from
+# git.
 [[bin]]
 name = "genea-floor"
-path = "src/bin/floor.rs"
+path = "src/floor.rs"
 
 [dependencies]
 serde_json.workspace = true

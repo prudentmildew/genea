@@ -12,6 +12,8 @@
 //!   wake-ups;
 //! - Slint's BeforeRendering and AfterRendering, for frames;
 //! - key presses and IME commits as winit delivers them (keystroke receipt);
+//! - every other winit window event (pointer, focus, occlusion, …), which
+//!   tells the harness when something outside disturbed an idle window;
 //! - each sync of view state into Slint, and the first one with file content;
 //! - when AppKit first reports a window visible.
 //!
@@ -19,7 +21,8 @@
 //! harness shares, and the harness does all the analysis. The journal is
 //! never written on a timer (that would be an idle wake-up of its own): the
 //! harness asks for it over the control channel (`src/remote.rs`), which
-//! `main` opens while the journal is on.
+//! `main` opens while the journal is on. `GENEA_JOURNAL_TRACE=1` also prints
+//! winit's window events to stderr, for debugging.
 //!
 //! This is the one module that uses Slint's `unstable-*` APIs
 //! (`unstable-winit-030` for the event filter, `unstable-wgpu-30` for the
@@ -71,6 +74,7 @@ struct Log {
     before: Vec<u64>,
     after: Vec<u64>,
     synced: Vec<u64>,
+    events: Vec<u64>,
     content: Option<u64>,
     visible: Option<u64>,
     /// Called once the first frame with content is presented and a window
@@ -142,6 +146,9 @@ pub fn attach(window: &slint::Window) {
         if trace && !matches!(event, WindowEvent::RedrawRequested | WindowEvent::CursorMoved { .. }) {
             eprintln!("genea: winit: {event:?}");
         }
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            record(|log, t| log.events.push(t));
+        }
         match event {
             WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => record(|log, t| log.keys.push(t)),
             WindowEvent::Ime(Ime::Commit(_)) => record(|log, t| log.keys.push(t)),
@@ -199,7 +206,7 @@ pub fn dump() -> String {
         }
         activities.push(']');
         format!(
-            r#"{{"process_start":{},"started":{},"activities":{},"keys":{},"before":{},"after":{},"synced":{},"content":{},"visible":{}}}"#,
+            r#"{{"process_start":{},"started":{},"activities":{},"keys":{},"before":{},"after":{},"synced":{},"events":{},"content":{},"visible":{}}}"#,
             ns(process_start()),
             ns(log.started),
             activities,
@@ -207,6 +214,7 @@ pub fn dump() -> String {
             list(&log.before),
             list(&log.after),
             list(&log.synced),
+            list(&log.events),
             option(log.content),
             option(log.visible),
         )

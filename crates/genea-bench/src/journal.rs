@@ -17,6 +17,8 @@
 //!   in (when the present has returned).
 //! - **Keys**: key presses and IME commits as winit delivers them.
 //! - **Synced**: when Genea finished pushing view state into Slint.
+//! - **Events**: every winit window event but redraws (pointer, focus,
+//!   occlusion, …), to tell an idle window disturbed from outside.
 //! - **Milestones**: the first sync with file content in it, and AppKit
 //!   first reporting the window visible.
 
@@ -56,6 +58,9 @@ pub struct Journal {
     pub before: Vec<u64>,
     pub after: Vec<u64>,
     pub synced: Vec<u64>,
+    /// Every winit window event but redraws: input, focus, occlusion,
+    /// resizes. While idle, one means something outside disturbed Genea.
+    pub events: Vec<u64>,
     /// The first sync that put file content on the surface.
     pub content: Option<u64>,
     /// AppKit first reported a window visible.
@@ -84,6 +89,20 @@ pub struct Stalls {
     pub over_16ms: usize,
     /// The five longest, longest first.
     pub top_ms: Vec<f64>,
+    /// Where the longest was (start, end), to find what caused it.
+    pub longest: Option<(u64, u64)>,
+}
+
+impl Stalls {
+    /// For the results; the longest stall's start in ms after `origin`.
+    pub fn to_json(&self, origin: u64) -> Value {
+        serde_json::json!({
+            "max_ms": crate::stats::round(self.max_ms),
+            "over_16ms": self.over_16ms,
+            "top_ms": self.top_ms.iter().map(|&d| crate::stats::round(d)).collect::<Vec<_>>(),
+            "longest_at_ms": self.longest.map(|(s, _)| crate::stats::round(ms(s.saturating_sub(origin)))),
+        })
+    }
 }
 
 /// One keystroke and the frame that showed it.
@@ -168,6 +187,7 @@ impl Journal {
             before: times("before")?,
             after: times("after")?,
             synced: times("synced")?,
+            events: times("events")?,
             content: time("content"),
             visible: time("visible"),
         })
@@ -209,17 +229,15 @@ impl Journal {
     /// The longest busy spans that overlap `window`. Stricter than timing
     /// single events: one span can hold several.
     pub fn stalls(&self, window: Window) -> Stalls {
-        let mut spans: Vec<f64> = self
-            .busy_spans()
-            .into_iter()
-            .filter(|&(s, e)| e >= window.from && s <= window.to)
-            .map(|(s, e)| ms(e - s))
-            .collect();
-        spans.sort_by(|a, b| b.total_cmp(a));
+        let mut spans: Vec<(u64, u64)> =
+            self.busy_spans().into_iter().filter(|&(s, e)| e >= window.from && s <= window.to).collect();
+        spans.sort_by_key(|&(s, e)| std::cmp::Reverse(e - s));
+        let durations: Vec<f64> = spans.iter().map(|&(s, e)| ms(e - s)).collect();
         Stalls {
-            max_ms: spans.first().copied().unwrap_or(0.0),
-            over_16ms: spans.iter().filter(|&&d| d > STALL_LIMIT_MS).count(),
-            top_ms: spans.into_iter().take(5).collect(),
+            max_ms: durations.first().copied().unwrap_or(0.0),
+            over_16ms: durations.iter().filter(|&&d| d > STALL_LIMIT_MS).count(),
+            top_ms: durations.into_iter().take(5).collect(),
+            longest: spans.first().copied(),
         }
     }
 
@@ -269,6 +287,11 @@ impl Journal {
         let content = self.content?;
         let frame = self.frames().into_iter().find(|f| f.before >= content)?;
         Some(frame.end.max(self.visible?))
+    }
+
+    /// How many window events arrived in `window`.
+    pub fn events_in(&self, window: Window) -> usize {
+        self.events.iter().filter(|&&t| window.contains(t)).count()
     }
 
     /// How often the main thread woke up in `window`.
