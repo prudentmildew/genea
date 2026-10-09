@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{Command, LeftColumnView, ProjectId, Workbench};
+use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, Workbench};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
@@ -223,6 +223,21 @@ impl App {
         }
     }
 
+    /// The close prompt in window `key` was answered.
+    pub fn resolve_close(&mut self, key: WindowKey, choice: CloseChoice) {
+        let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
+        controller.resolve_close(&mut self.workbench, choice);
+    }
+
+    /// A command for the focused pane's active tab (menu items), from the
+    /// pane and tab index.
+    fn dispatch_for_active_tab(&mut self, key: WindowKey, command: impl FnOnce(usize, usize, usize) -> Command) {
+        let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
+        let Some((pane, view)) = controller.focused_pane(&self.workbench) else { return };
+        let Some(active) = view.active else { return };
+        controller.dispatch(&mut self.workbench, command(pane, active, view.tabs.len()));
+    }
+
     /// Opens the update notice's release page in the browser.
     fn open_update(&mut self) {
         if let Some(notice) = self.workbench.update_notice() {
@@ -261,26 +276,52 @@ fn wire(controller: &WindowController) {
     });
     window.on_open_update(|| with_app(App::open_update));
 
-    window.on_scrolled(move |delta_y| {
+    // Panes and tabs arrive as Slint ints; they are never negative.
+    let index = |i: i32| usize::try_from(i).unwrap_or(0);
+    window.on_scrolled(move |pane, delta_y| {
         let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;
-        with_app(move |app| app.dispatch(key, Command::ScrollBy { rows }));
+        with_app(move |app| app.dispatch(key, Command::ScrollPane { pane: index(pane), rows }));
     });
-    window.on_pressed(move |x, y, shift| {
+    window.on_pressed(move |pane, x, y, shift| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.press(&mut app.workbench, x, y, shift);
+            controller.press(&mut app.workbench, index(pane), x, y, shift);
         });
     });
-    window.on_dragged(move |x, y| {
+    window.on_dragged(move |pane, x, y| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.drag(&mut app.workbench, x, y);
+            controller.drag(&mut app.workbench, index(pane), x, y);
         });
     });
-    window.on_double_clicked(move |x, y| {
+    window.on_double_clicked(move |pane, x, y| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.double_click(&mut app.workbench, x, y);
+            controller.double_click(&mut app.workbench, index(pane), x, y);
+        });
+    });
+    // Tabs and the split (ticket #31).
+    window.on_tab_clicked(move |pane, tab| {
+        with_app(move |app| app.dispatch(key, Command::SelectTab { pane: index(pane), tab: index(tab) }));
+    });
+    window.on_tab_closed(move |pane, tab| {
+        with_app(move |app| app.dispatch(key, Command::CloseTab { pane: index(pane), tab: index(tab) }));
+    });
+    window.on_tab_moved(move |pane, tab| {
+        with_app(move |app| app.dispatch(key, Command::MoveTabToOtherSide { pane: index(pane), tab: index(tab) }));
+    });
+    window.on_close_tab(move || {
+        with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::CloseTab { pane, tab }));
+    });
+    window.on_move_tab(move || {
+        with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::MoveTabToOtherSide { pane, tab }));
+    });
+    window.on_next_tab(move |forward| {
+        with_app(move |app| {
+            app.dispatch_for_active_tab(key, |pane, tab, count| {
+                let tab = if forward { (tab + 1) % count } else { (tab + count - 1) % count };
+                Command::SelectTab { pane, tab }
+            })
         });
     });
     // Edits apply synchronously, in order: with_app only defers a key if
@@ -331,6 +372,8 @@ fn wire(controller: &WindowController) {
             controller.open_problem(&mut app.workbench, index);
         });
     });
+    window.on_split_right(menu(Command::SplitRight));
+    window.on_close_split(menu(Command::CloseSplit));
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));

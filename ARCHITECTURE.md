@@ -86,6 +86,14 @@ use, and nothing else:
   feature reads its key from the project's config; it applies live, so read
   it when needed rather than copying it at open. A new key goes in
   `Config`, its `Default`, and the `match` in `config::parse`.
+- **Tabs and the split** (`src/project/tabs.rs`): an open file has one
+  `Editor` however many tabs show it; each tab keeps its own `Cursor`
+  (caret, selection, scroll). `Project::editor` is always the *focused*
+  tab's editor, so commands that act on "the open file" keep using it. The
+  other open files are parked; reach any open file by path with
+  `Project::open_editor(_mut)`, e.g. in an Apply whose file may have lost
+  the focus meanwhile. `ProjectView::editor` is the focused file;
+  `ProjectView::panes` lists each side's tabs and editor.
 
 ## The host boundary
 

@@ -1,5 +1,7 @@
 //! One open project: its folder and what its window shows.
 
+mod tabs;
+
 use std::{
     collections::BTreeSet,
     ffi::OsStr,
@@ -23,6 +25,7 @@ use crate::{
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use tabs::Panes;
 
 /// Rows assumed until the view reports its viewport.
 const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
@@ -30,7 +33,11 @@ const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
 pub(crate) struct Project {
     id: ProjectId,
     root: PathBuf,
+    /// The focused tab's file (ticket #31: the other open files wait in
+    /// `panes`, and come back here when their tab is focused).
     editor: Option<Editor>,
+    /// Tabs, the split, and the open files that aren't focused.
+    panes: Panes,
     viewport_rows: f64,
     notices: Vec<Notice>,
     /// Bumped by every OpenFile, so a slow read can't replace a newer one.
@@ -59,6 +66,7 @@ impl Project {
             id,
             root,
             editor: None,
+            panes: Panes::default(),
             viewport_rows: DEFAULT_VIEWPORT_ROWS,
             notices: Vec::new(),
             open_generation: 0,
@@ -231,11 +239,19 @@ impl Project {
         let now = host.clock().now();
         match command {
             Command::OpenFile(path) => self.open_file(path, None, jobs),
-            Command::OpenFileAt { path, at } => self.open_file_at(path, Some(at), jobs),
+            Command::OpenFileAt { path, at } => self.open_file(path, Some(at), jobs),
             Command::OpenConfig => self.open_config(jobs),
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
+            Command::SelectTab { .. }
+            | Command::FocusPane(_)
+            | Command::CloseTab { .. }
+            | Command::ResolveClose(_)
+            | Command::SplitRight
+            | Command::MoveTabToOtherSide { .. }
+            | Command::CloseSplit
+            | Command::ScrollPane { .. } => self.tab_command(command, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -342,8 +358,13 @@ impl Project {
                     editor.redo(self.viewport_rows);
                 }
             }
-            Command::Save => self.save(jobs),
+            Command::Save => {
+                if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
+                    self.save(path, jobs);
+                }
+            }
         }
+        self.refresh_views();
     }
 
     pub(crate) fn view(&self) -> ProjectView {
@@ -352,6 +373,15 @@ impl Project {
             view.problems = self.inline_problems(e, &view.lines);
             view
         });
+        let mut tabs = self.tabs_view(editor.as_ref());
+        // The other side's editor shows its problems too.
+        for pane in &mut tabs.panes {
+            if let Some(view) = &mut pane.editor
+                && let Some(e) = self.open_editor(&view.path)
+            {
+                view.problems = self.inline_problems(e, &view.lines);
+            }
+        }
         let (errors, warnings) = self.problems.counts();
         let status = StatusBar {
             caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
@@ -369,6 +399,10 @@ impl Project {
             status,
             notices,
             toolchain: self.toolchain.as_ref().map(Toolchain::view).unwrap_or_default(),
+            panes: tabs.panes,
+            focused_pane: tabs.focused_pane,
+            can_split: tabs.can_split,
+            close_prompt: tabs.close_prompt,
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
@@ -415,10 +449,10 @@ impl Project {
         }
     }
 
-    /// Writes the open file in the background, as it is now. Edits made
+    /// Writes an open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
-    fn save(&mut self, jobs: &Jobs) {
-        let Some(editor) = &self.editor else { return };
+    fn save(&mut self, path: PathBuf, jobs: &Jobs) {
+        let Some(editor) = self.open_editor(&path) else { return };
         let snapshot = editor.snapshot();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
@@ -433,37 +467,25 @@ impl Project {
                 let Some(project) = core.project_mut(id) else { return };
                 match written {
                     Ok(()) => {
-                        if let Some(editor) = &mut project.editor {
+                        if let Some(editor) = project.open_editor_mut(&snapshot.path) {
                             editor.saved(&snapshot);
                         }
                         // The config applies on save, without waiting for the watcher.
                         if snapshot.path == Path::new(CONFIG_FILE) {
                             project.load_config(&jobs);
                         }
+                        project.saved(&snapshot.path);
                     }
-                    Err(error) => project.notices.push(Notice {
-                        message: format!("Couldn't save {}: {error}", snapshot.path.display()),
-                        action: None,
-                    }),
+                    Err(error) => {
+                        project.save_failed(&snapshot.path);
+                        project.notices.push(Notice {
+                            message: format!("Couldn't save {}: {error}", snapshot.path.display()),
+                            action: None,
+                        })
+                    }
                 }
             })
         });
-    }
-
-    /// Shows a file with the caret at `at`. A file that is already open
-    /// keeps its buffer, unsaved edits included; another is read from disk.
-    fn open_file_at(&mut self, path: PathBuf, at: Option<TextPosition>, jobs: &Jobs) {
-        let relative = path.strip_prefix(&self.root).unwrap_or(&path);
-        if let Some(editor) = &mut self.editor
-            && editor.path() == relative
-        {
-            if let Some(at) = at {
-                let column = editor.display_column(at.line, at.column);
-                editor.place_caret(at.line, column, false, self.viewport_rows);
-            }
-            return;
-        }
-        self.open_file(path, at, jobs);
     }
 
     /// "Open config": opens the root `genea.jsonc`, creating it as `{}`
@@ -481,7 +503,7 @@ impl Project {
                 let jobs = core.jobs.clone();
                 let Some(project) = core.project_mut(id) else { return };
                 match created {
-                    Ok(()) => project.open_file_at(CONFIG_FILE.into(), None, &jobs),
+                    Ok(()) => project.open_file(CONFIG_FILE.into(), None, &jobs),
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't create {CONFIG_FILE}: {error}"), action: None }),
@@ -490,13 +512,28 @@ impl Project {
         });
     }
 
-    /// Reads the file in the background, then puts the caret at `at`. The
-    /// current editor stays until the new file is read; a failed read leaves
-    /// it and adds a notice.
+    /// Puts the focused editor's caret at `at` (from `OpenFileAt`).
+    fn go_to(&mut self, at: TextPosition) {
+        if let Some(editor) = &mut self.editor {
+            let column = editor.display_column(at.line, at.column);
+            editor.place_caret(at.line, column, false, self.viewport_rows);
+        }
+    }
+
+    /// Reads the file in the background and opens it in a new tab, then
+    /// puts the caret at `at`. The current editor stays until the new file
+    /// is read; a failed read leaves it and adds a notice. A file that is
+    /// already open just has its tab focused, keeping its buffer.
     fn open_file(&mut self, path: PathBuf, at: Option<TextPosition>, jobs: &Jobs) {
         let absolute = self.root.join(&path);
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
         self.open_generation += 1;
+        if self.focus_open_file(&shown) {
+            if let Some(at) = at {
+                self.go_to(at);
+            }
+            return;
+        }
         let generation = self.open_generation;
         let id = self.id;
         jobs.spawn("open file", move || {
@@ -508,12 +545,10 @@ impl Project {
                 }
                 match read {
                     Ok(text) => {
-                        let mut editor = Editor::new(shown, text);
+                        project.open_tab(Editor::new(shown, text));
                         if let Some(at) = at {
-                            let column = editor.display_column(at.line, at.column);
-                            editor.place_caret(at.line, column, false, project.viewport_rows);
+                            project.go_to(at);
                         }
-                        project.editor = Some(editor);
                     }
                     Err(error) => project
                         .notices
