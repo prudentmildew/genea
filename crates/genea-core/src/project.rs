@@ -2,7 +2,7 @@
 
 use std::{
     fs::File,
-    io::BufReader,
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -79,6 +79,12 @@ impl Project {
                     editor.delete(movement, self.viewport_rows);
                 }
             }
+            Command::NewLine => {
+                if let Some(editor) = &mut self.editor {
+                    editor.insert("\n", self.viewport_rows);
+                }
+            }
+            Command::Save => self.save(jobs),
         }
     }
 
@@ -94,6 +100,35 @@ impl Project {
             status,
             notices: self.notices.clone(),
         }
+    }
+
+    /// Writes the open file in the background, as it is now. Edits made
+    /// while it is written stay unsaved; a failed write adds a notice.
+    fn save(&mut self, jobs: &Jobs) {
+        let Some(editor) = &self.editor else { return };
+        let snapshot = editor.snapshot();
+        let absolute = self.root.join(&snapshot.path);
+        let id = self.id;
+        jobs.spawn("save file", move || {
+            let written = File::create(&absolute).and_then(|file| {
+                let mut writer = BufWriter::new(file);
+                snapshot.text.write_to(&mut writer)?;
+                writer.flush()
+            });
+            Box::new(move |core| {
+                let Some(project) = core.project_mut(id) else { return };
+                match written {
+                    Ok(()) => {
+                        if let Some(editor) = &mut project.editor {
+                            editor.saved(&snapshot);
+                        }
+                    }
+                    Err(error) => project
+                        .notices
+                        .push(Notice { message: format!("Couldn't save {}: {error}", snapshot.path.display()) }),
+                }
+            })
+        });
     }
 
     /// Reads the file in the background. The current editor stays until the

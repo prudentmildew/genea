@@ -53,3 +53,51 @@ fn backspace_deletes_the_character_before_the_caret() {
     assert_eq!(lines(&workbench, project), ["let a = 1;", ""]);
     assert_eq!(status_caret(&workbench, project), "1:6");
 }
+
+#[test]
+fn delete_removes_the_character_after_the_caret() {
+    let (_fixture, mut workbench, project) = open("abc\n");
+
+    run(&mut workbench, project, [Command::Delete(Right)]);
+
+    assert_eq!(lines(&workbench, project), ["bc", ""]);
+    assert_eq!(status_caret(&workbench, project), "1:1");
+}
+
+#[test]
+fn backspace_at_the_start_of_a_line_joins_it_to_the_previous_one() {
+    let (_fixture, mut workbench, project) = open("ab\r\ncd\r\n");
+
+    run(&mut workbench, project, [Command::MoveCaret(Down), Command::Delete(Left)]);
+
+    assert_eq!(lines(&workbench, project), ["abcd", ""]);
+    assert_eq!(status_caret(&workbench, project), "1:3");
+}
+
+#[test]
+fn delete_at_the_end_of_a_line_joins_the_next_one() {
+    let (_fixture, mut workbench, project) = open("ab\r\ncd\r\n");
+
+    run(&mut workbench, project, [Command::MoveCaret(LineEnd), Command::Delete(Right)]);
+
+    assert_eq!(lines(&workbench, project), ["abcd", ""]);
+}
+
+#[test]
+fn backspace_and_delete_do_nothing_at_the_ends_of_the_file() {
+    let (_fixture, mut workbench, project) = open("ab");
+
+    run(&mut workbench, project, [Command::Delete(Left), Command::MoveCaret(DocumentEnd), Command::Delete(Right)]);
+
+    assert_eq!(lines(&workbench, project), ["ab"]);
+}
+
+#[test]
+fn return_splits_the_line_at_the_caret() {
+    let (_fixture, mut workbench, project) = open("ab\n");
+
+    run(&mut workbench, project, [Command::MoveCaret(Right), Command::NewLine]);
+
+    assert_eq!(lines(&workbench, project), ["a", "b", ""]);
+    assert_eq!(status_caret(&workbench, project), "2:1");
+}

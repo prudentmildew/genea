@@ -30,6 +30,9 @@ pub struct EditorView {
     /// The tab title: the file name.
     pub title: String,
     pub read_only: bool,
+    /// The buffer has edits that aren't on disk yet: the tab and window
+    /// show it as unsaved.
+    pub modified: bool,
     /// Lines in the file. A file ending in a newline has an empty last line.
     pub line_count: usize,
     /// The first visible row, fractional while scrolling smoothly. The view

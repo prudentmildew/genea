@@ -33,6 +33,11 @@ pub enum Command {
     /// caret and where the movement would put it: `Delete(Left)` is
     /// Backspace, `Delete(Right)` is Delete, `Delete(WordLeft)` is ⌥⌫.
     Delete(CaretMove),
+    /// Return: breaks the line at the caret with the file's line ending.
+    NewLine,
+    /// ⌘S: writes the open file to disk in the background. `settle` (tests)
+    /// or the change notification (the app) says when it is written.
+    Save,
 }
 
 /// Caret movements without a selection.

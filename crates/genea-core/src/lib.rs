@@ -24,6 +24,7 @@ mod command;
 mod editor;
 mod jobs;
 mod project;
+mod text;
 mod view;
 mod workbench;
 

@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     command::CaretMove,
+    text::LineEnding,
     view::{Caret, EditorView, VisibleLine},
 };
 
@@ -34,11 +35,26 @@ pub(crate) struct Editor {
     goal_column: Option<usize>,
     /// First visible row; fractional while scrolling smoothly.
     scroll_top: f64,
+    /// Every line break typed or pasted is converted to this.
+    line_ending: LineEnding,
+    /// Bumped by every edit.
+    version: u64,
+    /// The version last written to disk (or read from it).
+    saved_version: u64,
+}
+
+/// The buffer as it was when a save started.
+pub(crate) struct Snapshot {
+    pub(crate) path: PathBuf,
+    /// A cheap clone of the rope.
+    pub(crate) text: Rope,
+    version: u64,
 }
 
 impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
-        Editor { path, text, caret: 0, anchor: 0, goal_column: None, scroll_top: 0.0 }
+        let line_ending = LineEnding::detect(&text);
+        Editor { path, text, caret: 0, anchor: 0, goal_column: None, scroll_top: 0.0, line_ending, version: 0, saved_version: 0 }
     }
 
     /// Moves the caret. With `extend`, the selection's anchor stays put, so
@@ -89,11 +105,25 @@ impl Editor {
         self.reveal_caret(viewport_rows);
     }
 
+    /// The buffer as it is now, for writing in the background.
+    pub(crate) fn snapshot(&self) -> Snapshot {
+        Snapshot { path: self.path.clone(), text: self.text.clone(), version: self.version }
+    }
+
+    /// Records that `snapshot` is on disk, if it is of this buffer.
+    pub(crate) fn saved(&mut self, snapshot: &Snapshot) {
+        if snapshot.path == self.path {
+            self.saved_version = snapshot.version;
+        }
+    }
+
     /// Inserts `text` at the caret, replacing the selection, and puts the
-    /// caret after it.
+    /// caret after it. Line breaks become the file's line ending.
     pub(crate) fn insert(&mut self, text: &str, viewport_rows: f64) {
+        let text = self.line_ending.normalize(text);
         self.delete_selection();
-        self.text.insert(self.caret, text);
+        self.text.insert(self.caret, &text);
+        self.version += 1;
         self.caret += text.chars().count();
         self.anchor = self.caret;
         self.goal_column = None;
@@ -115,6 +145,7 @@ impl Editor {
         let (start, end) = self.selection();
         if start != end {
             self.text.remove(start..end);
+            self.version += 1;
         }
         self.caret = start;
         self.anchor = start;
@@ -198,7 +229,8 @@ impl Editor {
         EditorView {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: self.path.clone(),
-            read_only: true,
+            read_only: false,
+            modified: self.version != self.saved_version,
             line_count,
             scroll_top: self.scroll_top,
             lines,
