@@ -23,7 +23,10 @@ _Avoid_: build, compile
 
 **Toolchain role**: One job within the toolchain: runtime, package manager, bundler/dev server, test runner, linter/formatter.
 
-**Blessed tool**: The tool Genea uses for a toolchain role unless the config picks one of a short list of alternatives. The package manager is the exception: it is detected from the project's lockfile (pnpm or Bun).
+**Blessed tool**: The tool Genea uses for a toolchain role unless the project picks one of a short list of alternatives (Bun instead of Node or pnpm).
+
+**Toolchain pin**: The exact runtime or package manager version a project records for itself. Genea runs the project with that version, getting it itself if needed; a project without a pin gets Genea's defaults.
+_Avoid_: engine, toolchain version
 
 **Foreign tool**: A tool a project uses for a toolchain role that Genea doesn't bless or allow, such as npm, Yarn, ESLint or Prettier. Genea never runs a foreign tool; it turns off the features of that role instead.
 _Avoid_: unsupported tool
