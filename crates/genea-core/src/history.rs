@@ -44,7 +44,10 @@ pub(crate) enum EditKind {
     Other,
 }
 
-/// One primitive change to the text, in char indices.
+/// One primitive change to the text, in char indices of the text as it was
+/// just before the change. An edit's changes are listed in the order they
+/// were applied, so undo can revert them in reverse; an edit at several
+/// carets (#52) or a whole-buffer reload (#32) is just a longer list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Change {
     Insert { at: usize, text: String },
