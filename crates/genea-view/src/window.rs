@@ -58,8 +58,8 @@ pub struct WindowController {
     file_rows: Rc<VecModel<FileEntry>>,
     /// The Search view's results as last pushed.
     search: SearchResults,
-    /// The button went down with ⌥ (adding a caret), so a drag doesn't
-    /// select.
+    /// The button went down with ⌥ (adding a caret) or on a fold marker,
+    /// so a drag doesn't select.
     option_press: bool,
     /// The toolchain picker is showing.
     picker_open: bool,
@@ -147,6 +147,11 @@ impl WindowController {
     /// (a third click) selects the line.
     pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool, alt: bool) {
         self.focus_pane(workbench, pane);
+        if let Some(line) = self.surfaces[pane].fold_marker_at(&self.window, x, y) {
+            self.option_press = true;
+            self.dispatch(workbench, Command::ToggleFold { line });
+            return;
+        }
         let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         let triple = self.last_double_click.take().is_some_and(|(at, clicked_line)| {
             clicked_line == line && at.elapsed() < TRIPLE_CLICK_INTERVAL

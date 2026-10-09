@@ -10,7 +10,7 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::{EditorView, Highlight, HighlightSpan, Severity, grid_pieces};
+use genea_core::{EditorView, Fold, Highlight, HighlightSpan, Severity, grid_pieces};
 use slint::{Model, ModelRc, VecModel};
 use unicode_width::UnicodeWidthChar;
 
@@ -24,10 +24,20 @@ pub const LINE_HEIGHT: f32 = 15.6;
 /// huge file. The base moves (and every slot is rebuilt) past this distance.
 const REBASE_LINES: usize = 10_000;
 
+/// The gutter's fold-marker column, at its right edge: keep in step with
+/// the marker's width in ui/editor-surface.slint.
+const FOLD_MARKER_WIDTH: f32 = 14.0;
+
 #[derive(PartialEq)]
 struct SlotState {
     index: usize,
+    /// The row it is drawn on: lines hidden in folds take none (#25).
+    row: usize,
     base: usize,
+    /// A fold region starts here: 0 none, 1 expanded, 2 collapsed.
+    fold: i32,
+    /// Display columns of highlighted matching brackets on the line.
+    brackets: Vec<usize>,
     text: String,
     selections: Vec<Range<usize>>,
     /// Problems underlined on the line: columns, and whether it's an error.
@@ -72,10 +82,33 @@ impl Surface {
     /// The grid cell (line, display column) under a point in surface
     /// coordinates, rounding to the nearest cell boundary like a click.
     pub fn cell_at(&self, window: &ProjectWindow, x: f32, y: f32) -> (usize, usize) {
-        let line = (self.scroll_top + (y / LINE_HEIGHT) as f64).floor().max(0.0) as usize;
+        let row = (self.scroll_top + (y / LINE_HEIGHT) as f64).floor().max(0.0) as usize;
         let char_width = window.get_char_width().max(1.0);
         let column = ((x - window.get_text_left()) / char_width).round().max(0.0) as usize;
-        (line, column)
+        (self.line_at_row(row), column)
+    }
+
+    /// The file line drawn on a row (rows skip folded lines). Rows below
+    /// the last line drawn count on from it; the core clamps them.
+    fn line_at_row(&self, row: usize) -> usize {
+        let drawn = self.slots.iter().flatten();
+        if let Some(slot) = drawn.clone().find(|s| s.row == row) {
+            return slot.index;
+        }
+        match drawn.max_by_key(|s| s.row) {
+            Some(last) if row > last.row => last.index + (row - last.row),
+            _ => row,
+        }
+    }
+
+    /// The line whose fold marker is under a point in the gutter, if any.
+    pub fn fold_marker_at(&self, window: &ProjectWindow, x: f32, y: f32) -> Option<usize> {
+        let text_left = window.get_text_left();
+        if x >= text_left || x < text_left - FOLD_MARKER_WIDTH {
+            return None;
+        }
+        let row = (self.scroll_top + (y / LINE_HEIGHT) as f64).floor().max(0.0) as usize;
+        self.slots.iter().flatten().find(|s| s.row == row && s.fold != 0).map(|s| s.index)
     }
 
     /// The grid cell a point is inside, for picking the word under it.
@@ -95,14 +128,21 @@ impl Surface {
         let char_width = window.get_char_width();
         let mut wanted: Vec<Option<SlotState>> = (0..slot_count).map(|_| None).collect();
         if let Some(editor) = editor {
-            let first = editor.lines.first().map_or(0, |l| l.index);
+            let first = editor.lines.first().map_or(0, |l| l.row);
             if first < self.base || first - self.base > REBASE_LINES {
                 self.base = first;
             }
             for line in &editor.lines {
-                wanted[line.index % slot_count] = Some(SlotState {
+                wanted[line.row % slot_count] = Some(SlotState {
                     index: line.index,
+                    row: line.row,
                     base: self.base,
+                    fold: match line.fold {
+                        None => 0,
+                        Some(Fold::Expanded) => 1,
+                        Some(Fold::Collapsed) => 2,
+                    },
+                    brackets: editor.brackets.iter().filter(|b| b.line == line.index).map(|b| b.column).collect(),
                     text: line.text.clone(),
                     selections: line.selections.clone(),
                     problems: editor
@@ -131,8 +171,17 @@ impl Surface {
             let row = match &state {
                 None => Line { y: -1000.0, ..Line::default() },
                 Some(s) => Line {
-                    y: (s.index - s.base) as f32 * LINE_HEIGHT,
+                    y: (s.row - s.base) as f32 * LINE_HEIGHT,
                     number: (s.index + 1).to_string().into(),
+                    fold: s.fold,
+                    fold_x: s.text.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>() as f32 * char_width,
+                    brackets: if s.brackets.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(
+                            s.brackets.iter().map(|&column| column as f32 * char_width).collect::<Vec<_>>(),
+                        ))
+                    },
                     runs: if s.text.trim().is_empty() {
                         ModelRc::default()
                     } else {
@@ -184,7 +233,13 @@ impl Surface {
             geometry.compose_x = editor.caret.column as f32 * char_width;
             geometry.preedit_width = preedit as f32 * char_width;
             geometry.caret_x = (editor.caret.column + preedit) as f32 * char_width;
-            geometry.caret_y = ((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32;
+            // The caret's row; off the surface when its line isn't drawn.
+            let caret_row = match editor.lines.iter().find(|l| l.index == editor.caret.line) {
+                Some(line) => line.row as f64,
+                None if editor.lines.first().is_some_and(|l| editor.caret.line < l.index) => base - 1e6,
+                None => base + 1e6,
+            };
+            geometry.caret_y = ((caret_row - base) * LINE_HEIGHT as f64) as f32;
         }
         set_geometry(window, self.pane, geometry);
     }

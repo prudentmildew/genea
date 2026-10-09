@@ -63,6 +63,18 @@ impl Language {
         }
     }
 
+    /// How ⌘/ comments out a line: a line comment's prefix, or a block
+    /// comment's delimiters around the line for languages without one.
+    pub(crate) fn comment(self) -> Option<Comment> {
+        Some(match self {
+            Language::TypeScript | Language::Tsx | Language::JavaScript | Language::Json => Comment::Line("//"),
+            Language::Yaml | Language::Env => Comment::Line("#"),
+            Language::Css => Comment::Block("/*", "*/"),
+            Language::Html | Language::Markdown => Comment::Block("<!--", "-->"),
+            Language::MarkdownInline => return None,
+        })
+    }
+
     /// The grammar and queries, built the first time a language is used.
     /// Compiling a query takes milliseconds, so only background parses call
     /// this. `None` for `.env`, which has no grammar.
@@ -70,6 +82,15 @@ impl Language {
         static CONFIGS: [OnceLock<Option<LanguageConfig>>; 10] = [const { OnceLock::new() }; 10];
         CONFIGS[self as usize].get_or_init(|| LanguageConfig::new(self)).as_ref()
     }
+}
+
+/// A language's comment syntax, for ⌘/.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Comment {
+    /// `//` or `#`: the rest of the line is a comment.
+    Line(&'static str),
+    /// `/*` … `*/` or `<!--` … `-->`, wrapped around each line.
+    Block(&'static str, &'static str),
 }
 
 /// A grammar and its compiled queries.

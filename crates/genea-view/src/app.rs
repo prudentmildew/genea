@@ -27,7 +27,7 @@ use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, LeftView, about, dialogs, links,
+    AboutWindow, LeftView, StructuralAction, about, dialogs, links,
     keys::{self, Modifiers},
     pasteboard::Pasteboard,
     welcome::WelcomeController,
@@ -406,6 +406,16 @@ fn wire(controller: &WindowController) {
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
+    window.on_structural(move |action| {
+        let command = match action {
+            StructuralAction::ToggleLineComment => Command::ToggleLineComment,
+            StructuralAction::ExpandFold => Command::ExpandFold,
+            StructuralAction::CollapseFold => Command::CollapseFold,
+            StructuralAction::ExpandAllFolds => Command::ExpandAllFolds,
+            StructuralAction::CollapseAllFolds => Command::CollapseAllFolds,
+        };
+        with_app(move |app| app.dispatch(key, command));
+    });
     window.on_set_runtime(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Runtime)));
     window.on_set_package_manager(menu(Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager)));
     window.on_update_toolchain(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Update)));
