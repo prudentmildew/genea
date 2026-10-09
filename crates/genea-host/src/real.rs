@@ -7,11 +7,11 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Condvar, Mutex, OnceLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::{
-    Child, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
+    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
     TimerCallback,
 };
 
@@ -21,16 +21,20 @@ pub struct RealHost {
     processes: OsProcesses,
     downloads: HttpDownloads,
     support_dir: PathBuf,
+    clipboard: ClipboardSlot,
 }
 
 impl Default for RealHost {
     fn default() -> Self {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+        // Without a home folder (never on a normal login) fall back to a
+        // folder that is at least writable.
+        let home = std::env::home_dir().unwrap_or_else(std::env::temp_dir);
         RealHost {
             clock: SystemClock::default(),
-            processes: OsProcesses,
+            processes: OsProcesses::default(),
             downloads: HttpDownloads::default(),
             support_dir: home.join("Library/Application Support/Genea"),
+            clipboard: ClipboardSlot::default(),
         }
     }
 }
@@ -42,6 +46,14 @@ impl RealHost {
 
     pub fn shared() -> SharedHost {
         Arc::new(Self::new())
+    }
+
+    /// Uses `clipboard` as the system clipboard. The pasteboard lives in
+    /// AppKit, which no core crate may link (ADR 0004), so the view layer
+    /// supplies it. Without one, the clipboard is private to the process.
+    pub fn with_clipboard(mut self, clipboard: impl Clipboard + 'static) -> Self {
+        self.clipboard = ClipboardSlot(Box::new(clipboard));
+        self
     }
 }
 
@@ -60,6 +72,36 @@ impl Host for RealHost {
 
     fn support_dir(&self) -> &Path {
         &self.support_dir
+    }
+
+    fn clipboard(&self) -> &dyn Clipboard {
+        self.clipboard.0.as_ref()
+    }
+}
+
+// --- Clipboard ---------------------------------------------------------------
+
+struct ClipboardSlot(Box<dyn Clipboard>);
+
+impl Default for ClipboardSlot {
+    fn default() -> Self {
+        ClipboardSlot(Box::new(ProcessClipboard::default()))
+    }
+}
+
+/// A clipboard private to the process, until the app plugs in the system one.
+#[derive(Default)]
+struct ProcessClipboard {
+    text: Mutex<Option<String>>,
+}
+
+impl Clipboard for ProcessClipboard {
+    fn read_text(&self) -> Option<String> {
+        self.text.lock().unwrap().clone()
+    }
+
+    fn write_text(&self, text: &str) {
+        *self.text.lock().unwrap() = Some(text.to_owned());
     }
 }
 
@@ -106,6 +148,10 @@ impl Clock for SystemClock {
         queue.heap.push(Reverse((Instant::now() + delay, id)));
         queue.callbacks.insert(id, fire);
         timers.changed.notify_one();
+    }
+
+    fn system_time(&self) -> SystemTime {
+        SystemTime::now()
     }
 }
 

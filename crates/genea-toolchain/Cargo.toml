@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 genea-host.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
 nodejs-semver.workspace = true
 sha2.workspace = true
 base64.workspace = true

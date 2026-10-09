@@ -2,14 +2,15 @@
 
 use std::{
     fs::File,
-    io::BufReader,
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
+use genea_host::Host;
 use ropey::Rope;
 
 use crate::{
-    command::Command,
+    command::{CaretMove, Command},
     editor::Editor,
     jobs::Jobs,
     toolchain::{Toolchain, ToolchainContext},
@@ -60,7 +61,7 @@ impl Project {
         &self.root
     }
 
-    pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs) {
+    pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         match command {
             Command::OpenFile(path) => self.open_file(path, jobs),
             Command::SetViewport { rows } => {
@@ -76,12 +77,22 @@ impl Project {
             }
             Command::MoveCaret(movement) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.move_caret(movement, self.viewport_rows);
+                    editor.move_caret(movement, false, self.viewport_rows);
+                }
+            }
+            Command::Select(movement) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.move_caret(movement, true, self.viewport_rows);
+                }
+            }
+            Command::SelectAll => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_all(self.viewport_rows);
                 }
             }
             Command::PlaceCaret { line, column } => {
                 if let Some(editor) = &mut self.editor {
-                    editor.place_caret(line, column, self.viewport_rows);
+                    editor.place_caret(line, column, false, self.viewport_rows);
                 }
             }
             Command::RetryToolchain => {
@@ -94,6 +105,62 @@ impl Project {
                     toolchain.pin_defaults(jobs);
                 }
             }
+            Command::ExtendSelection { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.place_caret(line, column, true, self.viewport_rows);
+                }
+            }
+            Command::SelectWord { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_word(line, column, self.viewport_rows);
+                }
+            }
+            Command::SelectLine { line } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_line(line, self.viewport_rows);
+                }
+            }
+            Command::InsertText(text) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.insert(&text, self.viewport_rows);
+                }
+            }
+            Command::SetPreedit(text) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.set_preedit(text);
+                }
+            }
+            Command::Delete(movement) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.delete(movement, self.viewport_rows);
+                }
+            }
+            Command::NewLine => {
+                if let Some(editor) = &mut self.editor {
+                    editor.insert("\n", self.viewport_rows);
+                }
+            }
+            Command::Copy => {
+                if let Some(text) = self.editor.as_ref().and_then(Editor::selected_text) {
+                    host.clipboard().write_text(&text);
+                }
+            }
+            Command::Cut => {
+                if let Some(editor) = &mut self.editor
+                    && let Some(text) = editor.selected_text()
+                {
+                    host.clipboard().write_text(&text);
+                    editor.delete(CaretMove::Left, self.viewport_rows);
+                }
+            }
+            Command::Paste => {
+                if let Some(editor) = &mut self.editor
+                    && let Some(text) = host.clipboard().read_text()
+                {
+                    editor.insert(&text, self.viewport_rows);
+                }
+            }
+            Command::Save => self.save(jobs),
         }
     }
 
@@ -113,6 +180,36 @@ impl Project {
             notices,
             toolchain: self.toolchain.as_ref().map(Toolchain::view).unwrap_or_default(),
         }
+    }
+
+    /// Writes the open file in the background, as it is now. Edits made
+    /// while it is written stay unsaved; a failed write adds a notice.
+    fn save(&mut self, jobs: &Jobs) {
+        let Some(editor) = &self.editor else { return };
+        let snapshot = editor.snapshot();
+        let absolute = self.root.join(&snapshot.path);
+        let id = self.id;
+        jobs.spawn("save file", move || {
+            let written = File::create(&absolute).and_then(|file| {
+                let mut writer = BufWriter::new(file);
+                snapshot.text.write_to(&mut writer)?;
+                writer.flush()
+            });
+            Box::new(move |core| {
+                let Some(project) = core.project_mut(id) else { return };
+                match written {
+                    Ok(()) => {
+                        if let Some(editor) = &mut project.editor {
+                            editor.saved(&snapshot);
+                        }
+                    }
+                    Err(error) => project.notices.push(Notice {
+                        message: format!("Couldn't save {}: {error}", snapshot.path.display()),
+                        action: None,
+                    }),
+                }
+            })
+        });
     }
 
     /// Reads the file in the background. The current editor stays until the

@@ -19,8 +19,14 @@ pub enum Command {
     /// Scrolls the editor by a number of rows (fractional for smooth
     /// trackpad scrolling; positive is down). The caret doesn't move.
     ScrollBy { rows: f64 },
-    /// Moves the caret, scrolling it into view.
+    /// Moves the caret, scrolling it into view. A selection collapses:
+    /// `Left` and `Right` go to its start and end.
     MoveCaret(CaretMove),
+    /// Moves the caret and extends the selection to it (the movement with
+    /// ⇧ held).
+    Select(CaretMove),
+    /// ⌘A: selects the whole file, with the caret at its end.
+    SelectAll,
     /// Puts the caret at a grid cell (0-based line and display column), as a
     /// click does: at the last text position at or before the cell, so the
     /// view rounds a click to the nearest cell boundary first. Cells past the
@@ -31,13 +37,48 @@ pub enum Command {
     /// Writes Genea's default versions as exact pins to `package.json` for
     /// the roles the project doesn't pin (the unpinned notice's action).
     PinToolchainDefaults,
+    /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
+    /// but keeps the selection's anchor: a drag, or a ⇧-click.
+    ExtendSelection { line: usize, column: usize },
+    /// Double-click: selects the word (or punctuation or space run) at a
+    /// grid cell.
+    SelectWord { line: usize, column: usize },
+    /// Triple-click: selects a whole line with its line break.
+    SelectLine { line: usize },
+    /// Types text at the caret, replacing the selection: a key press or an
+    /// IME commit.
+    InsertText(String),
+    /// The IME's marked text while a dead key composes (`´` before `e`),
+    /// drawn at the caret but not in the file. An empty string ends the
+    /// composition; the composed text then arrives as `InsertText`.
+    SetPreedit(String),
+    /// Deletes the selection or, with nothing selected, the text between the
+    /// caret and where the movement would put it: `Delete(Left)` is
+    /// Backspace, `Delete(Right)` is Delete, `Delete(WordLeft)` is ⌥⌫.
+    Delete(CaretMove),
+    /// Return: breaks the line at the caret with the file's line ending.
+    NewLine,
+    /// ⌘C: puts the selection on the system clipboard. Does nothing with
+    /// nothing selected.
+    Copy,
+    /// ⌘X: moves the selection to the system clipboard.
+    Cut,
+    /// ⌘V: types the system clipboard's text, replacing the selection.
+    Paste,
+    /// ⌘S: writes the open file to disk in the background. `settle` (tests)
+    /// or the change notification (the app) says when it is written.
+    Save,
 }
 
-/// Caret movements without a selection.
+/// Caret movements, for moving, selecting and deleting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaretMove {
     Left,
     Right,
+    /// ⌥←: to the start of the word (or punctuation run) before the caret.
+    WordLeft,
+    /// ⌥→: to the end of the word (or punctuation run) after the caret.
+    WordRight,
     Up,
     Down,
     PageUp,

@@ -1,20 +1,23 @@
 // The About dialog. Slint's royalty-free licence requires AboutSlint here
-// (ADR 0004); the packaging ticket adds the third-party licences.
+// (ADR 0004). Below it, every third-party licence (ticket #64): the lines of
+// packaging/third-party-licences.txt, set from src/about.rs.
 
-import { AboutSlint } from "std-widgets.slint";
+import { AboutSlint, ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 
 export component AboutWindow inherits Window {
     in property <string> version;
+    // The third-party licences, one already-wrapped line per entry.
+    in property <[string]> licences;
 
     title: "About Genea";
     background: Theme.editor-background;
-    preferred-width: 360px;
+    preferred-width: 720px;
+    preferred-height: 720px;
 
     VerticalLayout {
         padding: 24px;
         spacing: 12px;
-        alignment: start;
 
         Text {
             text: "Genea";
@@ -31,5 +34,23 @@ export component AboutWindow inherits Window {
         }
 
         AboutSlint { }
+
+        Text {
+            text: "Third-party software and licences";
+            font-weight: 600;
+            color: Theme.chrome-foreground;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            min-height: 200px;
+
+            for line in root.licences: Text {
+                text: line;
+                font-family: Theme.editor-font;
+                font-size: 11px;
+                color: Theme.chrome-foreground;
+            }
+        }
     }
 }

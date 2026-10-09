@@ -11,11 +11,11 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use genea_host::{
-    Child, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, RealHost,
+    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, RealHost,
     SharedHost, TimerCallback,
 };
 
@@ -25,9 +25,11 @@ use crate::{DownloadServer, FakeTools};
 ///
 /// It is a cheap handle: clone it, give [`shared`](Self::shared) to the
 /// workbench and keep a clone to script processes, serve downloads and
-/// advance the clock. Its support folder is a temp dir that lives as long as
-/// the last clone, so two workbenches on clones of one host share a
-/// toolchain store, like two runs of Genea on one machine.
+/// advance the clock.
+///
+/// Each test host has its own application-support folder in a temp dir,
+/// deleted with the last clone. Two workbenches on clones of one host share
+/// it, which is how a test restarts Genea.
 #[derive(Clone, Default)]
 pub struct TestHost {
     inner: Arc<Inner>,
@@ -37,21 +39,18 @@ struct Inner {
     clock: ManualClock,
     processes: ScriptedProcesses,
     downloads: ScriptedDownloads,
-    // Held for its Drop, which deletes the folder.
-    _support: tempfile::TempDir,
-    support_dir: std::path::PathBuf,
+    support: tempfile::TempDir,
+    clipboard: TestClipboard,
 }
 
 impl Default for Inner {
     fn default() -> Self {
-        let support = tempfile::Builder::new().prefix("genea-support-").tempdir().expect("create a temp dir");
-        let support_dir = support.path().canonicalize().expect("canonicalize the temp dir");
         Inner {
             clock: ManualClock::default(),
             processes: ScriptedProcesses::default(),
             downloads: ScriptedDownloads::default(),
-            _support: support,
-            support_dir,
+            support: tempfile::Builder::new().prefix("genea-support-").tempdir().expect("create a temp dir"),
+            clipboard: TestClipboard::default(),
         }
     }
 }
@@ -89,9 +88,14 @@ impl TestHost {
         FakeTools::new(self.download_server())
     }
 
-    /// The support folder (a temp dir); the toolchain store is under it.
+    /// The application-support folder (a temp dir); the toolchain store is
+    /// under it.
     pub fn support_dir(&self) -> &Path {
-        &self.inner.support_dir
+        Host::support_dir(self)
+    }
+
+    pub fn clipboard(&self) -> &TestClipboard {
+        &self.inner.clipboard
     }
 }
 
@@ -109,7 +113,41 @@ impl Host for TestHost {
     }
 
     fn support_dir(&self) -> &Path {
-        &self.inner.support_dir
+        self.inner.support.path()
+    }
+
+    fn clipboard(&self) -> &dyn Clipboard {
+        &self.inner.clipboard
+    }
+}
+
+// --- Clipboard ---------------------------------------------------------------
+
+/// A clipboard the test can fill and read, standing in for the system one.
+#[derive(Default)]
+pub struct TestClipboard {
+    text: Mutex<Option<String>>,
+}
+
+impl TestClipboard {
+    /// Puts text on the clipboard, as another app would.
+    pub fn set_text(&self, text: &str) {
+        *self.text.lock().unwrap() = Some(text.to_owned());
+    }
+
+    /// The clipboard's text, if any.
+    pub fn text(&self) -> Option<String> {
+        self.text.lock().unwrap().clone()
+    }
+}
+
+impl Clipboard for TestClipboard {
+    fn read_text(&self) -> Option<String> {
+        self.text()
+    }
+
+    fn write_text(&self, text: &str) {
+        self.set_text(text);
     }
 }
 
@@ -119,6 +157,8 @@ impl Host for TestHost {
 ///
 /// Pending timers are not background work: `Workbench::settle` doesn't wait
 /// for them. Advance the clock, then settle.
+///
+/// Its wall-clock time starts at [`ManualClock::epoch`] and moves with it.
 pub struct ManualClock {
     start: Instant,
     state: Mutex<ClockState>,
@@ -138,6 +178,11 @@ impl Default for ManualClock {
 }
 
 impl ManualClock {
+    /// The wall-clock time a new manual clock starts at: 2026-01-01 00:00 UTC.
+    pub fn epoch() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_767_225_600)
+    }
+
     /// Moves time forward, firing every timer that comes due, in deadline
     /// order and on this thread.
     pub fn advance(&self, by: Duration) {
@@ -188,6 +233,10 @@ impl Clock for ManualClock {
         state.next_id += 1;
         let at = state.elapsed + delay;
         state.timers.push((at, id, fire));
+    }
+
+    fn system_time(&self) -> SystemTime {
+        Self::epoch() + self.state.lock().unwrap().elapsed
     }
 }
 
@@ -392,6 +441,15 @@ mod tests {
 
         host.clock().advance(Duration::from_millis(50));
         assert_eq!(*fired.lock().unwrap(), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn the_manual_clocks_wall_time_starts_at_its_epoch_and_moves_with_it() {
+        let host = TestHost::new();
+        assert_eq!(Host::clock(&host).system_time(), ManualClock::epoch());
+
+        host.clock().advance(Duration::from_secs(90));
+        assert_eq!(Host::clock(&host).system_time(), ManualClock::epoch() + Duration::from_secs(90));
     }
 
     #[test]

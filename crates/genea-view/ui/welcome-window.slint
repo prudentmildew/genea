@@ -1,0 +1,197 @@
+// The welcome window, shown while no project is open (ticket #58): Open…,
+// New Project… and the recent projects. Every property is set from Rust
+// (src/welcome.rs) out of the core's WelcomeView.
+
+import { Button, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct RecentEntry {
+    name: string,
+    // The parent folder, with the home folder shown as `~`.
+    location: string,
+}
+
+export component WelcomeWindow inherits Window {
+    in property <[RecentEntry]> recent-projects;
+    in property <string> version;
+    // Why the last open failed, if it did.
+    in property <string> notice;
+    // The update notice ("Genea 0.2.0 is available"), or empty (#64).
+    in property <string> update;
+
+    callback open-folder();
+    // The new-project ticket (#61) wires this and enables New Project….
+    callback new-project();
+    callback open-recent(int);
+    callback show-about();
+    // Opens the release page of the update notice.
+    callback open-update();
+
+    title: "Welcome to Genea";
+    preferred-width: 720px;
+    preferred-height: 440px;
+    min-width: 560px;
+    min-height: 320px;
+    background: Theme.editor-background;
+    default-font-size: Theme.chrome-font-size;
+
+    MenuBar {
+        Menu {
+            title: "File";
+            MenuItem {
+                title: "Open…";
+                shortcut: @keys(Control + O);
+                activated => {
+                    root.open-folder();
+                }
+            }
+
+            MenuItem {
+                title: "New Project…";
+                enabled: false;
+                activated => {
+                    root.new-project();
+                }
+            }
+        }
+
+        Menu {
+            title: "Help";
+            MenuItem {
+                title: "About Genea";
+                activated => {
+                    root.show-about();
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        // Start: the name and the actions.
+        VerticalLayout {
+            width: 280px;
+            padding: 32px;
+            spacing: 10px;
+            alignment: center;
+
+            Text {
+                text: "Genea";
+                font-size: 28px;
+                font-weight: 700;
+                color: Theme.chrome-foreground;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Version " + root.version;
+                color: Theme.chrome-muted;
+                horizontal-alignment: center;
+            }
+
+            if root.update != "": Text {
+                text: root.update;
+                color: Theme.link;
+                horizontal-alignment: center;
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.open-update();
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 16px;
+            }
+
+            Button {
+                text: "Open…";
+                primary: true;
+                clicked => {
+                    root.open-folder();
+                }
+            }
+
+            Button {
+                text: "New Project…";
+                enabled: false;
+                clicked => {
+                    root.new-project();
+                }
+            }
+
+            Text {
+                text: root.notice;
+                color: Theme.chrome-muted;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+        }
+
+        // End: the recent projects.
+        Rectangle {
+            horizontal-stretch: 1;
+            background: Theme.chrome-background;
+
+            Rectangle {
+                x: 0px;
+                width: 1px;
+                background: Theme.chrome-border;
+            }
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+
+                Text {
+                    text: "Recent Projects";
+                    font-weight: 600;
+                    color: Theme.chrome-foreground;
+                }
+
+                if root.recent-projects.length == 0: Text {
+                    vertical-stretch: 1;
+                    text: "No recent projects";
+                    color: Theme.chrome-muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                if root.recent-projects.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for entry[index] in root.recent-projects: Rectangle {
+                        height: 44px;
+                        border-radius: 6px;
+                        background: touch.pressed ? Theme.chrome-border : touch.has-hover ? Theme.editor-background : transparent;
+
+                        VerticalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            alignment: center;
+
+                            Text {
+                                text: entry.name;
+                                font-weight: 600;
+                                color: Theme.chrome-foreground;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: entry.location;
+                                color: Theme.chrome-muted;
+                                overflow: elide;
+                            }
+                        }
+
+                        touch := TouchArea {
+                            clicked => {
+                                root.open-recent(index);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -40,11 +40,14 @@ use, and nothing else:
 
 | Part | API | Notes |
 |---|---|---|
-| Projects | `open_project(root) -> ProjectId`, `close_project(id)`, `projects()` | Opening an already-open folder returns its id. |
+| Projects | `open_project(root) -> ProjectId`, `close_project(id)`, `projects()` | Opening an already-open folder returns its id (the app focuses its window). Opening puts the folder first in the recent projects. |
+| Welcome | `welcome() -> Option<WelcomeView>` | `Some` exactly while no project is open; lists the recent projects, most recent first (kept in `recent-projects.txt` in the application-support folder, saved in the background 1 s after a change). |
 | Commands in | `dispatch(id, Command)` | `Command` (`src/command.rs`) is plain data, one variant per user action. Commands apply synchronously on the main thread. |
 | View state out | `project(id) -> Option<ProjectView>` | Plain snapshots (`src/view.rs`) of what the window shows: user-visible text, 1-based labels, display columns. |
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending (tests). |
+| Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
+| Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
 
@@ -65,20 +68,28 @@ use, and nothing else:
 
 ## The host boundary
 
-`genea_host::Host` provides `clock()`, `processes()`, `downloads()` and
-`support_dir()` (Genea's application-support folder: real
-`~/Library/Application Support/Genea`, a temp dir in tests; used directly
-through the filesystem). `Downloads::fetch_with_length` also reports the
-response's `Content-Length`, for progress.
+`genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
+`clipboard()` (below), and `support_dir()`, Genea's application-support
+folder, where the core keeps its own files (recent projects, the toolchain
+store; session state, review baselines, …). The folder is used through the
+real filesystem; the host only says where it is, so tests never touch the
+user's. `Downloads::fetch_with_length` also reports the response's
+`Content-Length`, for progress.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
   idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
   stack.
+- The clipboard is the one effect the core uses on the main thread (Cut,
+  Copy and Paste are synchronous edits). The pasteboard lives in AppKit,
+  which no core crate may link, so `genea-view` supplies it through
+  `RealHost::with_clipboard` (`src/pasteboard.rs`).
 - `genea_testkit::TestHost`: `ManualClock::advance` fires due timers;
   `ScriptedProcesses::script("tsc", |spec, io| …)` plays a program on a
   thread with real pipes (unscripted programs fail with `NotFound`) and
   records every spawn; `ScriptedDownloads::serve/fail` answers URLs from a
-  table (unknown URLs answer 404) and records every request.
+  table (unknown URLs answer 404) and records every request. Each test host
+  has its own temp support folder; a second workbench on a clone of the same
+  host is a restart.
   Once started, `TestHost::download_server()` (the **local download fixture
   server**, a real HTTP server on 127.0.0.1) answers every URL not in the
   table, over real HTTP. Tests publish files under the real URLs
@@ -137,14 +148,24 @@ chrome, native menus via muda (Slint's `MenuBar`).
   instantiates. `theme.slint` holds colours, fonts and metrics.
 - `src/app.rs`: the `App` (workbench + windows) in a main-thread
   `thread_local`, reached through `with_app`; callback wiring; the notifier,
-  which coalesces wake-ups into one `pump` per event-loop turn.
+  which coalesces wake-ups into one `pump` per event-loop turn. One window
+  per open project: `App::open_project(from, folder)` opens a folder in a new
+  window (or focuses its existing one). The welcome window shows while no
+  project is open; closing it quits. The event loop runs with
+  `run_event_loop_until_quit`, so closing the last project window doesn't.
 - `src/window.rs`: `WindowController::sync`, the only place view state flows
-  into Slint.
+  into Slint. `WindowController::focus` brings a window to the front.
+  `src/welcome.rs`: the welcome window's sync.
 - `src/surface.rs`: the editor surface, a ring of line slots (line L in slot
   L % slots) with a per-slot diff, plus base-line rebasing for `f32`
   precision.
 - `src/keys.rs`: the keymap (WebStorm macOS). `src/dialogs.rs`: native
   NSOpenPanels.
+- Keys and text reach the surface through a hidden, focused `TextInput`
+  (ADR 0004) whose `key-pressed` accepts every key; IME commits and the
+  preedit go to the core as `InsertText` and `SetPreedit`. `src/blink.rs`
+  stops that `TextInput`'s cursor-blink timer, which would otherwise repaint
+  an idle window twice a second.
 
 Rules: push to Slint only on change. Use no repeating timers (the caret is
 steady). Install no rendering notifier or run-loop observer unless the
@@ -162,3 +183,8 @@ cargo run --bin genea -- [FOLDER [FILE]]
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`.
+
+Releases (a signed, notarized DMG for Apple Silicon, macOS 14+) and the
+third-party licence list shown in About are in `docs/releasing.md`:
+`scripts/release.sh [--local]`, `scripts/third-party-licences.sh`,
+`packaging/`.

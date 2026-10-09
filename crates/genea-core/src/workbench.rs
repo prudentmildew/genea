@@ -14,8 +14,11 @@ use crate::{
     command::Command,
     jobs::{self, Inbox, Jobs},
     project::Project,
+    recent::RecentProjects,
+    templates::{self, Creations, NewProject, ProjectCreation},
     toolchain::ToolchainContext,
-    view::ProjectView,
+    update::{self, UpdateNotice},
+    view::{ProjectView, WelcomeView},
 };
 
 /// How long `settle` waits for background work before giving up. Real time,
@@ -42,15 +45,21 @@ pub struct Workbench {
 
 /// Core state. Background Applies get `&mut Core`.
 pub(crate) struct Core {
-    // The toolchain, LSP, undo and terminal tickets reach the outside world
-    // only through it.
-    #[allow(dead_code)]
+    /// The outside world: the clipboard now; the toolchain, LSP, undo and
+    /// terminal tickets reach it only through this too.
     pub(crate) host: SharedHost,
     /// The host and the shared toolchain store, for every project (#35).
     pub(crate) toolchain: ToolchainContext,
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
+    recent: RecentProjects,
+    pub(crate) creations: Creations,
+    /// A newer Genea release, once the update check has found one.
+    pub(crate) update_notice: Option<UpdateNotice>,
+    /// Lives as long as the core. Host timers hold a weak reference to it,
+    /// so they do nothing once the workbench is gone.
+    alive: Arc<()>,
 }
 
 impl Core {
@@ -62,8 +71,13 @@ impl Core {
 impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
+        let recent = RecentProjects::load(host.support_dir());
         let toolchain = ToolchainContext::new(host.clone());
-        Workbench { core: Core { host, toolchain, jobs, projects: BTreeMap::new(), next_id: 0 }, inbox }
+        let creations = Creations::default();
+        let (update_notice, alive) = (None, Arc::new(()));
+        let core =
+            Core { host, toolchain, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations, update_notice, alive };
+        Workbench { core, inbox }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -74,15 +88,27 @@ impl Workbench {
         self.core.jobs.set_notifier(Some(Arc::new(notify)));
     }
 
-    /// Opens the folder at `root` as a project. Opening a folder that is
-    /// already open returns its existing id.
+    /// Opens the folder at `root` as a project and puts it first in the
+    /// recent projects. Opening a folder that is already open returns its
+    /// existing id; the app then focuses that project's window. A folder
+    /// that can't be opened leaves the recent projects.
     pub fn open_project(&mut self, root: impl AsRef<Path>) -> Result<ProjectId, OpenProjectError> {
         let root = root.as_ref();
         let error = |reason| OpenProjectError { path: root.to_owned(), reason };
-        let root = root.canonicalize().map_err(|e| error(e.to_string()))?;
-        if !root.is_dir() {
-            return Err(error("it isn't a folder".into()));
-        }
+        let checked = root.canonicalize().map_err(|e| e.to_string()).and_then(|canonical| {
+            if canonical.is_dir() { Ok(canonical) } else { Err("it isn't a folder".into()) }
+        });
+        let root = match checked {
+            Ok(root) => root,
+            Err(reason) => {
+                // A recent project that can't be opened any more leaves the list.
+                let Core { recent, jobs, host, .. } = &mut self.core;
+                recent.forget(root, jobs, host.clock());
+                return Err(error(reason));
+            }
+        };
+        let Core { recent, jobs, host, .. } = &mut self.core;
+        recent.opened(&root, jobs, host.clock());
         if let Some((id, _)) = self.core.projects.iter().find(|(_, p)| p.root() == root) {
             return Ok(*id);
         }
@@ -103,12 +129,18 @@ impl Workbench {
         self.core.projects.keys().copied().collect()
     }
 
+    /// What the welcome shows, or `None` while a project is open: the app
+    /// shows the welcome exactly when this is `Some`.
+    pub fn welcome(&self) -> Option<WelcomeView> {
+        self.core.projects.is_empty().then(|| WelcomeView { recent_projects: self.core.recent.view() })
+    }
+
     /// Applies a command to a project. Commands for a closed project are
     /// ignored.
     pub fn dispatch(&mut self, project: ProjectId, command: Command) {
-        let Core { projects, jobs, .. } = &mut self.core;
+        let Core { projects, jobs, host, .. } = &mut self.core;
         if let Some(project) = projects.get_mut(&project) {
-            project.dispatch(command, jobs);
+            project.dispatch(command, jobs, host.as_ref());
         }
     }
 
@@ -116,6 +148,38 @@ impl Workbench {
     /// project isn't open.
     pub fn project(&self, project: ProjectId) -> Option<ProjectView> {
         self.core.projects.get(&project).map(Project::view)
+    }
+
+    /// Creates a project from a template in the background: writes its
+    /// files into `request.folder` and initialises a git repository there.
+    /// It refuses a folder that isn't empty. The outcome shows in
+    /// [`project_creation`](Self::project_creation); a new request replaces
+    /// the last one's state.
+    pub fn create_project(&mut self, request: NewProject) {
+        templates::create(&mut self.core, request);
+    }
+
+    /// The state of the last [`create_project`](Self::create_project), if
+    /// any.
+    pub fn project_creation(&self) -> Option<ProjectCreation> {
+        self.core.creations.view()
+    }
+
+    /// Starts the release-update check: at most once a day, the first one a
+    /// little after start, always off the main thread. A newer release shows
+    /// up as [`update_notice`](Self::update_notice), with the change
+    /// notification. Call it once, after the first window is up, with the
+    /// running Genea's version (`env!("CARGO_PKG_VERSION")`). What it learns
+    /// is kept in the host's support folder, so restarts don't check more.
+    pub fn start_update_checks(&mut self, current_version: &str) {
+        let core = &self.core;
+        update::start(core.host.clone(), core.jobs.clone(), Arc::downgrade(&core.alive), current_version);
+    }
+
+    /// The newer release the update check found, if any. It isn't tied to a
+    /// project: every window shows it.
+    pub fn update_notice(&self) -> Option<UpdateNotice> {
+        self.core.update_notice.clone()
     }
 
     /// Applies finished background work without waiting. Returns whether
