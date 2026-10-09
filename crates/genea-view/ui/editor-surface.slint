@@ -1,6 +1,7 @@
 // Genea's editor surface (ADR 0004): a Rust-driven grid of Text items, not
 // Slint's TextEdit. Rust (src/surface.rs) owns the layout: it keeps a ring of
-// line slots (line L lives in slot L % slots), so scrolling only rewrites the
+// line slots (the line on row R lives in slot R % slots; rows skip folded
+// lines), so scrolling only rewrites the
 // slots of lines that come into view, and it pushes only what changed, so an
 // idle surface never repaints.
 //

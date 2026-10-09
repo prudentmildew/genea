@@ -126,6 +126,31 @@ and the next parse starts if the text moved on. Files over 5 MB get no syntax.
 - Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
   tokens over `Syntax::spans()` in `Editor::grid_line`.
 
+### Structural editing
+
+Ticket #25. `syntax/structure.rs` answers questions about the tree with
+generic rules, not per-language queries: a node is a *block* when its first
+and last children are a bracket pair (`{}`, `[]`, `()`, `${}`) or an
+element's tags (HTML, JSX); comments, Markdown sections and code blocks, and
+YAML pairs fold too. `editor/structural.rs` turns the answers into edits,
+carets and view state:
+
+- Return (`Editor::new_line`) indents one `INDENT_UNIT` deeper inside a
+  block and splits a bracket pair. The tree may be a parse behind, so an
+  opening bracket at the end of the line (outside strings and comments)
+  counts too. #26 replaces `INDENT_UNIT` with the resolved indentation.
+- ⌘/ (`ToggleLineComment`) uses `Language::comment`; ⌥↑/⌥↓ walk nodes, with
+  the shrink history in the tab's `Cursor`; `EditorView::brackets` holds the
+  bracket at the caret and its match.
+- Folds (`Editor::folds`) are char positions that move with edits in
+  `splice`. Hidden lines take no *row*: `scroll_top`, Up/Down and
+  `VisibleLine::row` count rows, while commands and `VisibleLine::index`
+  stay in file lines (the view maps a clicked row to its line). A caret
+  that lands in hidden lines unfolds them (`reveal_caret`).
+- Edits that keep selections where they were (comments) go through
+  `edit_text`; edits that put each caret somewhere in its replacement go
+  through `replace_placing`.
+
 ## The host boundary
 
 `genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
@@ -243,9 +268,10 @@ chrome, native menus via muda (Slint's `MenuBar`).
 - `src/window.rs`: `WindowController::sync`, the only place view state flows
   into Slint. `WindowController::focus` brings a window to the front.
   `src/welcome.rs`: the welcome window's sync.
-- `src/surface.rs`: the editor surface, a ring of line slots (line L in slot
-  L % slots) with a per-slot diff, plus base-line rebasing for `f32`
-  precision.
+- `src/surface.rs`: the editor surface, a ring of line slots (the line on
+  row R in slot R % slots; rows skip folded lines) with a per-slot diff,
+  plus base-row rebasing for `f32` precision. A press on a gutter fold
+  marker is `ToggleFold`.
 - `src/fonts.rs`: registers Apple Color Emoji and Hiragino Sans GB (CJK),
   memory-mapped, the first time visible text has an emoji or CJK character
   that Menlo and Apple Symbols lack. It is
