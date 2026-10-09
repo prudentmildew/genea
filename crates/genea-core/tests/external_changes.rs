@@ -125,6 +125,48 @@ fn keep_my_edits_closes_the_bar_and_the_next_save_overwrites_the_disk() {
 }
 
 #[test]
+fn after_keep_my_edits_a_further_change_on_disk_shows_the_bar_again() {
+    let (fixture, mut workbench, project) = conflict();
+    run(&mut workbench, project, [resolve(ConflictChoice::KeepMyEdits)]);
+
+    fixture.write("main.ts", "theirs again\n");
+    workbench.settle().unwrap();
+
+    assert!(editor(&workbench, project).conflict);
+    run(&mut workbench, project, [resolve(ConflictChoice::Reload)]);
+    assert_eq!(text(&workbench, project), ["theirs again", ""]);
+}
+
+#[test]
+fn a_file_open_in_a_tab_without_the_focus_reloads_too() {
+    let fixture = FixtureProject::new().file("a.ts", "a\n").file("b.ts", "b\n").build();
+    let mut workbench = Workbench::new(TestHost::new().shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    run(&mut workbench, project, [Command::OpenFile("a.ts".into())]);
+    workbench.settle().unwrap();
+    run(&mut workbench, project, [Command::OpenFile("b.ts".into())]);
+    workbench.settle().unwrap();
+
+    fixture.write("a.ts", "changed\n");
+    workbench.settle().unwrap();
+    run(&mut workbench, project, [Command::SelectTab { pane: 0, tab: 0 }]);
+
+    assert_eq!(text(&workbench, project), ["changed", ""]);
+}
+
+#[test]
+fn the_caret_stays_with_its_text_when_lines_above_it_change() {
+    let (fixture, mut workbench, project) = open("main.ts", "one\ntwo\nthree\n");
+    run(&mut workbench, project, [Command::PlaceCaret { line: 2, column: 2 }]);
+
+    fixture.write("main.ts", "zero\none\ntwo\nthree\n");
+    workbench.settle().unwrap();
+
+    let caret = editor(&workbench, project).caret;
+    assert_eq!((caret.line, caret.column), (3, 2), "still in `three`, after `th`");
+}
+
+#[test]
 fn saving_in_genea_never_shows_the_conflict_bar() {
     let (fixture, mut workbench, project) = open("main.ts", "a\n");
 
