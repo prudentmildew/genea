@@ -231,7 +231,7 @@ impl Review {
                 let paths: Vec<(PathBuf, Vec<PathBuf>)> =
                     paths.into_iter().map(|path| (path.clone(), self.known_under(&path))).collect();
                 Box::new(move || {
-                    let mut check = Checker { root: &root, store: &store, own: &own, budget: &mut budget, observed: Vec::new() };
+                    let mut check = Checker::new(&root, &store, &own, &mut budget);
                     match check.paths(&scope, paths) {
                         Some(()) => Finished::Observed { observed: check.observed },
                         None => Finished::NeedsRescan,
@@ -240,10 +240,7 @@ impl Review {
             }
             Op::Rescan => {
                 let known: Vec<PathBuf> = self.baseline.keys().chain(self.changes.keys()).cloned().collect();
-                Box::new(move || {
-                    let check = Checker { root: &root, store: &store, own: &own, budget: &mut budget, observed: Vec::new() };
-                    check.rescan(known)
-                })
+                Box::new(move || Checker::new(&root, &store, &own, &mut budget).rescan(known))
             }
             Op::Keep(paths) => {
                 let paths: Vec<PathBuf> = paths.into_iter().filter(|p| self.changes.contains_key(p)).collect();
@@ -460,7 +457,11 @@ struct Checker<'a> {
     observed: Vec<(PathBuf, Option<FileState>)>,
 }
 
-impl Checker<'_> {
+impl<'a> Checker<'a> {
+    fn new(root: &'a Path, store: &'a Store, own: &'a OwnWrites, budget: &'a mut Budget) -> Self {
+        Checker { root, store, own, budget, observed: Vec::new() }
+    }
+
     /// Reads each changed path, with the baseline paths at or below it.
     /// Returns `None` if the scope may have changed (a `.gitignore` did), so
     /// a rescan is needed.
