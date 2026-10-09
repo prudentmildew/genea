@@ -47,6 +47,7 @@ export component ProjectWindow inherits Window {
     callback copy();
     callback paste();
     callback select-all();
+    callback reload-environment();
     callback show-about();
     callback close-tab();
     callback split-right();
@@ -130,6 +131,16 @@ export component ProjectWindow inherits Window {
                 enabled: root.has-editor;
                 activated => {
                     root.close-tab();
+                }
+            }
+
+            MenuSeparator { }
+
+            // Re-runs the login shell for the project's environment (#36).
+            MenuItem {
+                title: "Reload Environment";
+                activated => {
+                    root.reload-environment();
                 }
             }
         }

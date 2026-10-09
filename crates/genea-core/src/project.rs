@@ -8,12 +8,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use genea_host::Host;
+use genea_host::{Host, SharedHost};
 use ropey::Rope;
 
 use crate::{
     command::Command,
     editor::Editor,
+    environment::{Environment, ProcessEnv},
     history::EditKind,
     jobs::Jobs,
     text::Decoded,
@@ -40,6 +41,8 @@ pub(crate) struct Project {
     open_generation: u64,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
+    /// What its processes get (ticket #36); set by `start_environment`.
+    pub(crate) environment: Option<Environment>,
 }
 
 impl Project {
@@ -53,7 +56,24 @@ impl Project {
             notices: Vec::new(),
             open_generation: 0,
             toolchain: None,
+            environment: None,
         }
+    }
+
+    /// Captures the login shell's environment in the background, once per
+    /// open.
+    pub(crate) fn start_environment(&mut self, host: SharedHost, jobs: &Jobs) {
+        let environment = self.environment.insert(Environment::new(self.id, self.root.clone(), host));
+        environment.capture(jobs);
+    }
+
+    /// The environment for a process started for this project: pass every
+    /// spec through [`ProcessEnv::apply`] before spawning it. This is the
+    /// one way the terminal, scripts and language servers start processes.
+    pub(crate) fn process_env(&self) -> ProcessEnv {
+        let environment = self.environment.as_ref().expect("the environment starts when the project opens");
+        let tools = self.toolchain.iter().flat_map(Toolchain::installed);
+        environment.process_env(tools.map(|installed| installed.bin_dir.as_path()))
     }
 
     /// Reads the toolchain pins and starts the downloads, in the background.
@@ -122,6 +142,11 @@ impl Project {
             Command::PinToolchainDefaults => {
                 if let Some(toolchain) = &mut self.toolchain {
                     toolchain.pin_defaults(jobs);
+                }
+            }
+            Command::ReloadEnvironment => {
+                if let Some(environment) = &mut self.environment {
+                    environment.capture(jobs);
                 }
             }
             Command::ExtendSelection { line, column } => {
@@ -239,6 +264,7 @@ impl Project {
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
+        notices.extend(self.environment.iter().flat_map(Environment::notices));
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

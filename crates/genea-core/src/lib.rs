@@ -22,6 +22,7 @@
 
 mod command;
 mod editor;
+mod environment;
 mod grid;
 mod history;
 mod jobs;
@@ -37,6 +38,9 @@ mod workbench;
 pub use command::{CaretMove, Command};
 pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;
+pub use environment::LOGIN_SHELL_TIMEOUT;
+/// What `Workbench::spawn` takes and returns, from the host boundary.
+pub use genea_host::{Child, ProcessSpec};
 pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};

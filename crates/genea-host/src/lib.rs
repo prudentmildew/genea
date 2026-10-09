@@ -27,7 +27,11 @@ mod downloads;
 mod processes;
 pub mod real;
 
-use std::{path::Path, sync::Arc};
+use std::{
+    ffi::OsString,
+    path::Path,
+    sync::Arc,
+};
 
 pub use clipboard::Clipboard;
 pub use clock::{Clock, TimerCallback};
@@ -52,6 +56,11 @@ pub trait Host: Send + Sync + 'static {
     /// yet: whoever writes into it creates it. The real host uses
     /// `~/Library/Application Support/Genea`; the test host a temp dir.
     fn support_dir(&self) -> &Path;
+    /// The environment variables Genea itself was started with. Each
+    /// project's processes get the variables of the user's login shell
+    /// instead (ticket #36); this is what the shell capture starts from,
+    /// and the fallback when it fails. `SHELL` in it names the login shell.
+    fn launch_environment(&self) -> Vec<(OsString, OsString)>;
 }
 
 /// How the core holds its host.
