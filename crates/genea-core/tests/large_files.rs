@@ -57,7 +57,11 @@ fn a_file_over_5_mb_opens_without_highlighting_and_the_status_bar_says_why() {
 
 #[test]
 fn a_file_of_exactly_5_mb_is_highlighted_as_usual() {
-    let (_fixture, workbench, project) = open_file("big.ts", &typescript(5 * MB));
+    // `.env`: highlighted by a line scanner, so a debug build gets through
+    // 5 MB of it well within `settle`'s timeout (TypeScript doesn't).
+    let mut text = "KEY=value\n".repeat(5 * MB / 10);
+    text.push_str(&"#".repeat(5 * MB - text.len()));
+    let (_fixture, workbench, project) = open_file(".env", &text);
 
     let view = workbench.project(project).unwrap();
     assert!(!view.editor.unwrap().lines[0].highlights.is_empty(), "highlighted");
