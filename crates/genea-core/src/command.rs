@@ -231,6 +231,8 @@ pub enum Command {
     /// Gives the terminal the keyboard focus (a click in it). The editor
     /// gets it back with `FocusPane` or `SelectTab`.
     FocusTerminal,
+    /// Shows a terminal tab: an index into `TerminalView::tabs`.
+    SelectTerminalTab(usize),
     /// Tells the core how many rows and columns of cells fit in the
     /// terminal pane. The shell is told too (SIGWINCH), and the grid
     /// reflows.

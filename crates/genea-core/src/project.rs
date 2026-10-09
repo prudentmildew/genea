@@ -37,6 +37,13 @@ use tabs::Panes;
 /// The status-bar item for a large file.
 const LARGE_FILE_NOTICE: &str = "Over 5 MB: no highlighting or language features";
 
+/// The package manager's arguments for "Install dependencies".
+const INSTALL: [&str; 1] = ["install"];
+
+/// Why a folder without a root `package.json` has no toolchain.
+const NO_PACKAGE_JSON: &str =
+    "Genea manages the runtime and package manager of a project with a package.json at its root, and this folder has none.";
+
 /// Rows assumed until the view reports its viewport.
 const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
 
@@ -293,7 +300,21 @@ impl Project {
     pub(crate) fn start_terminal_when_ready(&mut self, host: &SharedHost, jobs: &Jobs) {
         if self.terminal.is_waiting() && self.environment_ready() {
             let env = self.process_env();
-            self.terminal.start(env, host.clone(), jobs);
+            let package_manager = match &self.toolchain {
+                Some(toolchain) => toolchain.package_manager_program(),
+                None => Err(NO_PACKAGE_JSON.into()),
+            };
+            self.terminal.start(env, package_manager, host.clone(), jobs);
+        }
+    }
+
+    /// "Install dependencies": the pinned package manager's `install` in a
+    /// terminal tab, which starts once the environment is ready.
+    fn install_dependencies(&mut self) {
+        match self.toolchain.as_ref().map(Toolchain::package_manager_name) {
+            Some(Ok(name)) => self.terminal.run_package_manager(name, &INSTALL),
+            Some(Err(reason)) => self.notify(reason),
+            None => self.notify(NO_PACKAGE_JSON.into()),
         }
     }
 
@@ -366,6 +387,7 @@ impl Project {
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
             Command::ToggleTerminal
             | Command::FocusTerminal
+            | Command::SelectTerminalTab(_)
             | Command::SetTerminalSize { .. }
             | Command::TerminalText(_)
             | Command::TerminalPreedit(_)
@@ -417,12 +439,7 @@ impl Project {
             }
             Command::OpenToolchainPicker(kind) => match &mut self.toolchain {
                 Some(toolchain) => toolchain.open_picker(kind, jobs),
-                None => self.notices.push(Notice {
-                    message: "Genea manages the runtime and package manager of a project with a package.json at its \
-                              root, and this folder has none."
-                        .into(),
-                    action: None,
-                }),
+                None => self.notify(NO_PACKAGE_JSON.into()),
             },
             Command::FilterToolchainPicker(query) => {
                 if let Some(toolchain) = &mut self.toolchain {
@@ -451,7 +468,7 @@ impl Project {
                     environment.capture(jobs);
                 }
             }
-            Command::InstallDependencies => {}
+            Command::InstallDependencies => self.install_dependencies(),
             Command::ExtendSelection { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, true, self.viewport_rows);
@@ -688,7 +705,9 @@ impl Project {
     /// "Install dependencies", while `node_modules` is missing in a project
     /// whose package manager Genea runs, and no install is under way.
     fn install_notice(&self) -> Option<Notice> {
-        let offer = self.dependencies.are_missing() && self.toolchain.as_ref().is_some_and(Toolchain::can_install);
+        let offer = self.dependencies.are_missing()
+            && self.toolchain.as_ref().is_some_and(Toolchain::can_install)
+            && !self.terminal.is_running_package_manager(&INSTALL);
         offer.then(|| Notice {
             message: "This project's dependencies aren't installed.".into(),
             action: Some(NoticeAction { label: "Install dependencies".into(), command: Command::InstallDependencies }),

@@ -64,6 +64,6 @@ pub use view::{
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
 pub use view::{
-    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
+    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalTab, TerminalView,
 };
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};
