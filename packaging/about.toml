@@ -21,6 +21,10 @@ accepted = [
     "Unicode-3.0",
     "bzip2-1.0.6",
     "LicenseRef-Slint-Royalty-free-2.0",
+    # Permissive, for data: webpki-root-certs, which ureq's `native-tls`
+    # feature always links (ticket #35). Genea verifies against the system
+    # trust store, not these roots.
+    "CDLA-Permissive-2.0",
     # File-level copyleft; fine for binary distribution as long as the source
     # stays available (nucleo-matcher, spec #19). The template adds the notice.
     "MPL-2.0",

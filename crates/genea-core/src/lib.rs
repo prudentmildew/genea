@@ -29,6 +29,7 @@ mod project;
 mod recent;
 mod templates;
 mod text;
+mod toolchain;
 mod update;
 mod view;
 mod workbench;
@@ -39,6 +40,7 @@ pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView,
+    Caret, EditorView, Notice, NoticeAction, Preedit, ProjectView, RecentProject, StatusBar, ToolState, ToolView,
+    ToolchainView, VisibleLine, WelcomeView,
 };
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

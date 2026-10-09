@@ -5,12 +5,17 @@ import { Theme } from "theme.slint";
 
 export component StatusBar inherits Rectangle {
     in property <string> notice;
+    // The notice's button label (Retry, …), or empty for none.
+    in property <string> notice-action;
+    // Toolchain download progress (ticket #35).
+    in property <string> toolchain;
     in property <string> caret;
     in property <string> encoding;
     in property <string> line-ending;
     // The update notice ("Genea 0.2.0 is available"), or empty.
     in property <string> update;
 
+    callback notice-action-clicked();
     callback update-clicked();
 
     height: 22px;
@@ -34,6 +39,28 @@ export component StatusBar inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
+        }
+
+        if root.notice-action != "": Text {
+            text: root.notice-action;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            font-weight: 600;
+            vertical-alignment: center;
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.notice-action-clicked();
+                }
+            }
+        }
+
+        Text {
+            text: root.toolchain;
+            color: Theme.chrome-muted;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
         }
 
         if root.update != "": Text {

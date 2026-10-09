@@ -32,6 +32,11 @@ pub enum Command {
     /// view rounds a click to the nearest cell boundary first. Cells past the
     /// end of a line or below the last line clamp to the text.
     PlaceCaret { line: usize, column: usize },
+    /// Retries the toolchain downloads that failed (a notice's Retry).
+    RetryToolchain,
+    /// Writes Genea's default versions as exact pins to `package.json` for
+    /// the roles the project doesn't pin (the unpinned notice's action).
+    PinToolchainDefaults,
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },

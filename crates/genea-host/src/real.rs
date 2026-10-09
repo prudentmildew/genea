@@ -257,10 +257,22 @@ impl HttpDownloads {
 
 impl Downloads for HttpDownloads {
     fn fetch(&self, url: &str, sink: &mut dyn Write) -> Result<u64, DownloadError> {
+        self.fetch_with_length(url, sink, &mut |_| {})
+    }
+
+    fn fetch_with_length(
+        &self,
+        url: &str,
+        sink: &mut dyn Write,
+        length: &mut dyn FnMut(u64),
+    ) -> Result<u64, DownloadError> {
         let response = self.agent().get(url).call().map_err(|e| DownloadError::Transport(e.to_string()))?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(DownloadError::Status(status));
+        }
+        if let Some(len) = response.body().content_length() {
+            length(len);
         }
         let mut body = response.into_body().into_reader();
         Ok(io::copy(&mut body, sink)?)
