@@ -307,6 +307,7 @@ impl Project {
             | Command::FocusTerminal
             | Command::SetTerminalSize { .. }
             | Command::TerminalText(_)
+            | Command::TerminalPreedit(_)
             | Command::TerminalKey(..)
             | Command::ScrollTerminal { .. }
             | Command::TerminalMouse { .. }

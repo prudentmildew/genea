@@ -155,6 +155,10 @@ pub enum Command {
     SetTerminalSize { rows: usize, columns: usize },
     /// Types text into the terminal: a key press or an IME commit.
     TerminalText(String),
+    /// The IME's marked text in the terminal while a dead key composes,
+    /// drawn at the cursor but not sent. An empty string ends it; the
+    /// composed text then arrives as `TerminalText`.
+    TerminalPreedit(String),
     /// A key that isn't plain text, or one with ⌃ or ⌥ held: sent to the
     /// program the way xterm sends it. Return after the shell has exited
     /// (or failed to start) starts a new one.

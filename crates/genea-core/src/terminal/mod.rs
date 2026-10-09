@@ -76,6 +76,8 @@ pub(crate) struct Terminal {
     visible: bool,
     /// The pane has the keyboard focus.
     focused: bool,
+    /// The IME composition being typed.
+    preedit: Option<String>,
 }
 
 enum Shell {
@@ -231,6 +233,7 @@ impl Terminal {
             title: None,
             visible: true,
             focused: false,
+            preedit: None,
         }
     }
 
@@ -378,6 +381,7 @@ impl Terminal {
                 self.resize(Size { rows: rows.max(1), columns: columns.max(2) })
             }
             Command::TerminalText(text) => self.send(text.into_bytes()),
+            Command::TerminalPreedit(text) => self.preedit = Some(text).filter(|text| !text.is_empty()),
             Command::ScrollTerminal { rows, line, column } => self.scroll(rows, line, column),
             Command::TerminalMouse { action, line, column, modifiers } => {
                 if let Some(mode) = self.mode() {
@@ -496,6 +500,7 @@ impl Terminal {
             scrolled_back: screen.scrolled_back,
             alternate_screen: screen.mode.contains(TermMode::ALT_SCREEN),
             mouse_reporting: screen.mode.intersects(TermMode::MOUSE_MODE),
+            preedit: self.preedit.clone(),
         }
     }
 }

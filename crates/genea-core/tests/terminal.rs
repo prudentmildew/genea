@@ -554,3 +554,51 @@ fn a_shell_that_cant_start_says_why() {
         TerminalStatus::Failed("Couldn't start your shell (/bin/zsh): can't start /bin/zsh".into())
     );
 }
+
+#[test]
+fn a_dead_key_composes_at_the_cursor_and_sends_the_composed_character() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    pty.output("$ ");
+    workbench.settle().unwrap();
+
+    // ⌥E, then E: the IME shows ´ until the second key.
+    workbench.dispatch(project, Command::TerminalPreedit("´".into()));
+    assert_eq!(terminal(&workbench, project).preedit.as_deref(), Some("´"));
+    workbench.dispatch(project, Command::TerminalPreedit(String::new()));
+    workbench.dispatch(project, Command::TerminalText("é".into()));
+
+    assert_eq!(terminal(&workbench, project).preedit, None);
+    assert_eq!(pty.wait_for_input("é"), "é");
+}
+
+#[test]
+fn a_flood_of_output_lands_while_the_editor_keeps_typing() {
+    let host = TestHost::new();
+    let fixture = FixtureProject::new().file("src/main.ts", "").build();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    workbench.dispatch(project, Command::OpenFile("src/main.ts".into()));
+    workbench.settle().unwrap();
+
+    // `yes`: megabytes of output, played on another thread.
+    let flood = std::thread::spawn(move || {
+        let chunk = "y\r\n".repeat(10_000);
+        for _ in 0..20 {
+            pty.output(&chunk);
+        }
+        pty.output("done");
+    });
+    for c in "let typed = 1;".chars() {
+        workbench.dispatch(project, Command::InsertText(c.to_string()));
+        workbench.pump();
+    }
+    flood.join().unwrap();
+    workbench.settle().unwrap();
+
+    assert_eq!(workbench.project(project).unwrap().editor.unwrap().lines[0].text, "let typed = 1;");
+    let screen = screen(&workbench, project);
+    assert_eq!(screen.len(), 24);
+    assert_eq!(screen[22..], ["y", "done"]);
+    assert_eq!(terminal(&workbench, project).history, 10_000);
+}

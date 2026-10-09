@@ -314,6 +314,8 @@ pub struct TerminalView {
     pub alternate_screen: bool,
     /// The program takes mouse clicks (mouse reporting is on).
     pub mouse_reporting: bool,
+    /// The IME composition being typed (a dead key), drawn at the cursor.
+    pub preedit: Option<String>,
 }
 
 /// Whether the terminal's shell runs.
