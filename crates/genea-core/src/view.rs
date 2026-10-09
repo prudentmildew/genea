@@ -159,6 +159,8 @@ pub enum LeftColumnView {
     Files,
     /// ⌘6.
     Problems,
+    /// ⌘⇧F: project search.
+    Search,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem

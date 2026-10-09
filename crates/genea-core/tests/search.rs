@@ -2,7 +2,7 @@
 //! regex, case-sensitive and whole-word modes, without ignored or excluded
 //! files; a click opens the file at the match.
 
-use genea_core::{Command, MAX_SEARCH_MATCHES, ProjectId, SearchQuery, Workbench};
+use genea_core::{Command, LeftColumnView, MAX_SEARCH_MATCHES, ProjectId, SearchQuery, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 fn open(fixture: FixtureBuilder) -> (FixtureProject, Workbench, ProjectId) {
@@ -34,6 +34,18 @@ fn results(workbench: &Workbench, project: ProjectId) -> Vec<String> {
         }
     }
     lines
+}
+
+#[test]
+fn the_search_shortcut_shows_the_search_view_or_collapses_the_column() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new());
+    let left_column = |workbench: &Workbench| workbench.project(project).unwrap().left_column;
+
+    workbench.dispatch(project, Command::ToggleLeftColumn(LeftColumnView::Search));
+    assert_eq!(left_column(&workbench), Some(LeftColumnView::Search));
+
+    workbench.dispatch(project, Command::ToggleLeftColumn(LeftColumnView::Search));
+    assert_eq!(left_column(&workbench), None);
 }
 
 #[test]
@@ -221,7 +233,7 @@ fn long_lines_are_cut_short_around_the_match() {
 
     let m = workbench.project(project).unwrap().search.files[0].matches[0].clone();
     assert_eq!(m.location, "1:101");
-    assert_eq!(m.before, format!("…{}", "a".repeat(40)));
+    assert_eq!(m.before, format!("…{}", "a".repeat(24)));
     assert_eq!(m.after, format!("{}…", "b".repeat(120)));
 }
 

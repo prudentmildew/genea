@@ -41,7 +41,7 @@ pub const MAX_SEARCH_MATCHES: usize = 10_000;
 
 /// How much of a match's line a result shows, in chars, before and after
 /// the match (and of the match itself).
-const BEFORE_CHARS: usize = 40;
+const BEFORE_CHARS: usize = 24;
 const MATCH_CHARS: usize = 200;
 const AFTER_CHARS: usize = 120;
 

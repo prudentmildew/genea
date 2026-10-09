@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, Workbench};
+use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, SearchQuery, Workbench};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
@@ -382,6 +382,17 @@ fn wire(controller: &WindowController) {
             controller.click_file(&mut app.workbench, index);
         });
     });
+    window.on_search(move |text, regex, case_sensitive, whole_word| {
+        let query = SearchQuery { text: text.into(), regex, case_sensitive, whole_word };
+        with_app(move |app| app.dispatch(key, Command::Search(query)));
+    });
+    window.on_search_result_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.open_search_result(&mut app.workbench, index);
+        });
+    });
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
@@ -397,6 +408,7 @@ fn left_column_view(view: LeftView) -> LeftColumnView {
     match view {
         LeftView::Files => LeftColumnView::Files,
         LeftView::Problems => LeftColumnView::Problems,
+        LeftView::Search => LeftColumnView::Search,
     }
 }
 
