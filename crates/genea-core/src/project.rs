@@ -18,6 +18,7 @@ use crate::{
     config::{self, CONFIG_FILE, Config},
     editor::Editor,
     environment::{Environment, ProcessEnv},
+    files::FileIndex,
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
@@ -59,6 +60,8 @@ pub(crate) struct Project {
     problems: Problems,
     /// What the left column shows; `None` while it is collapsed.
     left_column: Option<LeftColumnView>,
+    /// The project's files, for the Files view (ticket #30).
+    pub(crate) files: FileIndex,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
@@ -69,6 +72,7 @@ impl Project {
     pub(crate) fn new(id: ProjectId, root: PathBuf) -> Self {
         Project {
             id,
+            files: FileIndex::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -99,6 +103,7 @@ impl Project {
         }
         self.load_config(jobs);
         self.find_nested_configs(jobs);
+        self.files.start(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -485,6 +490,7 @@ impl Project {
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
+            files: self.files.rows(),
         }
     }
 
