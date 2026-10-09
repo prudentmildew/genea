@@ -116,7 +116,9 @@ impl Scenario for Idle {
         let frames = |s: &Sample| s.journal.as_ref().map_or(0.0, |j| j.frames as f64);
         let cpu = |s: &Sample| s.cpu_pct;
         let wakeups = |s: &Sample| s.wakeups_per_s;
-        let footprint = |s: &Sample| Summary::of(&s.footprints_mb).map_or(0.0, |s| s.p50);
+        // Each run's settled footprint: its p95, since memory can still be
+        // settling early in the window.
+        let footprint = |s: &Sample| Summary::of(&s.footprints_mb).map_or(0.0, |s| s.p95);
         let budget_mb = footprints(&budget);
         let default_window = journal.iter().find_map(|s| s.journal.as_ref().map(|j| j.info.clone()));
         cx.record(
@@ -141,7 +143,7 @@ impl Scenario for Idle {
                     "cpu_pct_worst": round_small(worst(&journal, &cpu)),
                     "wakeups_per_s_worst": round(worst(&journal, &wakeups)),
                 },
-                "journal_cost_medians": {
+                "journal_cost_medians_of_runs": {
                     "footprint_mb": round(median(&journal, &footprint) - median(&plain, &footprint)),
                     "cpu_pct": round_small(median(&journal, &cpu) - median(&plain, &cpu)),
                     "wakeups_per_s": round(median(&journal, &wakeups) - median(&plain, &wakeups)),
