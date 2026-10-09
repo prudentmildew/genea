@@ -1,13 +1,14 @@
 // The left column (spec #19 story 54): a view switcher on top and the active
-// view below. Problems (⌘6) is the first view; Files (⌘1), Changes and
-// Search join it in their tickets: add a `LeftView` value, a switcher tab
-// and the view itself. The column is collapsed (not shown) while the core's
+// view below. Files (⌘1, the one a project opens with) and Problems (⌘6)
+// are there; Changes and Search join them in their tickets: add a
+// `LeftView` value, a switcher tab and the view itself. The column is collapsed (not shown) while the core's
 // `left_column` is `None`.
 
 import { Theme } from "theme.slint";
 import { ProblemsView, ProblemRow } from "problems-view.slint";
+import { FilesView, FileEntry } from "files-view.slint";
 
-export enum LeftView { problems }
+export enum LeftView { files, problems }
 
 // A tab in the switcher.
 component SwitcherTab inherits Rectangle {
@@ -42,10 +43,12 @@ component SwitcherTab inherits Rectangle {
 export component LeftColumn inherits Rectangle {
     in property <LeftView> view;
     in property <[ProblemRow]> problems;
+    in property <[FileEntry]> files;
 
     // A switcher tab was clicked: show that view.
     callback show(LeftView);
     callback problem-clicked(int);
+    callback file-clicked(int);
 
     background: Theme.chrome-background;
 
@@ -56,6 +59,14 @@ export component LeftColumn inherits Rectangle {
             HorizontalLayout {
                 padding-left: 4px;
                 alignment: start;
+
+                SwitcherTab {
+                    label: "Files";
+                    active: root.view == LeftView.files;
+                    clicked => {
+                        root.show(LeftView.files);
+                    }
+                }
 
                 SwitcherTab {
                     label: "Problems";
@@ -70,6 +81,14 @@ export component LeftColumn inherits Rectangle {
                 y: parent.height - 1px;
                 height: 1px;
                 background: Theme.chrome-border;
+            }
+        }
+
+        if root.view == LeftView.files: FilesView {
+            vertical-stretch: 1;
+            files: root.files;
+            clicked(index) => {
+                root.file-clicked(index);
             }
         }
 

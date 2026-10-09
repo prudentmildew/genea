@@ -1,0 +1,58 @@
+// The Files view in the left column (ticket #30): the project's file tree,
+// without `node_modules` and the config's `exclude`. Clicking a folder
+// expands or collapses it; clicking a file opens it. Rows are set from Rust
+// (src/window.rs) out of the core's ProjectView, already flattened: an
+// expanded folder's entries follow it, one level deeper.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct FileEntry {
+    name: string,
+    // 0 for the project root's entries.
+    depth: int,
+    folder: bool,
+    expanded: bool,
+}
+
+export component FilesView inherits Rectangle {
+    in property <[FileEntry]> files;
+
+    callback clicked(int);
+
+    background: Theme.chrome-background;
+
+    ListView {
+        for file[index] in root.files: Rectangle {
+            height: 22px;
+            background: touch.has-hover ? Theme.chrome-highlight : transparent;
+
+            HorizontalLayout {
+                padding-left: 6px + file.depth * 14px;
+                padding-right: 10px;
+                spacing: 4px;
+
+                // The disclosure triangle; files keep its space so names line up.
+                Text {
+                    width: 12px;
+                    text: !file.folder ? "" : file.expanded ? "▾" : "▸";
+                    color: Theme.chrome-muted;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: file.name;
+                    color: Theme.chrome-foreground;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+
+            touch := TouchArea {
+                clicked => {
+                    root.clicked(index);
+                }
+            }
+        }
+    }
+}

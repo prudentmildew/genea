@@ -8,18 +8,20 @@
 
 use std::{
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use genea_core::{
-    CloseChoice, Command, LeftColumnView, PaneView, ProblemItem, ProjectId, Severity, Theme as ConfigTheme, Workbench,
+    CloseChoice, Command, FileRow, FileRowKind, LeftColumnView, PaneView, ProblemItem, ProjectId, Severity,
+    Theme as ConfigTheme, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::{LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts, surface::Surface};
+use crate::{FileEntry, LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts, surface::Surface};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -46,6 +48,9 @@ pub struct WindowController {
     /// user saw and an unchanged list isn't pushed again.
     problems: Vec<ProblemItem>,
     problem_rows: Rc<VecModel<ProblemRow>>,
+    /// The Files view's rows as last pushed, likewise.
+    files: Arc<[FileRow]>,
+    file_rows: Rc<VecModel<FileEntry>>,
     /// The button went down with ⌥ (adding a caret), so a drag doesn't
     /// select.
     option_press: bool,
@@ -61,6 +66,8 @@ impl WindowController {
         let surfaces = [Surface::new(&window, 0), Surface::new(&window, 1)];
         let problem_rows = Rc::new(VecModel::default());
         window.set_problems(ModelRc::from(problem_rows.clone()));
+        let file_rows = Rc::new(VecModel::default());
+        window.set_files(ModelRc::from(file_rows.clone()));
         Ok(WindowController {
             key,
             window,
@@ -74,6 +81,8 @@ impl WindowController {
             last_double_click: None,
             problems: Vec::new(),
             problem_rows,
+            files: Arc::from([]),
+            file_rows,
             option_press: false,
         })
     }
@@ -204,8 +213,28 @@ impl WindowController {
         theme.set_pinned_dark(view.config.theme == ConfigTheme::Dark);
 
         window.set_left_column_visible(view.left_column.is_some());
-        if let Some(LeftColumnView::Problems) = view.left_column {
-            window.set_left_view(LeftView::Problems);
+        match view.left_column {
+            Some(LeftColumnView::Files) => window.set_left_view(LeftView::Files),
+            Some(LeftColumnView::Problems) => window.set_left_view(LeftView::Problems),
+            None => {}
+        }
+        // The core shares an unchanged tree, so this is a pointer compare.
+        if view.files != self.files {
+            let rows: Vec<FileEntry> = view
+                .files
+                .iter()
+                .map(|row| FileEntry {
+                    name: row.name.as_str().into(),
+                    depth: row.depth as i32,
+                    folder: matches!(row.kind, FileRowKind::Folder { .. }),
+                    expanded: row.kind == FileRowKind::Folder { expanded: true },
+                })
+                .collect();
+            for row in &rows {
+                fonts::prepare(&row.name);
+            }
+            self.file_rows.set_vec(rows);
+            self.files = view.files.clone();
         }
         if view.problems != self.problems {
             let rows: Vec<ProblemRow> = view
@@ -289,6 +318,17 @@ impl WindowController {
     pub fn open_problem(&mut self, workbench: &mut Workbench, index: usize) {
         let Some(item) = self.problems.get(index) else { return };
         let command = Command::OpenFileAt { path: item.path.clone(), at: item.position };
+        self.dispatch(workbench, command);
+    }
+
+    /// A Files view row was clicked: open the file, or expand or collapse
+    /// the folder.
+    pub fn click_file(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some(row) = self.files.get(index) else { return };
+        let command = match row.kind {
+            FileRowKind::File => Command::OpenFile(row.path.clone()),
+            FileRowKind::Folder { .. } => Command::ToggleFolder(row.path.clone()),
+        };
         self.dispatch(workbench, command);
     }
 
