@@ -315,6 +315,37 @@ impl Project {
                     toolchain.pin_defaults(jobs);
                 }
             }
+            Command::OpenToolchainPicker(kind) => match &mut self.toolchain {
+                Some(toolchain) => toolchain.open_picker(kind, jobs),
+                None => self.notices.push(Notice {
+                    message: "Genea manages the runtime and package manager of a project with a package.json at its \
+                              root, and this folder has none."
+                        .into(),
+                    action: None,
+                }),
+            },
+            Command::FilterToolchainPicker(query) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.filter_picker(query);
+                }
+            }
+            Command::CloseToolchainPicker => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.close_picker();
+                }
+            }
+            Command::SetRuntime(pin) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.set_runtime(pin, jobs);
+                }
+            }
+            Command::SetPackageManager(pin) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.set_package_manager(pin, jobs);
+                }
+            }
+            // The workbench handles it: it needs the recent projects.
+            Command::RemoveUnusedToolchains => {}
             Command::ReloadEnvironment => {
                 if let Some(environment) = &mut self.environment {
                     environment.capture(jobs);
@@ -485,6 +516,7 @@ impl Project {
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
+            toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
         }
     }
 
