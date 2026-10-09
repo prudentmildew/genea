@@ -21,6 +21,9 @@ use globset::{GlobBuilder, GlobMatcher};
 
 use super::text;
 
+/// Git's folder, whose changes no server is told about.
+const REPOSITORY: &str = ".git";
+
 /// The method a file-watching registration is for.
 pub(crate) const METHOD: &str = "workspace/didChangeWatchedFiles";
 
@@ -33,8 +36,8 @@ pub(crate) struct Watchers {
 
 struct Watch {
     glob: GlobMatcher,
-    /// A relative pattern's base folder: the glob matches paths below it.
-    /// Without one, the glob matches the whole absolute path.
+    /// A relative pattern's base folder, lowercased: the glob matches paths
+    /// below it. Without one, the glob matches the whole absolute path.
     base: Option<PathBuf>,
     /// Which kinds of change it wants (`WatchKind` bits; all by default).
     kinds: u32,
@@ -68,7 +71,15 @@ impl Watchers {
                         (relative.pattern.as_str(), Some(base?))
                     }
                 };
-                let glob = GlobBuilder::new(pattern).literal_separator(true).build().ok()?.compile_matcher();
+                // tsgo registers some globs with the path lowercased: macOS
+                // file systems ignore case, and so does it.
+                let glob = GlobBuilder::new(pattern)
+                    .literal_separator(true)
+                    .case_insensitive(true)
+                    .build()
+                    .ok()?
+                    .compile_matcher();
+                let base = base.map(|base: PathBuf| PathBuf::from(base.to_string_lossy().to_lowercase()));
                 let kinds = watcher.kind.map_or(7, u32::from);
                 Some(Watch { glob, base, kinds })
             })
@@ -111,10 +122,15 @@ impl Watchers {
     }
 
     fn wants(&self, path: &Path, bit: u32) -> bool {
+        // The repository's own files are never a server's business.
+        if path.components().any(|c| c.as_os_str() == REPOSITORY) {
+            return false;
+        }
+        let lowercase = PathBuf::from(path.to_string_lossy().to_lowercase());
         self.registrations.iter().flat_map(|(_, watches)| watches.iter()).any(|watch| {
             watch.kinds & bit != 0
                 && match &watch.base {
-                    Some(base) => path.strip_prefix(base).is_ok_and(|rest| watch.glob.is_match(rest)),
+                    Some(base) => lowercase.strip_prefix(base).is_ok_and(|rest| watch.glob.is_match(rest)),
                     None => watch.glob.is_match(path),
                 }
         })
@@ -165,5 +181,18 @@ mod tests {
         );
         watchers.unregister("w");
         assert!(watchers.is_empty());
+    }
+
+    #[test]
+    fn globs_ignore_case_as_macos_does_and_the_repository_folder_is_never_watched() {
+        // tsgo registers its program's folder lowercased.
+        let mut watchers = Watchers::default();
+        watchers.register(&registration(json!([{ "globPattern": "/users/me/app/**/*", "kind": 7 }])));
+        let index = format!("/Users/Me/App/{REPOSITORY}/index");
+        let paths: BTreeSet<PathBuf> = [PathBuf::from("/Users/Me/App/src/a.ts"), PathBuf::from(index)].into();
+
+        let events: Vec<String> = watchers.events(&paths, &BTreeSet::new()).into_iter().map(|e| e.uri.0).collect();
+
+        assert_eq!(events, ["file:///Users/Me/App/src/a.ts"]);
     }
 }
