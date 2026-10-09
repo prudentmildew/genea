@@ -25,6 +25,7 @@ mod editor;
 mod jobs;
 mod project;
 mod recent;
+mod text;
 mod update;
 mod view;
 mod workbench;
@@ -32,5 +33,7 @@ mod workbench;
 pub use command::{CaretMove, Command};
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use update::{RELEASES_URL, UpdateNotice};
-pub use view::{Caret, EditorView, Notice, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView};
+pub use view::{
+    Caret, EditorView, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView,
+};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

@@ -13,14 +13,18 @@
 //! - `window`: one project window's view-state → Slint sync;
 //! - `welcome`: the welcome window's sync;
 //! - `surface`: the editor surface's ring of line slots;
-//! - `keys`: the keymap; `dialogs`: native Open panels; `links`: opening
-//!   web links in the browser.
+//! - `blink`: keeps the hidden TextInput from repainting on a timer;
+//! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
+//!   system clipboard behind the host's `Clipboard`; `links`: opening web
+//!   links in the browser.
 
 mod about;
 mod app;
+mod blink;
 mod dialogs;
 mod keys;
 mod links;
+mod pasteboard;
 mod surface;
 mod welcome;
 mod window;
@@ -33,6 +37,8 @@ fn main() {
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
     let folder = args.next();
     let file = args.next();
+
+    blink::turn_off_text_input_blink();
 
     // In code, not env vars: env vars would leak into every child process.
     if let Err(error) = slint::BackendSelector::new()

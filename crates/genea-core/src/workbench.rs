@@ -43,9 +43,8 @@ pub struct Workbench {
 
 /// Core state. Background Applies get `&mut Core`.
 pub(crate) struct Core {
-    // Not used by ticket #20's features yet; the toolchain, LSP, undo and
-    // terminal tickets reach the outside world only through it.
-    #[allow(dead_code)]
+    /// The outside world: the clipboard now; the toolchain, LSP, undo and
+    /// terminal tickets reach it only through this too.
     pub(crate) host: SharedHost,
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
@@ -130,9 +129,9 @@ impl Workbench {
     /// Applies a command to a project. Commands for a closed project are
     /// ignored.
     pub fn dispatch(&mut self, project: ProjectId, command: Command) {
-        let Core { projects, jobs, .. } = &mut self.core;
+        let Core { projects, jobs, host, .. } = &mut self.core;
         if let Some(project) = projects.get_mut(&project) {
-            project.dispatch(command, jobs);
+            project.dispatch(command, jobs, host.as_ref());
         }
     }
 

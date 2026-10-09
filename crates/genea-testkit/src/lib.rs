@@ -21,4 +21,4 @@ mod fixture;
 mod host;
 
 pub use fixture::{FixtureBuilder, FixtureProject};
-pub use host::{FakeProcess, ManualClock, ScriptedDownloads, ScriptedProcesses, TestHost};
+pub use host::{FakeProcess, ManualClock, ScriptedDownloads, ScriptedProcesses, TestClipboard, TestHost};
