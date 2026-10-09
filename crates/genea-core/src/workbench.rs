@@ -2,13 +2,13 @@
 
 use std::{
     collections::BTreeMap,
-    fmt,
+    fmt, io,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use genea_host::SharedHost;
+use genea_host::{Child, ProcessSpec, SharedHost};
 
 use crate::{
     command::Command,
@@ -119,6 +119,7 @@ impl Workbench {
         let project = self.core.projects.entry(id).or_insert(Project::new(id, root));
         project.start(&self.core.jobs, self.core.host.as_ref());
         project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
+        project.start_environment(self.core.host.clone(), &self.core.jobs);
         Ok(id)
     }
 
@@ -151,6 +152,21 @@ impl Workbench {
     /// project isn't open.
     pub fn project(&self, project: ProjectId) -> Option<ProjectView> {
         self.core.projects.get(&project).map(Project::view)
+    }
+
+    /// Starts a child process for a project, the way the terminal, scripts
+    /// and language servers start theirs: with the variables of the user's
+    /// login shell (captured when the project opened; the environment Genea
+    /// was started with until then, or if that failed) and the pinned
+    /// runtime and package manager first on PATH. It runs in the project
+    /// root unless `spec` names a folder; variables `spec` sets win.
+    pub fn spawn(&self, project: ProjectId, spec: ProcessSpec) -> io::Result<Child> {
+        let project = self
+            .core
+            .projects
+            .get(&project)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the project isn't open"))?;
+        self.core.host.processes().spawn(&project.process_env().apply(spec))
     }
 
     /// Creates a project from a template in the background: writes its

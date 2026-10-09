@@ -47,6 +47,7 @@ use, and nothing else:
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
+| Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
@@ -105,7 +106,8 @@ use, and nothing else:
 ## The host boundary
 
 `genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
-`clipboard()` (below), and `support_dir()`, Genea's application-support
+`clipboard()` (below), `launch_environment()` (the variables Genea was
+started with; `SHELL` names the login shell), and `support_dir()`, Genea's application-support
 folder, where the core keeps its own files (recent projects, the toolchain
 store; session state, review baselines, …). The folder is used through the
 real filesystem; the host only says where it is, so tests never touch the
@@ -122,7 +124,11 @@ user's. `Downloads::fetch_with_length` also reports the response's
 - `genea_testkit::TestHost`: `ManualClock::advance` fires due timers;
   `ScriptedProcesses::script("tsc", |spec, io| …)` plays a program on a
   thread with real pipes (unscripted programs fail with `NotFound`) and
-  records every spawn; `ScriptedDownloads::serve/fail` answers URLs from a
+  records every spawn; `ScriptedProcesses::script_shell("zsh", vars)` plays
+  a login shell with a real `/bin/sh` whose environment is exactly `vars`;
+  `TestHost::set_launch_environment` sets the launch environment (by default
+  only a `PATH`, with no `SHELL`, so no login shell runs);
+  `ScriptedDownloads::serve/fail` answers URLs from a
   table (unknown URLs answer 404) and records every request. Each test host
   has its own temp support folder; a second workbench on a clone of the same
   host is a restart.
@@ -150,6 +156,28 @@ package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it 
 in a job when a project with a root `package.json` opens, starts one job per
 role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
 whose `NoticeAction` carries the `Command` a click dispatches.
+
+## The project environment
+
+Every process Genea starts for a project (terminal shells, scripts,
+language servers, the project check) gets the project environment
+(`genea-core/src/environment.rs`, ticket #36, ADR 0005): the variables of the
+user's login shell, captured once per open by running `$SHELL -l -i -c` in
+the project root, with each `Installed::bin_dir` of the toolchain first on
+PATH (worked out at spawn time, so a download that finishes later counts).
+If the shell fails or takes longer than `LOGIN_SHELL_TIMEOUT` (5 s, host
+clock), processes get the launch environment and a notice offers
+`Command::ReloadEnvironment`, which also sits in the File menu. A process
+started before the capture lands gets the launch environment.
+
+**Starting a process from the core**: never build a `ProcessSpec` for a
+project process without it. Take `Project::process_env()` (a `Send`
+snapshot, fine to move into a job) and pass the spec through
+`ProcessEnv::apply(spec)`, then spawn it through `host.processes()` (or a
+PTY). `apply` sets `clear_env`, puts the project's variables first (the
+spec's own `env` entries win, e.g. `TERM`), and defaults `cwd` to the root.
+The slow lane `tests/environment_slow.rs` (`-- --ignored`) runs the real
+login shell.
 
 ## Tests
 

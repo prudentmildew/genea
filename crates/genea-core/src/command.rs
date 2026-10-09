@@ -39,6 +39,10 @@ pub enum Command {
     /// Writes Genea's default versions as exact pins to `package.json` for
     /// the roles the project doesn't pin (the unpinned notice's action).
     PinToolchainDefaults,
+    /// "Reload environment": runs the login shell again and gives processes
+    /// started from then on its variables. Until it answers, they get the
+    /// environment from before.
+    ReloadEnvironment,
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },

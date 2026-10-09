@@ -1459,6 +1459,7 @@ dependencies = [
  "notify",
  "ropey",
  "serde_json",
+ "tempfile",
  "unicode-width",
 ]
 
