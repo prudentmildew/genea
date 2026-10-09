@@ -76,7 +76,22 @@ impl Project {
             }
             Command::PlaceCaret { line, column } => {
                 if let Some(editor) = &mut self.editor {
-                    editor.place_caret(line, column, self.viewport_rows);
+                    editor.place_caret(line, column, false, self.viewport_rows);
+                }
+            }
+            Command::ExtendSelection { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.place_caret(line, column, true, self.viewport_rows);
+                }
+            }
+            Command::SelectWord { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_word(line, column, self.viewport_rows);
+                }
+            }
+            Command::SelectLine { line } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_line(line, self.viewport_rows);
                 }
             }
             Command::InsertText(text) => {

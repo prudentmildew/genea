@@ -32,6 +32,14 @@ pub enum Command {
     /// view rounds a click to the nearest cell boundary first. Cells past the
     /// end of a line or below the last line clamp to the text.
     PlaceCaret { line: usize, column: usize },
+    /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
+    /// but keeps the selection's anchor: a drag, or a ⇧-click.
+    ExtendSelection { line: usize, column: usize },
+    /// Double-click: selects the word (or punctuation or space run) at a
+    /// grid cell.
+    SelectWord { line: usize, column: usize },
+    /// Triple-click: selects a whole line with its line break.
+    SelectLine { line: usize },
     /// Types text at the caret, replacing the selection: a key press or an
     /// IME commit.
     InsertText(String),

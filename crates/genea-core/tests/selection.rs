@@ -141,6 +141,46 @@ fn option_shift_arrows_select_words_and_option_backspace_deletes_one() {
 }
 
 #[test]
+fn dragging_or_shift_clicking_extends_the_selection_from_the_click() {
+    let (_fixture, mut workbench, project) = open("one two\nthree four\n");
+
+    run(&mut workbench, project, [Command::PlaceCaret { line: 0, column: 4 }]);
+    run(&mut workbench, project, [Command::ExtendSelection { line: 1, column: 5 }]);
+    assert_eq!(highlighted(&workbench, project), [vec![4..8], vec![0..5], vec![]]);
+    assert_eq!(status_caret(&workbench, project), "2:6");
+
+    // Dragging back above the press point flips the selection.
+    run(&mut workbench, project, [Command::ExtendSelection { line: 0, column: 1 }]);
+    assert_eq!(highlighted(&workbench, project), [vec![1..4], vec![], vec![]]);
+
+    // A plain click drops it.
+    run(&mut workbench, project, [Command::PlaceCaret { line: 1, column: 0 }]);
+    assert_eq!(highlighted(&workbench, project), [vec![], vec![], vec![]]);
+}
+
+#[test]
+fn double_click_selects_a_word() {
+    let (_fixture, mut workbench, project) = open("let fooBar = 1;\n");
+
+    run(&mut workbench, project, [Command::SelectWord { line: 0, column: 6 }]);
+
+    assert_eq!(highlighted(&workbench, project), [vec![4..10], vec![]]);
+    assert_eq!(status_caret(&workbench, project), "1:11");
+}
+
+#[test]
+fn triple_click_selects_a_line_with_its_line_break() {
+    let (_fixture, mut workbench, project) = open("one\ntwo\nthree\n");
+
+    run(&mut workbench, project, [Command::SelectLine { line: 1 }]);
+    assert_eq!(highlighted(&workbench, project), [vec![], vec![0..4], vec![], vec![]]);
+    assert_eq!(status_caret(&workbench, project), "3:1");
+
+    run(&mut workbench, project, [Command::Delete(Left)]);
+    assert_eq!(lines(&workbench, project), ["one", "three", ""]);
+}
+
+#[test]
 fn select_all_selects_the_whole_file() {
     let (_fixture, mut workbench, project) = open("one\ntwo");
 

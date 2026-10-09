@@ -115,11 +115,47 @@ impl Editor {
     }
 
     /// Puts the caret at the last text position at or before a grid cell.
-    pub(crate) fn place_caret(&mut self, line: usize, column: usize, viewport_rows: f64) {
+    /// With `extend`, the selection's anchor stays put.
+    pub(crate) fn place_caret(&mut self, line: usize, column: usize, extend: bool, viewport_rows: f64) {
         let line = line.min(self.text.len_lines() - 1);
         let char_column = self.char_column_at(line, column);
         self.set_caret(line, char_column);
-        self.anchor = self.caret;
+        if !extend {
+            self.anchor = self.caret;
+        }
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Selects the run of one character class at a grid cell, with the
+    /// caret at its end.
+    pub(crate) fn select_word(&mut self, line: usize, column: usize, viewport_rows: f64) {
+        let line = line.min(self.text.len_lines() - 1);
+        let chars = self.line_chars(line);
+        let at = self.char_column_at(line, column).min(chars.len().saturating_sub(1));
+        let (start, end) = match chars.get(at) {
+            Some(&c) => {
+                let class = text::CharClass::of(c);
+                let same = |i: &usize| text::CharClass::of(chars[*i]) == class;
+                let start = (0..at).rev().take_while(same).last().unwrap_or(at);
+                let end = (at..chars.len()).take_while(same).last().map_or(at, |i| i + 1);
+                (start, end)
+            }
+            None => (0, 0),
+        };
+        let line_start = self.text.line_to_char(line);
+        self.anchor = line_start + start;
+        self.caret = line_start + end;
+        self.goal_column = None;
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Selects a whole line and its line break, with the caret at the start
+    /// of the next line.
+    pub(crate) fn select_line(&mut self, line: usize, viewport_rows: f64) {
+        let line = line.min(self.text.len_lines() - 1);
+        self.anchor = self.text.line_to_char(line);
+        self.caret = self.anchor + self.text.line(line).len_chars();
+        self.goal_column = None;
         self.reveal_caret(viewport_rows);
     }
 
