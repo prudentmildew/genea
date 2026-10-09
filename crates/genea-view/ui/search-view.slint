@@ -1,0 +1,196 @@
+// The Search view in the left column (ticket #34): a query field with the
+// regex, match-case and whole-word toggles, and the results grouped by file.
+// Every edit or toggle searches again (the core cancels the search in
+// flight). Clicking a match opens its file at the match; clicking a file
+// opens it. Rows are set from Rust (src/window.rs) out of the core's
+// ProjectView, already flattened: a file's matches follow it.
+
+import { ListView, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct SearchRow {
+    // A file header; otherwise a match in the file above it.
+    file: bool,
+    // A file's path (relative to the project root), or a match's
+    // `line:column`.
+    label: string,
+    // A match's line: the text before the match, the match, and after it.
+    before: string,
+    matched: string,
+    after: string,
+}
+
+// A two-state option button next to the query field.
+component Toggle inherits Rectangle {
+    in property <string> label;
+    in property <string> tooltip;
+    in-out property <bool> on;
+
+    callback toggled();
+
+    width: 24px;
+    height: 22px;
+    border-radius: 4px;
+    background: root.on ? Theme.selection : touch.has-hover ? Theme.chrome-highlight : transparent;
+
+    Text {
+        text: root.label;
+        color: root.on ? Theme.chrome-foreground : Theme.chrome-muted;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.on = !root.on;
+            root.toggled();
+        }
+    }
+}
+
+export component SearchView inherits Rectangle {
+    // The core's query, to fill the field when the view is shown again.
+    in property <string> query;
+    in property <bool> regex;
+    in property <bool> case-sensitive;
+    in property <bool> whole-word;
+    in property <[SearchRow]> rows;
+    // "12 matches in 3 files", "Searching…", an invalid regex's error, …
+    in property <string> status;
+    in property <bool> status-error;
+
+    callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
+    callback clicked(int);
+
+    background: Theme.chrome-background;
+
+    // The view is created when it is shown (⌘⇧F): type straight away.
+    init => {
+        field.focus();
+        field.select-all();
+    }
+
+    function search-again() {
+        root.search(field.text, regex-toggle.on, case-toggle.on, word-toggle.on);
+    }
+
+    VerticalLayout {
+        padding: 6px;
+        spacing: 4px;
+
+        HorizontalLayout {
+            spacing: 2px;
+
+            field := LineEdit {
+                horizontal-stretch: 1;
+                placeholder-text: "Search in project";
+                text: root.query;
+                edited => {
+                    root.search-again();
+                }
+            }
+
+            regex-toggle := Toggle {
+                label: ".*";
+                on: root.regex;
+                toggled => {
+                    root.search-again();
+                }
+            }
+
+            case-toggle := Toggle {
+                label: "Aa";
+                on: root.case-sensitive;
+                toggled => {
+                    root.search-again();
+                }
+            }
+
+            word-toggle := Toggle {
+                label: "W";
+                on: root.whole-word;
+                toggled => {
+                    root.search-again();
+                }
+            }
+        }
+
+        Text {
+            text: root.status;
+            color: root.status-error ? Theme.error : Theme.chrome-muted;
+            overflow: elide;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+
+            for row[index] in root.rows: Rectangle {
+                height: 22px;
+                background: touch.has-hover ? Theme.chrome-highlight : transparent;
+
+                if row.file: HorizontalLayout {
+                    padding-left: 4px;
+                    padding-right: 6px;
+
+                    Text {
+                        text: row.label;
+                        color: Theme.chrome-foreground;
+                        font-weight: 600;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if !row.file: HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 6px;
+                    spacing: 6px;
+
+                    Text {
+                        text: row.label;
+                        color: Theme.chrome-muted;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: row.before;
+                            color: Theme.chrome-foreground;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            background: Theme.selection;
+                            border-radius: 2px;
+                            width: matched-text.preferred-width;
+
+                            matched-text := Text {
+                                text: row.matched;
+                                color: Theme.chrome-foreground;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            horizontal-stretch: 1;
+                            text: row.after;
+                            color: Theme.chrome-foreground;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                touch := TouchArea {
+                    clicked => {
+                        root.clicked(index);
+                    }
+                }
+            }
+        }
+    }
+}

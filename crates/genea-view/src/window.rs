@@ -7,14 +7,16 @@
 //! surface diffs its slots, so a sync with nothing new repaints nothing.
 
 use std::{
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use genea_core::{
-    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, LeftColumnView, PaneView, ProblemItem, ProjectId,
-    Severity, Theme as ConfigTheme, ToolchainOption, Workbench,
+    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, LeftColumnView, MAX_SEARCH_MATCHES, PaneView,
+    ProblemItem, ProjectId, SearchFile, SearchView, Severity, TextPosition, Theme as ConfigTheme, ToolchainOption,
+    Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -22,7 +24,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    FileEntry, LeftView, PickerRow, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts,
+    FileEntry, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app, dialogs, fonts,
     keys::Modifiers, links, surface::Surface,
     terminal::{self, TerminalSurface},
 };
@@ -59,6 +61,8 @@ pub struct WindowController {
     /// The Files view's rows as last pushed, likewise.
     files: Arc<[FileRow]>,
     file_rows: Rc<VecModel<FileEntry>>,
+    /// The Search view's results as last pushed.
+    search: SearchResults,
     /// The button went down with ⌥ (adding a caret) or on a fold marker,
     /// so a drag doesn't select.
     option_press: bool,
@@ -90,6 +94,8 @@ impl WindowController {
         window.set_picker_options(ModelRc::from(picker_rows.clone()));
         let file_rows = Rc::new(VecModel::default());
         window.set_files(ModelRc::from(file_rows.clone()));
+        let search = SearchResults::default();
+        window.set_search_rows(ModelRc::from(search.rows.clone()));
         Ok(WindowController {
             key,
             window,
@@ -107,6 +113,7 @@ impl WindowController {
             problem_rows,
             files: Arc::from([]),
             file_rows,
+            search,
             option_press: false,
             picker_open: false,
             picker_options: Vec::new(),
@@ -303,8 +310,10 @@ impl WindowController {
         match view.left_column {
             Some(LeftColumnView::Files) => window.set_left_view(LeftView::Files),
             Some(LeftColumnView::Problems) => window.set_left_view(LeftView::Problems),
+            Some(LeftColumnView::Search) => window.set_left_view(LeftView::Search),
             None => {}
         }
+        self.search.sync(window, &view.search);
         // The core shares an unchanged tree, so this is a pointer compare.
         if view.files != self.files {
             let rows: Vec<FileEntry> = view
@@ -468,11 +477,100 @@ impl WindowController {
         self.dispatch(workbench, command);
     }
 
+    /// A Search view row was clicked: open the file, at the match for a
+    /// match row.
+    pub fn open_search_result(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some((path, at)) = self.search.targets.get(index) else { return };
+        let command = match at {
+            Some(at) => Command::OpenFileAt { path: path.clone(), at: *at },
+            None => Command::OpenFile(path.clone()),
+        };
+        self.dispatch(workbench, command);
+    }
+
+}
+
+/// The Search view's rows as last pushed, so a click maps to the result the
+/// user saw and unchanged results aren't pushed again.
+#[derive(Default)]
+struct SearchResults {
+    files: Arc<[SearchFile]>,
+    rows: Rc<VecModel<SearchRow>>,
+    /// What each row opens: a file, at a match for a match row.
+    targets: Vec<(PathBuf, Option<TextPosition>)>,
+}
+
+impl SearchResults {
+    /// Pushes the Search view's query, status line and results.
+    fn sync(&mut self, window: &ProjectWindow, search: &SearchView) {
+        window.set_search_query(search.query.text.as_str().into());
+        window.set_search_regex(search.query.regex);
+        window.set_search_case_sensitive(search.query.case_sensitive);
+        window.set_search_whole_word(search.query.whole_word);
+        window.set_search_status(search_status(search).into());
+        window.set_search_status_error(search.error.is_some());
+        // The core shares unchanged results, so this is a pointer compare.
+        if search.files == self.files {
+            return;
+        }
+        let mut rows = Vec::new();
+        let mut targets = Vec::new();
+        for file in search.files.iter() {
+            let path = file.path.display().to_string();
+            fonts::prepare(&path);
+            rows.push(SearchRow { file: true, label: path.into(), ..SearchRow::default() });
+            targets.push((file.path.clone(), None));
+            for m in &file.matches {
+                for text in [&m.before, &m.matched, &m.after] {
+                    fonts::prepare(text);
+                }
+                rows.push(SearchRow {
+                    file: false,
+                    label: m.location.as_str().into(),
+                    before: m.before.as_str().into(),
+                    matched: m.matched.as_str().into(),
+                    after: m.after.as_str().into(),
+                });
+                targets.push((file.path.clone(), Some(m.position)));
+            }
+        }
+        self.rows.set_vec(rows);
+        self.targets = targets;
+        self.files = search.files.clone();
+    }
+}
+
+impl WindowController {
     /// Shows a left-column view, leaving it showing if it already is.
     pub fn show_view(&mut self, workbench: &mut Workbench, view: LeftColumnView) {
         if workbench.project(self.project).is_some_and(|p| p.left_column != Some(view)) {
             self.dispatch(workbench, Command::ToggleLeftColumn(view));
         }
+    }
+}
+
+/// The Search view's status line: why the query can't run, or how many
+/// matches there are so far.
+fn search_status(search: &SearchView) -> String {
+    if let Some(error) = &search.error {
+        return error.lines().last().unwrap_or(error).trim().to_owned();
+    }
+    if search.query.text.is_empty() {
+        return String::new();
+    }
+    let files = search.files.len();
+    let counts = match (search.match_count, files) {
+        (0, _) => "No matches".to_owned(),
+        (1, _) => "1 match in 1 file".to_owned(),
+        (n, 1) => format!("{n} matches in 1 file"),
+        (n, f) => format!("{n} matches in {f} files"),
+    };
+    if search.searching {
+        if search.match_count == 0 { "Searching…".to_owned() } else { format!("{counts}, searching…") }
+    } else if search.limited {
+        format!("{counts} (stopped at {MAX_SEARCH_MATCHES})")
+    } else {
+        counts
     }
 }
 

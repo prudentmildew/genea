@@ -32,6 +32,11 @@ ignore = "0.4.33"
 # uses: `.editorconfig` sections and `.oxfmtrc.json` override globs.
 editorconfig-parser = "0.0.4"
 fast-glob = "1.1.2"
+# Project search (ticket #34): ripgrep's searcher and regex matcher; the walk
+# is `ignore`'s.
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+grep-matcher = "0.1.9"
 # The project watcher: FSEvents on macOS (#29; the Files view builds on it).
 notify = "8.2.0"
 # Syntax (ticket #24). The grammars depend on `tree-sitter-language`, not on a

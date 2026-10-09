@@ -35,6 +35,7 @@ mod problems;
 mod project;
 mod reading;
 mod recent;
+mod search;
 mod syntax;
 mod templates;
 mod terminal;
@@ -45,7 +46,8 @@ mod view;
 mod watcher;
 mod workbench;
 
-pub use command::{CaretMove, Command, Modifiers, MouseAction, MouseButton, TerminalKey};
+pub use command::{CaretMove, Command, Modifiers, MouseAction, MouseButton, SearchQuery, TerminalKey};
+pub use search::MAX_SEARCH_MATCHES;
 pub use config::{Config, TerminalPosition, Theme};
 pub use command::{CloseChoice, ConflictChoice};
 pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
@@ -62,7 +64,7 @@ pub use view::{
     NoticeAction, Preedit, ProblemItem, ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption,
     ToolchainPicker, ToolchainPickerKind, ToolchainView, VisibleLine, WelcomeView,
 };
-pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
+pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use view::{
     TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
 };
