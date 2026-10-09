@@ -45,6 +45,7 @@ use, and nothing else:
 | View state out | `project(id) -> Option<ProjectView>` | Plain snapshots (`src/view.rs`) of what the window shows: user-visible text, 1-based labels, display columns. |
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending (tests). |
+| Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
 
@@ -150,3 +151,8 @@ cargo run --bin genea -- [FOLDER [FILE]]
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`.
+
+Releases (a signed, notarized DMG for Apple Silicon, macOS 14+) and the
+third-party licence list shown in About are in `docs/releasing.md`:
+`scripts/release.sh [--local]`, `scripts/third-party-licences.sh`,
+`packaging/`.
