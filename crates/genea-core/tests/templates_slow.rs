@@ -10,11 +10,11 @@
 //!
 //! It runs `node`, `pnpm` and `bun` from PATH and pins the project to their
 //! versions, so each package manager runs the version the project asks for.
-//! Set `GENEA_KEEP_TEMPLATES=1` to keep the generated projects for
-//! inspection.
+//! Set `GENEA_KEEP_TEMPLATES=1` to keep the generated projects (also when a
+//! check fails) for inspection.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Output},
 };
 
@@ -50,10 +50,28 @@ fn version(program: &str) -> String {
     String::from_utf8(output.stdout).unwrap().trim().trim_start_matches('v').to_owned()
 }
 
+/// A generated project, deleted on drop unless `GENEA_KEEP_TEMPLATES` is set.
+struct Generated {
+    parent: Option<FixtureProject>,
+    /// The project folder.
+    folder: PathBuf,
+}
+
+impl Drop for Generated {
+    fn drop(&mut self) {
+        if std::env::var_os("GENEA_KEEP_TEMPLATES").is_some()
+            && let Some(parent) = self.parent.take()
+        {
+            eprintln!("kept {}", parent.keep().display());
+        }
+    }
+}
+
 /// Generates the template, installs it and runs its checks.
-fn check(template: Template, pm: Pm) -> FixtureProject {
+fn check(template: Template, pm: Pm) -> Generated {
     let parent = FixtureProject::new().build();
     let folder = parent.path("my-app");
+    let generated = Generated { parent: Some(parent), folder: folder.clone() };
     let (runtime, package_manager) = match pm {
         Pm::Pnpm => (RuntimePin::Node(version("node")), PackageManagerPin::Pnpm(version("pnpm"))),
         Pm::Bun => (RuntimePin::Bun(version("bun")), PackageManagerPin::Bun(version("bun"))),
@@ -73,35 +91,68 @@ fn check(template: Template, pm: Pm) -> FixtureProject {
     }
     // Generated files are already formatted the way Oxfmt formats them.
     run(&folder, program, &["run", "format", "--check"]);
-    parent
+    generated
 }
 
-fn keep(parent: FixtureProject) {
-    if std::env::var_os("GENEA_KEEP_TEMPLATES").is_some() {
-        eprintln!("kept {}", parent.keep().display());
-    }
+/// Imports the Hono app with Node's type stripping (no build step) and
+/// requests `path`, returning the response body.
+fn request_with_type_stripping(package: &Path, path: &str) -> String {
+    let script = format!(
+        "const {{ app }} = await import('./src/app.ts'); \
+         const response = await app.request('{path}'); \
+         console.log(await response.text());"
+    );
+    let output = run(package, "node", &["--input-type=module", "-e", &script]);
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 #[test]
 #[ignore = "slow lane: installs from the network"]
 fn frontend_with_pnpm() {
-    keep(check(Template::Frontend, Pm::Pnpm));
+    check(Template::Frontend, Pm::Pnpm);
 }
 
 #[test]
 #[ignore = "slow lane: installs from the network"]
 fn frontend_with_bun() {
-    keep(check(Template::Frontend, Pm::Bun));
+    check(Template::Frontend, Pm::Bun);
+}
+
+fn check_backend(pm: Pm) {
+    let generated = check(Template::Backend, pm);
+    let body = request_with_type_stripping(&generated.folder, "/hello/Ada");
+    assert_eq!(body, r#"{"message":"Hello, Ada!"}"#);
 }
 
 #[test]
 #[ignore = "slow lane: installs from the network"]
 fn backend_with_pnpm() {
-    keep(check(Template::Backend, Pm::Pnpm));
+    check_backend(Pm::Pnpm);
 }
 
 #[test]
 #[ignore = "slow lane: installs from the network"]
 fn backend_with_bun() {
-    keep(check(Template::Backend, Pm::Bun));
+    check_backend(Pm::Bun);
+}
+
+/// The API imports `@my-app/shared` through a workspace symlink. Node only
+/// strips types outside `node_modules`, so this checks that the symlink
+/// resolves to the real path (#12).
+fn check_full_stack(pm: Pm) {
+    let generated = check(Template::FullStack, pm);
+    let body = request_with_type_stripping(&generated.folder.join("apps/api"), "/api/hello?name=%20Ada%20");
+    assert_eq!(body, r#"{"message":"Hello, Ada!"}"#);
+}
+
+#[test]
+#[ignore = "slow lane: installs from the network"]
+fn full_stack_with_pnpm() {
+    check_full_stack(Pm::Pnpm);
+}
+
+#[test]
+#[ignore = "slow lane: installs from the network"]
+fn full_stack_with_bun() {
+    check_full_stack(Pm::Bun);
 }

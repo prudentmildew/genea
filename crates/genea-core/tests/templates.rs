@@ -137,3 +137,116 @@ fn the_backend_template_is_a_hono_server_with_no_build_step() {
     assert_eq!(tsconfig["compilerOptions"]["module"], "nodenext");
     assert_eq!(tsconfig["compilerOptions"]["allowImportingTsExtensions"], true);
 }
+
+#[test]
+fn the_full_stack_template_is_a_workspace_of_web_api_and_shared() {
+    let parent = create(Template::FullStack, "shop", node(), pnpm());
+
+    assert_eq!(
+        files(&parent, "shop"),
+        [
+            ".gitignore",
+            ".oxlintrc.json",
+            "README.md",
+            "apps/api/package.json",
+            "apps/api/src/app.test.ts",
+            "apps/api/src/app.ts",
+            "apps/api/src/index.ts",
+            "apps/api/tsconfig.json",
+            "apps/web/index.html",
+            "apps/web/package.json",
+            "apps/web/public/favicon.svg",
+            "apps/web/src/App.css",
+            "apps/web/src/App.tsx",
+            "apps/web/src/api.ts",
+            "apps/web/src/main.tsx",
+            "apps/web/src/name.test.ts",
+            "apps/web/src/name.ts",
+            "apps/web/tsconfig.json",
+            "apps/web/vite.config.ts",
+            "package.json",
+            "packages/shared/package.json",
+            "packages/shared/src/index.test.ts",
+            "packages/shared/src/index.ts",
+            "packages/shared/tsconfig.json",
+            "pnpm-workspace.yaml",
+            "tsconfig.base.json",
+        ]
+    );
+
+    let root = json_file(&parent, "shop/package.json");
+    assert_eq!(root["name"], "shop");
+    assert_eq!(root["packageManager"], "pnpm@12.10.1");
+    assert_eq!(root["devEngines"]["runtime"], json!({ "name": "node", "version": "24.21.0" }));
+    assert_eq!(
+        root["scripts"],
+        json!({
+            "dev": "pnpm -r --parallel dev",
+            "build": "pnpm -r build",
+            "test": "pnpm -r test",
+            "typecheck": "pnpm -r typecheck",
+            "lint": "oxlint",
+            "format": "oxfmt",
+        })
+    );
+    // Oxlint and Oxfmt run once, at the root.
+    let root_tools: Vec<&String> = root["devDependencies"].as_object().unwrap().keys().collect();
+    assert_eq!(root_tools, ["oxfmt", "oxlint"]);
+
+    let workspace = parent.read("shop/pnpm-workspace.yaml");
+    assert!(workspace.starts_with("packages:\n  - apps/*\n  - packages/*\n"), "{workspace}");
+    for entry in ["\n  hono: ^4.", "\n  typescript: ^7.", "\n  vitest: ^5.", "\n  \"@types/node\": ^24.0.0\n"] {
+        assert!(workspace.contains(entry), "{entry} in {workspace}");
+    }
+
+    let web = json_file(&parent, "shop/apps/web/package.json");
+    assert_eq!(web["name"], "@shop/web");
+    assert_eq!(web["dependencies"]["@shop/shared"], "workspace:*");
+    assert_eq!(web["dependencies"]["hono"], "catalog:");
+    assert_eq!(web["devDependencies"]["@shop/api"], "workspace:*");
+    assert_eq!(web["devDependencies"]["typescript"], "catalog:");
+    assert_eq!(web["devDependencies"]["vitest"], "catalog:");
+    assert!(parent.read("shop/apps/web/src/api.ts").contains("import type { AppType } from \"@shop/api\";"));
+    assert!(parent.read("shop/apps/web/vite.config.ts").contains("\"/api\": \"http://localhost:3000\""));
+
+    let api = json_file(&parent, "shop/apps/api/package.json");
+    assert_eq!(api["name"], "@shop/api");
+    assert_eq!(api["exports"], json!({ ".": "./src/app.ts" }));
+    assert_eq!(api["dependencies"]["@shop/shared"], "workspace:*");
+    assert_eq!(api["dependencies"]["hono"], "catalog:");
+    assert_eq!(api["devDependencies"]["@types/node"], "catalog:");
+    assert_eq!(api["scripts"]["dev"], "node --watch src/index.ts");
+
+    let shared = json_file(&parent, "shop/packages/shared/package.json");
+    assert_eq!(shared["name"], "@shop/shared");
+    assert_eq!(shared["exports"], json!({ ".": "./src/index.ts" }));
+
+    for package in ["apps/web", "apps/api", "packages/shared"] {
+        let manifest = json_file(&parent, &format!("shop/{package}/package.json"));
+        assert_eq!(manifest["packageManager"], Value::Null, "pins live at the root only");
+        assert_eq!(manifest["scripts"]["typecheck"], "tsc --noEmit", "{package}");
+        assert_eq!(manifest["scripts"]["test"], "vitest run", "{package}");
+        let tsconfig = json_file(&parent, &format!("shop/{package}/tsconfig.json"));
+        assert_eq!(tsconfig["extends"], "../../tsconfig.base.json", "{package}");
+    }
+}
+
+#[test]
+fn the_full_stack_template_with_bun_keeps_the_workspace_and_catalog_in_package_json() {
+    let parent = create(Template::FullStack, "shop", RuntimePin::Bun("1.4.2".into()), PackageManagerPin::Bun("1.4.2".into()));
+
+    assert!(!parent.path("shop/pnpm-workspace.yaml").exists());
+    let root = json_file(&parent, "shop/package.json");
+    assert_eq!(root["packageManager"], "bun@1.4.2");
+    assert_eq!(root["devEngines"]["runtime"], json!({ "name": "bun", "version": "1.4.2" }));
+    assert_eq!(root["workspaces"]["packages"], json!(["apps/*", "packages/*"]));
+    let catalog = root["workspaces"]["catalog"].as_object().unwrap();
+    let mut names: Vec<&String> = catalog.keys().collect();
+    names.sort();
+    assert_eq!(names, ["@types/node", "hono", "typescript", "vitest"]);
+    // In parallel: by default Bun waits for the API (a dependency of the
+    // web app) to exit before it starts the web app.
+    assert_eq!(root["scripts"]["dev"], "bun run --parallel --filter '@shop/*' dev");
+    assert_eq!(root["scripts"]["typecheck"], "bun run --filter '@shop/*' typecheck");
+    assert_eq!(root["scripts"]["lint"], "oxlint");
+}
