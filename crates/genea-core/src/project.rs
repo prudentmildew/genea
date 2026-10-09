@@ -24,6 +24,7 @@ use crate::{
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     reading::{self, Contents, FirstScreen},
+    search::Search,
     syntax::ParseJob,
     terminal::Terminal,
     toolchain::{LOCKFILES, Toolchain, ToolchainContext},
@@ -69,6 +70,8 @@ pub(crate) struct Project {
     shown_hunk: Option<(PathBuf, usize)>,
     /// The project's files, for the Files view (ticket #30).
     pub(crate) files: FileIndex,
+    /// The Search view's query and results (ticket #34).
+    pub(crate) search: Search,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
@@ -86,6 +89,7 @@ impl Project {
             files: FileIndex::new(id, root.clone()),
             git: Git::new(id, root.clone()),
             terminal: Terminal::new(id, root.clone()),
+            search: Search::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -340,6 +344,7 @@ impl Project {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
             Command::ToggleFolder(path) => self.files.toggle(&path),
+            Command::Search(query) => self.search.start(query, &self.config.exclude, jobs),
             Command::SelectTab { .. } | Command::FocusPane(_) => {
                 self.terminal.unfocus();
                 self.tab_command(command, jobs)
@@ -683,6 +688,7 @@ impl Project {
             terminal: self.terminal.view(),
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
+            search: self.search.view(),
         }
     }
 

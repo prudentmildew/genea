@@ -10,7 +10,7 @@ use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{
     Highlight,
-    command::Command,
+    command::{Command, SearchQuery},
     config::Config,
     problems::{ProblemSource, Severity, TextPosition},
 };
@@ -56,6 +56,53 @@ pub struct ProjectView {
     /// a snapshot doesn't copy a large tree, and unchanged trees compare
     /// equal at once.
     pub files: Arc<[FileRow]>,
+    /// The Search view (⌘⇧F): the last query and its results.
+    pub search: SearchView,
+}
+
+/// The Search view: a query and its results, grouped by file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchView {
+    /// The query the results are for.
+    pub query: SearchQuery,
+    /// Files with matches, in case-insensitive name order, folder by
+    /// folder. Grows while `searching`. Shared, so a snapshot doesn't copy
+    /// a long list.
+    pub files: Arc<[SearchFile]>,
+    /// Matches in `files`.
+    pub match_count: usize,
+    /// The search is still running: more results may come.
+    pub searching: bool,
+    /// The search stopped at [`MAX_SEARCH_MATCHES`](crate::MAX_SEARCH_MATCHES):
+    /// there are more matches than `files` lists.
+    pub limited: bool,
+    /// Why the query can't be searched for (an invalid regex), if it can't.
+    pub error: Option<String>,
+}
+
+/// A file with matches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchFile {
+    /// Relative to the project root.
+    pub path: PathBuf,
+    /// Top to bottom; a line with several matches has one per match.
+    pub matches: Vec<SearchMatch>,
+}
+
+/// One match. Clicking it opens the file at `position` with
+/// `Command::OpenFileAt`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchMatch {
+    /// Where the match starts (0-based line, char column).
+    pub position: TextPosition,
+    /// `position` as the user reads it: `line:column`, 1-based.
+    pub location: String,
+    /// The line's text around the match: before it (without leading
+    /// whitespace), the match, and after it. Long lines are cut off with
+    /// `…`; tabs show as spaces.
+    pub before: String,
+    pub matched: String,
+    pub after: String,
 }
 
 /// A row in the Files view: a file, or a folder the user can expand.
@@ -117,6 +164,8 @@ pub enum LeftColumnView {
     Files,
     /// ⌘6.
     Problems,
+    /// ⌘⇧F: project search.
+    Search,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem
