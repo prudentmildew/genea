@@ -15,7 +15,9 @@
 //! - every other winit window event (pointer, focus, occlusion, …), which
 //!   tells the harness when something outside disturbed an idle window;
 //! - each sync of view state into Slint, and the first one with file content;
-//! - when AppKit first reports a window visible.
+//! - when AppKit first reports a window visible;
+//! - each file the harness asks to open (`open` on the control channel), and
+//!   the first sync that shows it (ticket #27).
 //!
 //! Timestamps are `mach_absolute_time` in nanoseconds since boot, a clock the
 //! harness shares, and the harness does all the analysis. The journal is
@@ -32,6 +34,7 @@ use std::{
     cell::RefCell,
     ffi::c_void,
     fmt::Write as _,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -77,9 +80,15 @@ struct Log {
     events: Vec<u64>,
     content: Option<u64>,
     visible: Option<u64>,
+    /// Files the harness asked to open: the file, when it asked, and the
+    /// first sync that showed the file's lines.
+    opens: Vec<(PathBuf, u64, Option<u64>)>,
     /// Called once the first frame with content is presented and a window
     /// is visible (the harness's `wait-content`).
     on_content_visible: Option<Box<dyn FnOnce()>>,
+    /// Called once a frame showing the last file asked for is presented
+    /// (the harness's `open`).
+    on_opened: Option<Box<dyn FnOnce()>>,
     /// Called after every frame until it returns false (the harness's
     /// scrolling).
     after_frame: Option<Box<dyn FnMut() -> bool>>,
@@ -175,6 +184,27 @@ pub fn mark_synced(content: bool) {
     });
 }
 
+/// The harness asked to open `path` (relative to the project root, as the
+/// editor shows it); `f` runs once a frame showing it is presented.
+pub fn open_requested(path: PathBuf, f: impl FnOnce() + 'static) {
+    record(|log, t| {
+        log.opens.push((path, t, None));
+        log.on_opened = Some(Box::new(f));
+    });
+}
+
+/// View state showing `path`'s lines was just pushed into Slint.
+pub fn mark_shown(path: &Path) {
+    if !on() {
+        return;
+    }
+    record(|log, t| {
+        if let Some((_, _, shown @ None)) = log.opens.last_mut().filter(|(p, _, _)| p == path) {
+            *shown = Some(t);
+        }
+    });
+}
+
 /// Calls `f` once the first frame with file content has been presented and
 /// a window is visible (right away if that has happened).
 pub fn when_content_visible(f: impl FnOnce() + 'static) {
@@ -205,8 +235,13 @@ pub fn dump() -> String {
             let _ = write!(activities, "{}[{},{}]", if i > 0 { "," } else { "" }, ns(*t), a);
         }
         activities.push(']');
+        let mut opens = String::from("[");
+        for (i, (_, requested, shown)) in log.opens.iter().enumerate() {
+            let _ = write!(opens, "{}[{},{}]", if i > 0 { "," } else { "" }, ns(*requested), option(*shown));
+        }
+        opens.push(']');
         format!(
-            r#"{{"process_start":{},"started":{},"activities":{},"keys":{},"before":{},"after":{},"synced":{},"events":{},"content":{},"visible":{}}}"#,
+            r#"{{"process_start":{},"started":{},"activities":{},"keys":{},"before":{},"after":{},"synced":{},"events":{},"content":{},"visible":{},"opens":{}}}"#,
             ns(process_start()),
             ns(log.started),
             activities,
@@ -217,6 +252,7 @@ pub fn dump() -> String {
             list(&log.events),
             option(log.content),
             option(log.visible),
+            opens,
         )
     })
 }
@@ -226,6 +262,7 @@ extern "C" fn observe(_: *mut c_void, activity: usize, _: *mut c_void) {
     LOG.with_borrow_mut(|log| log.activities.push((t, activity)));
     if activity == BEFORE_WAITING {
         check_content_visible();
+        check_opened();
     }
 }
 
@@ -247,6 +284,22 @@ fn check_content_visible() {
         let after = *log.after.iter().find(|&&a| a >= before)?;
         let presented = log.activities.last().is_some_and(|&(t, _)| t >= after);
         if presented { log.on_content_visible.take() } else { None }
+    });
+    if let Some(f) = ready {
+        f();
+    }
+}
+
+/// Runs the open callback once a frame drawn after the requested file was
+/// shown has presented.
+fn check_opened() {
+    let ready = LOG.with_borrow_mut(|log| {
+        log.on_opened.as_ref()?;
+        let shown = log.opens.last()?.2?;
+        let before = *log.before.iter().find(|&&b| b >= shown)?;
+        let after = *log.after.iter().find(|&&a| a >= before)?;
+        let presented = log.activities.last().is_some_and(|&(t, _)| t >= after);
+        if presented { log.on_opened.take() } else { None }
     });
     if let Some(f) = ready {
         f();

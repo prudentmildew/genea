@@ -138,6 +138,18 @@ impl Genea {
         self.send(&format!("resize {width} {height}")).map(drop)
     }
 
+    /// Opens a file (relative to the project folder) in the first window;
+    /// answers once a frame showing it has presented.
+    pub fn open(&mut self, file: &str) -> Result<(), String> {
+        self.send(&format!("open {file}")).map(drop)
+    }
+
+    /// The focused file: `path`, `line_count`, `loading` (the rest is still
+    /// being read) and `large_file`.
+    pub fn editor(&mut self) -> Result<Value, String> {
+        self.send("editor")
+    }
+
     /// The caret's line text and the caret's display column.
     pub fn caret_line(&mut self) -> Result<(String, usize, bool), String> {
         let v = self.send("caret-line")?;

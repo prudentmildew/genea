@@ -20,7 +20,9 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, SearchQuery, Workbench};
+use genea_core::{
+    CloseChoice, Command, ConflictChoice, LeftColumnView, ProjectId, SearchQuery, ToolchainPickerKind, Workbench,
+};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
@@ -375,6 +377,14 @@ fn wire(controller: &WindowController) {
             controller.open_problem(&mut app.workbench, index);
         });
     });
+    window.on_conflict_resolved(move |pane, reload| {
+        let Ok(pane) = usize::try_from(pane) else { return };
+        let choice = if reload { ConflictChoice::Reload } else { ConflictChoice::KeepMyEdits };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.resolve_conflict(&mut app.workbench, pane, choice);
+        });
+    });
     window.on_file_clicked(move |index| {
         let Ok(index) = usize::try_from(index) else { return };
         with_app(move |app| {
@@ -396,6 +406,22 @@ fn wire(controller: &WindowController) {
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
+    window.on_set_runtime(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Runtime)));
+    window.on_set_package_manager(menu(Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager)));
+    window.on_update_toolchain(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Update)));
+    window.on_remove_unused_toolchains(menu(Command::RemoveUnusedToolchains));
+    window.on_picker_filter_edited(move |text| {
+        let text = text.to_string();
+        with_app(move |app| app.dispatch(key, Command::FilterToolchainPicker(text)));
+    });
+    window.on_picker_picked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.pick_toolchain(&mut app.workbench, index);
+        });
+    });
+    window.on_picker_cancelled(menu(Command::CloseToolchainPicker));
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));

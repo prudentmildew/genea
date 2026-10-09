@@ -19,7 +19,7 @@ runs the harness under `caffeinate`. Options go through to `genea-bench`:
 | Option | Effect |
 | --- | --- |
 | `--quick` | a smoke test with few runs; not a release gate |
-| `--only start,typing,…` | only these scenarios: `start`, `typing`, `scroll`, `dead-keys`, `idle` |
+| `--only start,typing,…` | only these scenarios: `start`, `typing`, `scroll`, `dead-keys`, `idle`, `open-1mb`, `open-100mb` |
 | `--no-cold` | skip cold starts (no `sudo`) |
 | `--runs N`, `--cold-runs N` | start pairs, warm (default 30) and cold (default 10) |
 | `--label L`, `--out DIR` | where results go (default `bench/results/<UTC time>`) |
@@ -35,9 +35,12 @@ missed or a scenario couldn't run, 2 for a usage error. A skipped budget
 
 ## What it measures
 
-Every scenario launches Genea on the Typical workspace with
-`packages/web/src/index.ts` open, at its default window size; the idle budget
-runs resize it to 1200×800 pt once it shows.
+Every scenario but the open ones launches Genea on the Typical workspace
+with `packages/web/src/index.ts` open, at its default window size; the idle
+budget runs resize it to 1200×800 pt once it shows. The open scenarios
+launch Genea on generated TypeScript in `bench/workspaces/out/open-files`
+(written on first use, beside the Typical workspace) with a small file open,
+then ask it to open the file under test, in a fresh Genea per run.
 
 | Scenario | Budgets |
 | --- | --- |
@@ -46,6 +49,8 @@ runs resize it to 1200×800 pt once it shows.
 | `scroll` | ≤ 1 % dropped frames at the display's rate; frame work ≤ 8.3 ms (a 120 Hz frame, p95); no stall > 16 ms |
 | `dead-keys` | dead-key compositions on the Norwegian layout come out right (the IME bridge end to end); no stall > 16 ms |
 | `idle` | memory ≤ 100 MB (phys_footprint ≥ 2 s after the last frame, 1200×800 pt at 2×, p95); CPU ≈ 0 % (≤ 0.1 %) |
+| `open-1mb` | opening a 1 MB file ≤ 50 ms (the `open` request to the end of the first frame showing it, p95, 20 runs) |
+| `open-100mb` | opening a 100 MB file (a large file: no highlighting) shows its first screen ≤ 1 s (p95, 5 runs); no main-thread stall > 16 ms from the request until 300 ms after the whole file is in |
 
 The budget table is `crates/genea-bench/src/budgets.rs`. The start floor is
 `genea-floor`, a bare winit window (the winit Slint links) that exits when
@@ -76,8 +81,9 @@ them, window events from outside, each sync of view state into Slint, the
 first sync with file content, and the window becoming visible. It also opens
 a control channel on stdin/stdout (`crates/genea-view/src/remote.rs`): the
 harness sends primitive commands (`wait-content`, `key`, `place-caret`,
-`scroll`, `resize`, `caret-line`, `info`, `journal`, `quit`) and reads one JSON line
-back per command.
+`scroll`, `resize`, `caret-line`, `open`, `editor`, `info`, `journal`,
+`quit`) and reads one JSON line back per command. The journal also records
+each `open` request and the first sync showing that file.
 
 Keys are posted as CGEvent-backed `NSEvent`s into Genea's own event queue, so
 they take AppKit's real text-input path (dead keys compose) without

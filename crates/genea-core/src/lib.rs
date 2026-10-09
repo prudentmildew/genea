@@ -22,6 +22,7 @@
 
 mod command;
 mod config;
+mod disk;
 mod editor;
 mod environment;
 mod files;
@@ -30,6 +31,7 @@ mod history;
 mod jobs;
 mod problems;
 mod project;
+mod reading;
 mod recent;
 mod search;
 mod syntax;
@@ -44,8 +46,8 @@ mod workbench;
 pub use command::{CaretMove, Command, SearchQuery};
 pub use search::MAX_SEARCH_MATCHES;
 pub use config::{Config, TerminalPosition, Theme};
-pub use command::CloseChoice;
-pub use editor::MAX_VISIBLE_COLUMNS;
+pub use command::{CloseChoice, ConflictChoice};
+pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
 pub use problems::{ProblemSource, Severity, TextPosition};
 pub use syntax::Highlight;
 pub use environment::LOGIN_SHELL_TIMEOUT;
@@ -56,7 +58,8 @@ pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, 
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
     Caret, EditorView, HighlightSpan, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
-    ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
+    ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
+    ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};
