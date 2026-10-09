@@ -74,6 +74,8 @@ CRATES
   document-features 0.2.12: MIT OR Apache-2.0
   dpi 0.1.2: Apache-2.0 AND MIT
   either 1.19.0: MIT OR Apache-2.0
+  encoding_rs 0.8.42: (Apache-2.0 OR MIT) AND BSD-3-Clause
+  encoding_rs_io 0.1.8: MIT OR Apache-2.0
   equivalent 1.0.2: Apache-2.0 OR MIT
   errno 0.3.14: MIT OR Apache-2.0
   euclid 0.22.14: MIT OR Apache-2.0
@@ -138,6 +140,9 @@ CRATES
   globset 0.4.20: Unlicense OR MIT
   glow 0.18.0: MIT OR Apache-2.0 OR Zlib
   glutin 0.32.3: Apache-2.0
+  grep-matcher 0.1.9: Unlicense OR MIT
+  grep-regex 0.1.14: Unlicense OR MIT
+  grep-searcher 0.1.17: Unlicense OR MIT
   half 2.7.1: MIT OR Apache-2.0
   harfrust 0.12.0: MIT
   hash32 0.3.1: MIT OR Apache-2.0
@@ -205,6 +210,7 @@ CRATES
   miniz_oxide 0.9.1: MIT OR Zlib OR Apache-2.0
   moxcms 0.8.1: BSD-3-Clause OR Apache-2.0
   muda 0.19.3: Apache-2.0 OR MIT
+  multiversion_no_op 1.0.0: Apache-2.0 OR MIT
   naga 30.0.1: MIT OR Apache-2.0
   naga-types 30.0.1: MIT OR Apache-2.0
   native-tls 0.2.18: MIT OR Apache-2.0
@@ -281,6 +287,7 @@ CRATES
   sha1dc 0.1.5: MIT OR Apache-2.0
   sha2 0.11.0: MIT OR Apache-2.0
   simd-adler32 0.3.10: MIT
+  simdutf8 0.1.5: MIT OR Apache-2.0
   simplecss 0.2.2: Apache-2.0 OR MIT
   siphasher 1.0.4: MIT OR Apache-2.0
   skia-bindings 0.153.3: MIT
@@ -1911,6 +1918,68 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 BSD 3-Clause "New" or "Revised" License (BSD-3-Clause)
 ================================================================================
 
+Used by: encoding_rs 0.8.42
+
+// Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
+//
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+/// The PUA code points special-cased in the GB18030 encoder.
+pub(crate) static GB18030_2022_OVERRIDE_PUA: [u16; 18] = [
+    0xE78D, 0xE78E, 0xE78F, 0xE790, 0xE791, 0xE792, 0xE793, 0xE794, 0xE795, 0xE796, 0xE81E, 0xE826,
+    0xE82B, 0xE82C, 0xE832, 0xE843, 0xE854, 0xE864,
+];
+
+/// The bytes corresponding to the PUA code points special-cased in the GB18030 encoder.
+pub(crate) static GB18030_2022_OVERRIDE_BYTES: [[u8; 2]; 18] = [
+    [0xA6, 0xD9],
+    [0xA6, 0xDA],
+    [0xA6, 0xDB],
+    [0xA6, 0xDC],
+    [0xA6, 0xDD],
+    [0xA6, 0xDE],
+    [0xA6, 0xDF],
+    [0xA6, 0xEC],
+    [0xA6, 0xED],
+    [0xA6, 0xF3],
+    [0xFE, 0x59],
+    [0xFE, 0x61],
+    [0xFE, 0x66],
+    [0xFE, 0x67],
+    [0xFE, 0x6D],
+    [0xFE, 0x7E],
+    [0xFE, 0x90],
+    [0xFE, 0xA0],
+];
+
+
+================================================================================
+BSD 3-Clause "New" or "Revised" License (BSD-3-Clause)
+================================================================================
+
 Used by: tiny-skia-path 0.12.0, tiny-skia 0.12.0
 
 Copyright (c) 2011 Google Inc. All rights reserved.
@@ -1942,6 +2011,40 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
 DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+================================================================================
+BSD 3-Clause "New" or "Revised" License (BSD-3-Clause)
+================================================================================
+
+Used by: encoding_rs 0.8.42
+
+Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
@@ -4584,7 +4687,7 @@ DEALINGS IN THE SOFTWARE.
 MIT License (MIT)
 ================================================================================
 
-Used by: utf8_iter 1.0.4
+Used by: encoding_rs 0.8.42, multiversion_no_op 1.0.0, utf8_iter 1.0.4
 
 Copyright Mozilla Foundation
 
@@ -5238,6 +5341,32 @@ DEALINGS IN THE SOFTWARE.
 MIT License (MIT)
 ================================================================================
 
+Used by: simdutf8 0.1.5
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+MIT License (MIT)
+================================================================================
+
 Used by: half 2.7.1, linebender_resource_handle 0.1.1, str_indices 0.4.4
 
 MIT License
@@ -5572,7 +5701,7 @@ SOFTWARE.
 MIT License (MIT)
 ================================================================================
 
-Used by: aho-corasick 1.1.5, byteorder-lite 0.1.0, byteorder 1.5.0, globset 0.4.20, ignore 0.4.33, jiff-core 0.1.1, jiff 0.2.38, memchr 2.8.3, walkdir 2.5.0
+Used by: aho-corasick 1.1.5, byteorder-lite 0.1.0, byteorder 1.5.0, encoding_rs_io 0.1.8, globset 0.4.20, grep-matcher 0.1.9, grep-regex 0.1.14, grep-searcher 0.1.17, ignore 0.4.33, jiff-core 0.1.1, jiff 0.2.38, memchr 2.8.3, walkdir 2.5.0
 
 The MIT License (MIT)
 
