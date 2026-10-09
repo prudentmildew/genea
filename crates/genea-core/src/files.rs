@@ -192,8 +192,11 @@ impl FileIndex {
             return;
         };
         if found.recursive {
-            self.forget(&found.folder);
+            // A rescan keeps the folders that are still there expanded.
+            self.folders.retain(|path, _| !path.starts_with(&found.folder));
             self.folders.extend(folders);
+            let folders = &self.folders;
+            self.expanded.retain(|path| folders.contains_key(path));
             return;
         }
         for (folder, entries) in folders {
