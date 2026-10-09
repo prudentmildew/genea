@@ -1448,6 +1448,7 @@ dependencies = [
  "ropey",
  "serde_json",
  "streaming-iterator",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-css",
  "tree-sitter-html",

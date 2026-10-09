@@ -258,9 +258,8 @@ impl Toolchain {
         });
     }
 
-    /// The roles' tools that are in the store, runtime first: what #36 puts
-    /// first on PATH (each [`Installed::bin_dir`]).
-    #[allow(dead_code)] // Used by the environment ticket (#36).
+    /// The roles' tools that are in the store, runtime first: the project
+    /// environment puts each [`Installed::bin_dir`] first on PATH (#36).
     pub(crate) fn installed(&self) -> impl Iterator<Item = &Installed> {
         self.slots.iter().flatten().filter_map(|slot| match &slot.state {
             SlotState::Ready(installed) => Some(installed),

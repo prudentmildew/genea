@@ -29,3 +29,5 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]
 genea-testkit.workspace = true
+# A support folder for the environment's slow lane, which runs on RealHost.
+tempfile.workspace = true

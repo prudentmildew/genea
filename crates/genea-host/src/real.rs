@@ -3,6 +3,7 @@
 use std::{
     collections::BinaryHeap,
     cmp::Reverse,
+    ffi::OsString,
     io::{self, Write},
     path::{Path, PathBuf},
     process::Stdio,
@@ -76,6 +77,15 @@ impl Host for RealHost {
 
     fn clipboard(&self) -> &dyn Clipboard {
         self.clipboard.0.as_ref()
+    }
+
+    fn launch_environment(&self) -> Vec<(OsString, OsString)> {
+        let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        // launchd sets SHELL for apps; without it, assume macOS's default.
+        if !vars.iter().any(|(key, _)| key == "SHELL") {
+            vars.push(("SHELL".into(), "/bin/zsh".into()));
+        }
+        vars
     }
 }
 
@@ -295,6 +305,14 @@ mod tests {
         child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
         assert_eq!(out, "hello\n");
         assert!(child.control.wait().unwrap().success());
+    }
+
+    #[test]
+    fn the_launch_environment_is_the_processs_own_and_names_a_shell() {
+        let vars = RealHost::new().launch_environment();
+        let path = vars.iter().find(|(key, _)| key == "PATH").map(|(_, value)| value.clone());
+        assert_eq!(path, std::env::var_os("PATH"));
+        assert!(vars.iter().any(|(key, value)| key == "SHELL" && !value.is_empty()));
     }
 
     #[test]
