@@ -1,5 +1,6 @@
 //! One open project: its folder and what its window shows.
 
+mod external;
 mod tabs;
 
 use std::{
@@ -116,6 +117,7 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
+        self.check_open_files(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if changes.rescan {
             self.load_config(jobs);

@@ -18,6 +18,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     command::CaretMove,
+    disk::{Checked, DiskCheck, DiskText, Splice},
     history::{Change, Edit, EditKind, History, Selection},
     syntax::{Highlight, ParseJob, Parsed, Syntax},
     text::{self, LineEnding},
@@ -101,6 +102,12 @@ pub(crate) struct Editor {
     whole_words: Option<(u64, Vec<CaretSelection>)>,
     /// The tree and highlights, for files in a highlighted language.
     syntax: Option<Syntax>,
+    /// What Genea believes the file holds on disk: the text it read, or
+    /// last started writing (ticket #32).
+    disk: Rope,
+    /// Bumped whenever `disk` changes, so a check against an older one is
+    /// stale.
+    disk_generation: u64,
 }
 
 /// The buffer as it was when a save started.
@@ -115,6 +122,7 @@ impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
         let line_ending = LineEnding::detect(&text);
         let syntax = Syntax::for_file(&path, &text);
+        let disk = text.clone();
         Editor {
             path,
             text,
@@ -129,6 +137,8 @@ impl Editor {
             history: History::default(),
             whole_words: None,
             syntax,
+            disk,
+            disk_generation: 0,
         }
     }
 
@@ -967,4 +977,80 @@ fn display_columns(chars: impl Iterator<Item = char>) -> usize {
 /// The column after `c` when it starts at `column`.
 fn display_columns_from(column: usize, c: char) -> usize {
     if c == '\t' { (column / TAB_WIDTH + 1) * TAB_WIDTH } else { column + c.width().unwrap_or(0) }
+}
+
+/// Following the file on disk (ticket #32; see `disk.rs`).
+impl Editor {
+    /// What a background check of the file on disk needs.
+    pub(crate) fn disk_check(&self) -> DiskCheck {
+        DiskCheck {
+            disk: self.disk.clone(),
+            text: self.text.clone(),
+            version: self.version,
+            generation: self.disk_generation,
+        }
+    }
+
+    /// Takes a check's result: a clean buffer reloads the new text as one
+    /// undo step. Returns `false` if the result is stale (the buffer or
+    /// what Genea believes is on disk moved on meanwhile), so the file
+    /// needs checking again. A read-only buffer (not valid UTF-8) is left
+    /// as it is.
+    pub(crate) fn disk_checked(&mut self, checked: Checked, now: Instant, viewport_rows: f64) -> bool {
+        if checked.version != self.version || checked.generation != self.disk_generation {
+            return false;
+        }
+        let Some(DiskText { text, edit }) = checked.changed else { return true };
+        if self.read_only {
+            return true;
+        }
+        self.set_disk(text);
+        match edit {
+            None => self.saved_version = self.version,
+            Some(splice) if !self.is_modified() => self.reload(splice, now, viewport_rows),
+            Some(_) => {}
+        }
+        true
+    }
+
+    fn set_disk(&mut self, text: Rope) {
+        self.disk = text;
+        self.disk_generation += 1;
+    }
+
+    /// Applies the disk's text as one undo step and marks it saved. Carets
+    /// before the changed stretch stay; those after it move with the text.
+    fn reload(&mut self, splice: Splice, now: Instant, viewport_rows: f64) {
+        let (before, version_before) = (self.selections(), self.version);
+        let Splice { remove, insert } = splice;
+        let inserted = insert.chars().count();
+        let map = |p: usize| {
+            if p <= remove.start {
+                p
+            } else if p >= remove.end {
+                p - remove.len() + inserted
+            } else {
+                remove.start + (p - remove.start).min(inserted)
+            }
+        };
+        let mut changes = Vec::new();
+        if !remove.is_empty() {
+            changes.push(Change::Remove { at: remove.start, text: self.text.slice(remove.clone()).to_string() });
+        }
+        if !insert.is_empty() {
+            changes.push(Change::Insert { at: remove.start, text: insert });
+        }
+        for change in &changes {
+            self.apply(change);
+        }
+        self.new_version();
+        self.saved_version = self.version;
+        for cursor in &mut self.carets {
+            *cursor = CaretSelection::selecting(map(cursor.anchor), map(cursor.caret));
+        }
+        self.merge_carets();
+        self.line_ending = LineEnding::detect(&self.text);
+        self.scroll_by(0.0, viewport_rows);
+        self.record(EditKind::Other, now, changes, before, version_before);
+    }
 }
