@@ -22,6 +22,7 @@
 
 mod command;
 mod editor;
+mod grid;
 mod jobs;
 mod project;
 mod recent;
@@ -31,6 +32,7 @@ mod workbench;
 
 pub use command::{CaretMove, Command};
 pub use editor::MAX_VISIBLE_COLUMNS;
+pub use grid::{GridPiece, grid_pieces};
 pub use view::{
     Caret, EditorView, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView,
 };
