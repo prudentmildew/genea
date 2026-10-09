@@ -214,6 +214,10 @@ pub struct StatusBar {
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,
+    /// Set while the open file is a large file (over
+    /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
+    /// language intelligence.
+    pub large_file: Option<String>,
 }
 
 /// A message for the user.

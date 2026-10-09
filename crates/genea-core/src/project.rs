@@ -30,6 +30,9 @@ use crate::{
 };
 use tabs::Panes;
 
+/// The status-bar item for a large file.
+const LARGE_FILE_NOTICE: &str = "Over 5 MB: no highlighting or language features";
+
 /// Rows assumed until the view reports its viewport.
 const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
 
@@ -467,6 +470,7 @@ impl Project {
             encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
             line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
+            large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));

@@ -31,6 +31,13 @@ const TAB_WIDTH: usize = 4;
 /// a minified file can't make every sync copy and shape megabytes.
 pub const MAX_VISIBLE_COLUMNS: usize = 1000;
 
+/// Files over this size are *large files* (spec #19, Large files; ticket
+/// #27): they open with no syntax tree, no highlighting and no language
+/// intelligence, and the status bar says so. Decided once, at open, from the
+/// size read; edits don't change it. Anything that starts per-file language
+/// work (language servers, semantic tokens, …) checks [`Editor::is_large`].
+pub const LARGE_FILE_BYTES: usize = 5 * 1024 * 1024;
+
 /// One caret and its selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CaretSelection {
@@ -99,8 +106,12 @@ pub(crate) struct Editor {
     /// carets it left. While both still hold, occurrences match whole words
     /// only; any other caret change or edit ends that.
     whole_words: Option<(u64, Vec<CaretSelection>)>,
-    /// The tree and highlights, for files in a highlighted language.
+    /// The tree and highlights, for files in a highlighted language that
+    /// aren't large.
     syntax: Option<Syntax>,
+    /// Over [`LARGE_FILE_BYTES`] when opened: no syntax, no language
+    /// intelligence.
+    large: bool,
 }
 
 /// The buffer as it was when a save started.
@@ -114,7 +125,8 @@ pub(crate) struct Snapshot {
 impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
         let line_ending = LineEnding::detect(&text);
-        let syntax = Syntax::for_file(&path, &text);
+        let large = text.len_bytes() > LARGE_FILE_BYTES;
+        let syntax = if large { None } else { Syntax::for_file(&path) };
         Editor {
             path,
             text,
@@ -129,6 +141,7 @@ impl Editor {
             history: History::default(),
             whole_words: None,
             syntax,
+            large,
         }
     }
 
@@ -140,6 +153,12 @@ impl Editor {
 
     pub(crate) fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// A large file: no syntax, and no language intelligence may start for
+    /// it (see [`LARGE_FILE_BYTES`]).
+    pub(crate) fn is_large(&self) -> bool {
+        self.large
     }
 
     fn primary(&self) -> CaretSelection {

@@ -42,7 +42,7 @@ mod workbench;
 pub use command::{CaretMove, Command};
 pub use config::{Config, TerminalPosition, Theme};
 pub use command::CloseChoice;
-pub use editor::MAX_VISIBLE_COLUMNS;
+pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
 pub use problems::{ProblemSource, Severity, TextPosition};
 pub use syntax::Highlight;
 pub use environment::LOGIN_SHELL_TIMEOUT;
