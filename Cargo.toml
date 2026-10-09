@@ -23,6 +23,18 @@ genea-testkit = { path = "crates/genea-testkit" }
 # Core building blocks (spec #19, "Building blocks").
 ropey = "1.6.1"
 unicode-width = "0.2.2"
+# Syntax (ticket #24). The grammars depend on `tree-sitter-language`, not on a
+# `tree-sitter` version. TS and TSX highlighting concatenates the TypeScript
+# query with the JavaScript one, which it inherits.
+tree-sitter = "0.27.1"
+streaming-iterator = "0.1.9"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-css = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-md = "0.5.3"
+tree-sitter-yaml = "0.7.2"
 
 # Host boundary (genea-host's RealHost). The system TLS stack, so no C crypto
 # library is built.

@@ -137,6 +137,26 @@ impl Project {
             }
             Command::Save => self.save(jobs),
         }
+        self.reparse(jobs);
+    }
+
+    /// Starts a background parse if the open file's syntax tree is behind
+    /// its text and none is running. When it lands, the next one starts if
+    /// the text changed meanwhile.
+    fn reparse(&mut self, jobs: &Jobs) {
+        let Some(job) = self.editor.as_mut().and_then(Editor::start_parse) else { return };
+        let id = self.id;
+        jobs.spawn("parse", move || {
+            let parsed = job.run();
+            Box::new(move |core| {
+                let jobs = core.jobs.clone();
+                let Some(project) = core.project_mut(id) else { return };
+                if let Some(editor) = &mut project.editor {
+                    editor.parsed(parsed);
+                }
+                project.reparse(&jobs);
+            })
+        });
     }
 
     pub(crate) fn view(&self) -> ProjectView {
@@ -193,12 +213,16 @@ impl Project {
         jobs.spawn("open file", move || {
             let read = File::open(&absolute).and_then(|f| Rope::from_reader(BufReader::new(f)));
             Box::new(move |core| {
+                let jobs = core.jobs.clone();
                 let Some(project) = core.project_mut(id) else { return };
                 if project.open_generation != generation {
                     return;
                 }
                 match read {
-                    Ok(text) => project.editor = Some(Editor::new(shown, text)),
+                    Ok(text) => {
+                        project.editor = Some(Editor::new(shown, text));
+                        project.reparse(&jobs);
+                    }
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()) }),

@@ -8,6 +8,8 @@
 
 use std::{ops::Range, path::PathBuf};
 
+use crate::Highlight;
+
 /// One open project, as its window shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectView {
@@ -73,6 +75,17 @@ pub struct VisibleLine {
     /// past the end of the line, its range takes one more column for the
     /// line break.
     pub selections: Vec<Range<usize>>,
+    /// Highlighted stretches of `text`, left to right, not overlapping.
+    /// Text outside them is plain.
+    pub highlights: Vec<HighlightSpan>,
+}
+
+/// A stretch of a visible line in one highlight.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HighlightSpan {
+    /// The display columns it covers.
+    pub columns: Range<usize>,
+    pub highlight: Highlight,
 }
 
 /// The caret's grid cell.

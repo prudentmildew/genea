@@ -25,13 +25,16 @@ mod editor;
 mod jobs;
 mod project;
 mod recent;
+mod syntax;
 mod text;
 mod view;
 mod workbench;
 
 pub use command::{CaretMove, Command};
 pub use editor::MAX_VISIBLE_COLUMNS;
+pub use syntax::Highlight;
 pub use view::{
-    Caret, EditorView, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView,
+    Caret, EditorView, HighlightSpan, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine,
+    WelcomeView,
 };
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};
