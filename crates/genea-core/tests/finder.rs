@@ -233,6 +233,32 @@ fn choosing_a_finder_action_switches_the_finder_to_it() {
 }
 
 #[test]
+fn search_everywhere_mixes_files_and_actions() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("src/split/pane.ts", "").file("src/main.ts", ""));
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Everywhere));
+    search(&mut workbench, project, "split");
+
+    let labels: Vec<String> = items(&workbench, project).iter().map(|item| item.label.clone()).collect();
+    for expected in ["pane.ts", "Split Right", "Close Split"] {
+        assert!(labels.contains(&expected.to_owned()), "{expected} in {labels:?}");
+    }
+    assert!(!labels.contains(&"main.ts".to_owned()));
+}
+
+#[test]
+fn search_everywhere_starts_with_the_recent_files() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "").file("b.ts", ""));
+    open_files(&mut workbench, project, &["b.ts"]);
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Everywhere));
+    workbench.settle().unwrap();
+
+    assert_eq!(results(&workbench, project), ["b.ts"]);
+}
+
+#[test]
 fn choosing_a_file_opens_it_and_closes_the_finder() {
     let (_fixture, mut workbench, project) =
         open(FixtureProject::new().file("src/a.ts", "let a = 1;\n").file("src/b.ts", "let b = 2;\n"));
