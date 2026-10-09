@@ -114,6 +114,16 @@ pub enum Command {
     Delete(CaretMove),
     /// Return: breaks the line at the caret with the file's line ending.
     NewLine,
+    /// Tab: with nothing selected, types the file's indentation at each
+    /// caret (a tab, or spaces up to the next multiple of its width); with a
+    /// selection, indents the selected lines by one level. The indentation
+    /// is what `.oxfmtrc.json` and `.editorconfig` resolve to (ticket #26),
+    /// shown in `StatusBar::indentation`.
+    Indent,
+    /// ⇧Tab: takes one level of indentation off each line the carets and
+    /// selections are on (a leading tab, or leading spaces back to the
+    /// previous multiple of the indentation's width).
+    Outdent,
     /// ⌘C: puts the selection on the system clipboard. Does nothing with
     /// nothing selected.
     Copy,

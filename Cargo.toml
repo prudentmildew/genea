@@ -28,6 +28,10 @@ unicode-width = "0.2.2"
 # `.gitignore` syntax of `exclude` (also used to walk the project).
 jsonc-parser = { version = "0.34.0", default-features = false }
 ignore = "0.4.33"
+# Indentation (ticket #26) is resolved like Oxfmt does, with the crates Oxfmt
+# uses: `.editorconfig` sections and `.oxfmtrc.json` override globs.
+editorconfig-parser = "0.0.4"
+fast-glob = "1.1.2"
 # Project search (ticket #34): ripgrep's searcher and regex matcher; the walk
 # is `ignore`'s.
 grep-searcher = "0.1.17"

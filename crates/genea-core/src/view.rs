@@ -423,6 +423,10 @@ pub struct StatusBar {
     /// The open file's line ending, `LF` or `CRLF`, or `None` with no
     /// editor.
     pub line_ending: Option<String>,
+    /// How the open file is indented, as `.oxfmtrc.json` and
+    /// `.editorconfig` resolve it (ticket #26): `2 spaces`, `4 spaces` or
+    /// `Tabs`; `None` with no editor.
+    pub indentation: Option<String>,
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,

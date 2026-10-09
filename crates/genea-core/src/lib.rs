@@ -31,6 +31,7 @@ mod finder;
 mod git;
 mod grid;
 mod history;
+mod indentation;
 mod jobs;
 mod problems;
 mod project;

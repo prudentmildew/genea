@@ -23,6 +23,7 @@ use crate::{
     finder::Finder,
     git::Git,
     history::EditKind,
+    indentation::{self, Indentation, IndentationConfig},
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     reading::{self, Contents, FirstScreen},
@@ -61,6 +62,10 @@ pub(crate) struct Project {
     config_problems: Vec<Problem>,
     /// Bumped by every config read, so a slow read can't replace a newer one.
     config_generation: u64,
+    /// What `.oxfmtrc.json` and `.editorconfig` say about indentation
+    /// (ticket #26), and a counter like `config_generation`'s.
+    indentation: IndentationConfig,
+    indentation_generation: u64,
     /// `genea.jsonc` files below the root (relative paths), each ignored
     /// with a warning.
     nested_configs: BTreeSet<PathBuf>,
@@ -112,6 +117,8 @@ impl Project {
             config: Config::default(),
             config_problems: Vec::new(),
             config_generation: 0,
+            indentation: IndentationConfig::default(),
+            indentation_generation: 0,
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
@@ -135,6 +142,7 @@ impl Project {
             }),
         }
         self.load_config(jobs);
+        self.load_indentation(jobs);
         self.find_nested_configs(jobs);
         self.files.start(jobs);
         self.git.reload(Vec::new(), jobs);
@@ -160,6 +168,9 @@ impl Project {
             && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
         {
             toolchain.check_lockfiles(jobs);
+        }
+        if changes.rescan || changes.paths.iter().any(|path| self.is_indentation_config(path)) {
+            self.load_indentation(jobs);
         }
         if changes.rescan {
             self.load_config(jobs);
@@ -216,6 +227,32 @@ impl Project {
                 project.update_config_problems();
             })
         });
+    }
+
+    /// Reads what `.oxfmtrc.json` and `.editorconfig` say about indentation
+    /// in the background. Open files follow it at once: it is resolved per
+    /// keystroke and per view.
+    fn load_indentation(&mut self, jobs: &Jobs) {
+        self.indentation_generation += 1;
+        let generation = self.indentation_generation;
+        let root = self.root.clone();
+        let id = self.id;
+        jobs.spawn("read indentation config", move || {
+            let config = IndentationConfig::read(&root);
+            Box::new(move |core| {
+                let Some(project) = core.project_mut(id) else { return };
+                if project.indentation_generation == generation {
+                    project.indentation = config;
+                }
+            })
+        });
+    }
+
+    /// Whether a changed path is a file the indentation is read from. Only
+    /// the root's can change: the watcher doesn't see the folders above it.
+    fn is_indentation_config(&self, path: &Path) -> bool {
+        path.parent() == Some(&self.root)
+            && path.file_name().and_then(OsStr::to_str).is_some_and(indentation::is_config_file)
     }
 
     /// Walks the project in the background for `genea.jsonc` files below
@@ -532,8 +569,19 @@ impl Project {
                 }
             }
             Command::NewLine => {
+                let indentation = self.focused_indentation();
                 if let Some(editor) = &mut self.editor {
-                    editor.new_line(now, self.viewport_rows);
+                    editor.new_line(indentation, now, self.viewport_rows);
+                }
+            }
+            Command::Indent | Command::Outdent => {
+                let indentation = self.focused_indentation();
+                if let Some(editor) = &mut self.editor {
+                    if command == Command::Indent {
+                        editor.indent(indentation, now, self.viewport_rows);
+                    } else {
+                        editor.outdent(indentation, now, self.viewport_rows);
+                    }
                 }
             }
             Command::Copy => {
@@ -676,6 +724,7 @@ impl Project {
             config_notice: self.config_notice(),
             encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
             line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
+            indentation: self.editor.as_ref().map(|e| self.indentation_of(e.path()).label()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
@@ -703,6 +752,16 @@ impl Project {
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
         }
+    }
+
+    /// How a file (relative to the root, or absolute) is indented.
+    fn indentation_of(&self, path: &Path) -> Indentation {
+        self.indentation.resolve(&self.root.join(path))
+    }
+
+    /// How the focused file is indented.
+    fn focused_indentation(&self) -> Indentation {
+        self.editor.as_ref().map(|e| self.indentation_of(e.path())).unwrap_or_default()
     }
 
     /// The open file's git gutter markers on the visible lines; lines
