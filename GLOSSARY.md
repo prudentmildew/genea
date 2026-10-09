@@ -20,7 +20,10 @@ _Avoid_: supported language (ambiguous; basic file types are also "supported")
 
 **Toolchain role**: One job within the toolchain: runtime, package manager, bundler/dev server, test runner, linter/formatter.
 
-**Blessed tool**: The tool Genea uses for a toolchain role unless the config picks one of a short list of alternatives. The package manager is the exception: it is detected from the project's lockfile.
+**Blessed tool**: The tool Genea uses for a toolchain role unless the config picks one of a short list of alternatives. The package manager is the exception: it is detected from the project's lockfile (pnpm or Bun).
+
+**Foreign tool**: A tool a project uses for a toolchain role that Genea doesn't bless or allow, such as npm, Yarn, ESLint or Prettier. Genea never runs a foreign tool; it turns off the features of that role instead.
+_Avoid_: unsupported tool
 
 **Template**: A built-in starting point for a new project: frontend, backend, or full-stack. The full-stack template creates a workspace. Templates are fixed; users cannot add their own.
 
