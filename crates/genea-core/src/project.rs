@@ -12,7 +12,7 @@ use genea_host::Host;
 use ropey::Rope;
 
 use crate::{
-    command::{CaretMove, Command},
+    command::Command,
     editor::Editor,
     history::EditKind,
     jobs::Jobs,
@@ -129,6 +129,36 @@ impl Project {
                     editor.place_caret(line, column, true, self.viewport_rows);
                 }
             }
+            Command::AddCaret { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.add_caret(line, column, self.viewport_rows);
+                }
+            }
+            Command::SelectNextOccurrence => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_next_occurrence(self.viewport_rows);
+                }
+            }
+            Command::UnselectLastOccurrence => {
+                if let Some(editor) = &mut self.editor {
+                    editor.unselect_last_occurrence(self.viewport_rows);
+                }
+            }
+            Command::SelectAllOccurrences => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_all_occurrences(self.viewport_rows);
+                }
+            }
+            Command::CloneCaretAbove | Command::CloneCaretBelow => {
+                if let Some(editor) = &mut self.editor {
+                    editor.clone_caret(command == Command::CloneCaretAbove, self.viewport_rows);
+                }
+            }
+            Command::CollapseCarets => {
+                if let Some(editor) = &mut self.editor {
+                    editor.collapse_carets(self.viewport_rows);
+                }
+            }
             Command::SelectWord { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.select_word(line, column, self.viewport_rows);
@@ -169,14 +199,14 @@ impl Project {
                     && let Some(text) = editor.selected_text()
                 {
                     host.clipboard().write_text(&text);
-                    editor.delete(CaretMove::Left, EditKind::Other, now, self.viewport_rows);
+                    editor.delete_selections(now, self.viewport_rows);
                 }
             }
             Command::Paste => {
                 if let Some(editor) = &mut self.editor
                     && let Some(text) = host.clipboard().read_text()
                 {
-                    editor.insert(&text, EditKind::Other, now, self.viewport_rows);
+                    editor.paste(&text, now, self.viewport_rows);
                 }
             }
             Command::Undo => {

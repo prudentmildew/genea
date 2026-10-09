@@ -37,6 +37,9 @@ pub struct WindowController {
     pub notice_action: Option<Command>,
     /// When and on which line the last double-click was, to spot a third.
     last_double_click: Option<(Instant, usize)>,
+    /// The button went down with ⌥ (adding a caret), so a drag doesn't
+    /// select.
+    option_press: bool,
 }
 
 /// A press this soon after a double-click on the same line is a triple-click.
@@ -57,6 +60,7 @@ impl WindowController {
             notice: None,
             notice_action: None,
             last_double_click: None,
+            option_press: false,
         })
     }
 
@@ -95,16 +99,19 @@ impl WindowController {
     }
 
     /// Converts a press on the surface into a caret placement: ⇧ extends
-    /// the selection, and a press soon after a double-click (a third click)
-    /// selects the line.
-    pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool) {
+    /// the selection, ⌥ adds a caret, and a press soon after a double-click
+    /// (a third click) selects the line.
+    pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool, alt: bool) {
         self.focus_pane(workbench, pane);
         let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         let triple = self.last_double_click.take().is_some_and(|(at, clicked_line)| {
             clicked_line == line && at.elapsed() < TRIPLE_CLICK_INTERVAL
         });
+        self.option_press = alt && !triple;
         let command = if triple {
             Command::SelectLine { line }
+        } else if alt {
+            Command::AddCaret { line, column }
         } else if shift {
             Command::ExtendSelection { line, column }
         } else {
@@ -115,6 +122,9 @@ impl WindowController {
 
     /// A drag with the button down extends the selection.
     pub fn drag(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32) {
+        if self.option_press {
+            return;
+        }
         self.focus_pane(workbench, pane);
         let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         self.dispatch(workbench, Command::ExtendSelection { line, column });

@@ -66,7 +66,7 @@ export component ProjectWindow inherits Window {
     // Editor input. Keys, commits and the preedit come from the focused
     // pane only, so they carry no pane.
     callback scrolled(pane: int, delta-y: length);
-    callback pressed(pane: int, x: length, y: length, shift: bool);
+    callback pressed(pane: int, x: length, y: length, shift: bool, alt: bool);
     callback dragged(pane: int, x: length, y: length);
     callback double-clicked(pane: int, x: length, y: length);
     callback key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
@@ -275,8 +275,8 @@ export component ProjectWindow inherits Window {
                 scrolled(delta-y) => {
                     root.scrolled(0, delta-y);
                 }
-                pressed(x, y, shift) => {
-                    root.pressed(0, x, y, shift);
+                pressed(x, y, shift, alt) => {
+                    root.pressed(0, x, y, shift, alt);
                 }
                 dragged(x, y) => {
                     root.dragged(0, x, y);
@@ -324,8 +324,8 @@ export component ProjectWindow inherits Window {
                 scrolled(delta-y) => {
                     root.scrolled(1, delta-y);
                 }
-                pressed(x, y, shift) => {
-                    root.pressed(1, x, y, shift);
+                pressed(x, y, shift, alt) => {
+                    root.pressed(1, x, y, shift, alt);
                 }
                 dragged(x, y) => {
                     root.dragged(1, x, y);
