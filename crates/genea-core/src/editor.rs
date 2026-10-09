@@ -105,6 +105,9 @@ pub(crate) struct Editor {
     /// each expansion, for ⌥↓ to go back to, while the text and carets
     /// are still what the last expansion left.
     expansions: Option<structural::Expansions>,
+    /// Collapsed folds (ticket #25), in no particular order. Their lines
+    /// are hidden: rows (scrolling, Up and Down, the view) skip them.
+    folds: Vec<structural::Folded>,
     /// The tree and highlights, for files in a highlighted language.
     syntax: Option<Syntax>,
 }
@@ -135,6 +138,7 @@ impl Editor {
             history: History::default(),
             whole_words: None,
             expansions: None,
+            folds: Vec::new(),
             syntax,
         }
     }
@@ -175,6 +179,7 @@ impl Editor {
                 CaretMove::Right if !extend && !range.is_empty() => (cursor.caret, cursor.goal) = (range.end, None),
                 _ => self.move_head(&mut cursor, movement, viewport_rows),
             }
+            self.skip_folded(&mut cursor, movement);
             if !extend {
                 cursor.collapse();
             }
@@ -211,10 +216,11 @@ impl Editor {
             }
             CaretMove::WordLeft => self.move_head(cursor, CaretMove::Left, viewport_rows),
             CaretMove::WordRight => self.move_head(cursor, CaretMove::Right, viewport_rows),
-            CaretMove::Up => self.move_vertically(cursor, line.saturating_sub(1)),
-            CaretMove::Down => self.move_vertically(cursor, (line + 1).min(last_line)),
-            CaretMove::PageUp => self.move_vertically(cursor, line.saturating_sub(page)),
-            CaretMove::PageDown => self.move_vertically(cursor, (line + page).min(last_line)),
+            // Rows, not lines: folded lines are skipped.
+            CaretMove::Up => self.move_vertically(cursor, self.line_at_row(self.row_of(line).saturating_sub(1))),
+            CaretMove::Down => self.move_vertically(cursor, self.line_at_row(self.row_of(line) + 1)),
+            CaretMove::PageUp => self.move_vertically(cursor, self.line_at_row(self.row_of(line).saturating_sub(page))),
+            CaretMove::PageDown => self.move_vertically(cursor, self.line_at_row(self.row_of(line) + page)),
             CaretMove::LineStart => set(line, 0),
             CaretMove::LineEnd => set(line, self.line_len(line)),
             CaretMove::DocumentStart => set(0, 0),
@@ -317,7 +323,9 @@ impl Editor {
     pub(crate) fn clone_caret(&mut self, up: bool, viewport_rows: f64) {
         let primary = self.primary();
         let line = self.text.char_to_line(primary.caret);
-        let target = if up { line.checked_sub(1) } else { Some(line + 1).filter(|&l| l < self.text.len_lines()) };
+        let row = self.row_of(line);
+        let target = if up { row.checked_sub(1) } else { Some(row + 1).filter(|&r| r < self.row_count()) };
+        let target = target.map(|row| self.line_at_row(row));
         let Some(target) = target else { return };
         let previous = self.carets.len().checked_sub(2).map(|i| self.carets[i]);
         if primary.goal.is_some() && previous.is_some_and(|p| self.text.char_to_line(p.caret) == target) {
@@ -685,6 +693,7 @@ impl Editor {
                 InputEdit { start_byte, old_end_byte, new_end_byte, start_position, old_end_position, new_end_position };
             syntax.edit(edit);
         }
+        self.shift_folds(chars, text.chars().count());
     }
 
     /// A byte offset as a tree-sitter point (row, byte column).
@@ -731,15 +740,17 @@ impl Editor {
     }
 
     /// Scrolls by `rows`, keeping the last line at the bottom of the
-    /// viewport at most.
+    /// viewport at most. Rows are lines not hidden in a fold.
     pub(crate) fn scroll_by(&mut self, rows: f64, viewport_rows: f64) {
-        let max = (self.text.len_lines() as f64 - viewport_rows).max(0.0);
+        let max = (self.row_count() as f64 - viewport_rows).max(0.0);
         self.scroll_top = (self.scroll_top + rows).clamp(0.0, max);
     }
 
-    /// Scrolls just enough to show the primary caret's whole row.
+    /// Scrolls just enough to show the primary caret's whole row, first
+    /// unfolding any folds that hide a caret.
     fn reveal_caret(&mut self, viewport_rows: f64) {
-        let line = self.text.char_to_line(self.primary().caret) as f64;
+        self.unfold_carets();
+        let line = self.row_of(self.text.char_to_line(self.primary().caret)) as f64;
         if line < self.scroll_top {
             self.scroll_top = line;
         } else if line + 1.0 > self.scroll_top + viewport_rows {
@@ -806,26 +817,35 @@ impl Editor {
 
     pub(crate) fn view(&self, viewport_rows: f64) -> EditorView {
         let line_count = self.text.len_lines();
-        let first = (self.scroll_top.floor() as usize).min(line_count);
-        let end = ((self.scroll_top + viewport_rows).ceil() as usize).min(line_count);
+        let row_count = self.row_count();
+        let first = (self.scroll_top.floor() as usize).min(row_count);
+        let end = ((self.scroll_top + viewport_rows).ceil() as usize).min(row_count);
         let mut ranges: Vec<Range<usize>> =
             self.carets.iter().map(|c| c.range()).filter(|r| !r.is_empty()).collect();
         ranges.sort_by_key(|r| r.start);
-        let lines = (first..end)
-            .map(|index| {
+        let shown = self.rows_to_lines(first..end);
+        let folds = self.fold_markers(shown.first().map_or(0, |s| s.1)..shown.last().map_or(0, |s| s.1 + 1));
+        let lines: Vec<VisibleLine> = shown
+            .iter()
+            .map(|&(row, index)| {
                 let (text, highlights) = self.grid_line(index);
-                VisibleLine { index, text, selections: self.selected_columns(index, &ranges), highlights }
+                VisibleLine {
+                    index,
+                    row,
+                    text,
+                    selections: self.selected_columns(index, &ranges),
+                    highlights,
+                    fold: folds.get(&index).copied(),
+                }
             })
             .collect();
         let caret = self.caret_at(self.primary().caret);
         let mut positions: Vec<usize> = self.carets.iter().map(|c| c.caret).collect();
         positions.sort_unstable();
-        let visible_from = self.text.line_to_char(first);
-        let visible_to = if end < line_count { self.text.line_to_char(end) } else { self.text.len_chars() + 1 };
         let carets = positions
             .into_iter()
-            .filter(|p| (visible_from..visible_to).contains(p))
             .map(|p| self.caret_at(p))
+            .filter(|c| lines.binary_search_by_key(&c.line, |l| l.index).is_ok())
             .collect();
         let preedit = (!self.preedit.is_empty()).then(|| Preedit {
             line: caret.line,

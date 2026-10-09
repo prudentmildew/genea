@@ -430,6 +430,21 @@ impl Project {
                     editor.shrink_selection(self.viewport_rows);
                 }
             }
+            Command::ToggleFold { line } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.toggle_fold(line, self.viewport_rows);
+                }
+            }
+            Command::CollapseFold | Command::ExpandFold | Command::CollapseAllFolds | Command::ExpandAllFolds => {
+                if let Some(editor) = &mut self.editor {
+                    match command {
+                        Command::CollapseFold => editor.collapse_fold(self.viewport_rows),
+                        Command::ExpandFold => editor.expand_fold(self.viewport_rows),
+                        Command::CollapseAllFolds => editor.collapse_all_folds(self.viewport_rows),
+                        _ => editor.expand_all_folds(self.viewport_rows),
+                    }
+                }
+            }
             Command::Save => {
                 if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
                     self.save(path, jobs);

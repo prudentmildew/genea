@@ -127,11 +127,13 @@ pub struct EditorView {
     pub modified: bool,
     /// Lines in the file. A file ending in a newline has an empty last line.
     pub line_count: usize,
-    /// The first visible row, fractional while scrolling smoothly. The view
-    /// offsets the grid by `scroll_top - lines[0].index` rows.
+    /// The first visible row, fractional while scrolling smoothly. Rows
+    /// count the lines that aren't hidden in a collapsed fold (ticket #25),
+    /// so without folds a row is a line. The view offsets the grid by
+    /// `scroll_top - lines[0].row` rows.
     pub scroll_top: f64,
     /// The lines in the viewport, top to bottom, including a partly visible
-    /// last one.
+    /// last one. Lines hidden in a collapsed fold are left out.
     pub lines: Vec<VisibleLine>,
     /// Where the primary caret is in the file: the one the view scrolls to
     /// and the status bar reports. While composing, the view draws it after
@@ -170,6 +172,12 @@ pub struct Preedit {
 pub struct VisibleLine {
     /// 0-based line index in the file (the gutter shows `index + 1`).
     pub index: usize,
+    /// The row it is drawn on: its index minus the lines hidden in folds
+    /// above it.
+    pub row: usize,
+    /// Whether a fold region starts on this line, for the gutter's marker:
+    /// a click on it is `Command::ToggleFold`.
+    pub fold: Option<Fold>,
     /// The text as laid out on the grid: no line ending, tabs expanded to
     /// spaces, cut off after [`crate::MAX_VISIBLE_COLUMNS`] columns.
     pub text: String,
@@ -180,6 +188,15 @@ pub struct VisibleLine {
     /// Highlighted stretches of `text`, left to right, not overlapping.
     /// Text outside them is plain.
     pub highlights: Vec<HighlightSpan>,
+}
+
+/// A fold region's state, on the line it starts on (ticket #25).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    /// Its lines are shown.
+    Expanded,
+    /// Its lines are hidden; the view marks the line as folded.
+    Collapsed,
 }
 
 /// A stretch of a visible line in one highlight.

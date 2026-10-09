@@ -30,7 +30,7 @@ use std::{
 pub use highlight::Highlight;
 pub(crate) use highlight::{Span, Spans};
 pub(crate) use language::{Comment, Language};
-pub(crate) use structure::Indent;
+pub(crate) use structure::{FoldRegion, Indent};
 use ropey::Rope;
 use tree_sitter::{InputEdit, Parser, Tree};
 
@@ -153,10 +153,6 @@ impl Syntax {
     /// structure is the last parse's.
     pub(crate) fn tree(&self) -> Option<&Tree> {
         self.tree.as_ref()
-    }
-
-    pub(crate) fn language(&self) -> Language {
-        self.language
     }
 
     /// How a line break at `byte` (on `row`) indents the new line. `before`
