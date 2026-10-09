@@ -24,7 +24,7 @@ objc2 = "0.6.5"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSValue"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
-    "std", "block2", "NSApplication", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow",
+    "std", "block2", "NSApplication", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace",
 ] }
 
 [build-dependencies]

@@ -26,3 +26,6 @@ rustc-ice-*.txt
 # Claude Code local settings and agent worktrees
 .claude/settings.local.json
 .claude/worktrees/
+
+# Release builds (scripts/release.sh)
+/dist/

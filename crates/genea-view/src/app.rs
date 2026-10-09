@@ -25,7 +25,7 @@ use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, dialogs,
+    AboutWindow, about, dialogs, links,
     keys::{self, Modifiers},
     pasteboard::Pasteboard,
     welcome::WelcomeController,
@@ -88,6 +88,8 @@ pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint
             app.dispatch(key, Command::OpenFile(file));
         }
         app.sync_welcome();
+        // The core waits a little and checks in the background (#64).
+        app.workbench.start_update_checks(env!("CARGO_PKG_VERSION"));
     });
     Ok(())
 }
@@ -205,6 +207,7 @@ impl App {
             match AboutWindow::new() {
                 Ok(about) => {
                     about.set_version(env!("CARGO_PKG_VERSION").into());
+                    about.set_licences(about::licence_lines());
                     self.about = Some(about);
                 }
                 Err(error) => {
@@ -217,6 +220,13 @@ impl App {
             && let Err(error) = about.show()
         {
             eprintln!("genea: couldn't show the About window: {error}");
+        }
+    }
+
+    /// Opens the update notice's release page in the browser.
+    fn open_update(&mut self) {
+        if let Some(notice) = self.workbench.update_notice() {
+            links::open_url(&notice.url);
         }
     }
 
@@ -241,6 +251,7 @@ fn wire(controller: &WindowController) {
     });
     window.on_open_file(move || with_app(move |app| app.pick_file(key)));
     window.on_show_about(|| with_app(App::show_about));
+    window.on_open_update(|| with_app(App::open_update));
 
     window.on_scrolled(move |delta_y| {
         let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;
@@ -315,6 +326,7 @@ fn wire_welcome(welcome: &WelcomeController) {
         with_app(move |app| app.open_recent(index));
     });
     window.on_show_about(|| with_app(App::show_about));
+    window.on_open_update(|| with_app(App::open_update));
     window.window().on_close_requested(|| {
         with_app(App::welcome_closed);
         CloseRequestResponse::HideWindow

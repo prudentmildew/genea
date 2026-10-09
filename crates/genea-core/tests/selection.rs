@@ -26,6 +26,11 @@ fn lines(workbench: &Workbench, project: ProjectId) -> Vec<String> {
     workbench.project(project).unwrap().editor.unwrap().lines.into_iter().map(|l| l.text).collect()
 }
 
+/// A line with nothing highlighted. Typed, because a bare `vec![]` can't be
+/// inferred once another crate in the tree (regex-automata, through gix)
+/// adds a `PartialEq` impl for `Range<usize>`.
+const NONE: Vec<Range<usize>> = Vec::new();
+
 /// The highlighted columns of each visible line.
 fn highlighted(workbench: &Workbench, project: ProjectId) -> Vec<Vec<Range<usize>>> {
     workbench.project(project).unwrap().editor.unwrap().lines.into_iter().map(|l| l.selections).collect()
@@ -47,7 +52,7 @@ fn shift_arrows_select_characters_and_typing_replaces_them() {
 
     run(&mut workbench, project, [Command::InsertText("x".into())]);
     assert_eq!(lines(&workbench, project), ["let x = 1;", ""]);
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE]);
 }
 
 #[test]
@@ -57,11 +62,11 @@ fn left_and_right_collapse_a_selection_to_its_start_and_end() {
     run(&mut workbench, project, [Command::MoveCaret(Right), Command::Select(Right), Command::Select(Right)]);
     run(&mut workbench, project, [Command::MoveCaret(Left)]);
     assert_eq!(status_caret(&workbench, project), "1:2");
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE]);
 
     run(&mut workbench, project, [Command::Select(Right), Command::Select(Right), Command::MoveCaret(Right)]);
     assert_eq!(status_caret(&workbench, project), "1:4");
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE]);
 }
 
 #[test]
@@ -155,7 +160,7 @@ fn dragging_or_shift_clicking_extends_the_selection_from_the_click() {
 
     // A plain click drops it.
     run(&mut workbench, project, [Command::PlaceCaret { line: 1, column: 0 }]);
-    assert_eq!(highlighted(&workbench, project), [vec![], vec![], vec![]]);
+    assert_eq!(highlighted(&workbench, project), [NONE, NONE, NONE]);
 }
 
 #[test]

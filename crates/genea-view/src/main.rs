@@ -9,17 +9,21 @@
 //!
 //! - `ui/*.slint`: the markup (one component per file; `app.slint` exports);
 //! - `app`: the workbench, the windows, callback wiring, the notifier;
+//! - `about`: the About window's third-party licences;
 //! - `window`: one project window's view-state → Slint sync;
 //! - `welcome`: the welcome window's sync;
 //! - `surface`: the editor surface's ring of line slots;
 //! - `blink`: keeps the hidden TextInput from repainting on a timer;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
-//!   system clipboard behind the host's `Clipboard`.
+//!   system clipboard behind the host's `Clipboard`; `links`: opening web
+//!   links in the browser.
 
+mod about;
 mod app;
 mod blink;
 mod dialogs;
 mod keys;
+mod links;
 mod pasteboard;
 mod surface;
 mod welcome;
