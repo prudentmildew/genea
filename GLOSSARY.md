@@ -24,5 +24,14 @@ _Avoid_: supported language (ambiguous; basic file types are also "supported")
 
 **Template**: A built-in starting point for a new project: frontend, backend, or full-stack. The full-stack template creates a workspace. Templates are fixed; users cannot add their own.
 
+**Reference machine**: The deliberately weak Mac that performance is measured against (an Apple Silicon baseline with limited memory and cores, driving a 120 Hz display).
+
+**Reference workspace**: A workspace performance is measured on. _Typical_ is the size a full-stack project grows to; _Large_ is a big real-world TypeScript repo. Genea budgets apply in full to Typical; Large must stay usable.
+
+**Genea budget**: A hard performance limit on something Genea itself owns (startup, input, rendering, navigation, memory), measured at p95 on the reference machine. Missing one blocks a release.
+
+**End-to-end target**: A performance goal that includes the TypeScript language server, which Genea doesn't control. Guides decisions; doesn't block releases.
+_Avoid_: budget (for these)
+
 **Config**: The single, small file at a project's root through which a user adjusts Genea. Everything it omits falls back to built-in defaults. There is no global config, and no plugins or extensions; the config is the only customisation surface.
 _Avoid_: settings, preferences, extensions
