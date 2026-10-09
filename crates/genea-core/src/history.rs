@@ -13,8 +13,6 @@
 
 use std::time::{Duration, Instant};
 
-use ropey::Rope;
-
 /// A pause in typing at least this long starts a new undo step.
 pub(crate) const GROUP_PAUSE: Duration = Duration::from_secs(1);
 
@@ -56,13 +54,6 @@ pub(crate) enum Change {
 }
 
 impl Change {
-    pub(crate) fn apply(&self, rope: &mut Rope) {
-        match self {
-            Change::Insert { at, text } => rope.insert(*at, text),
-            Change::Remove { at, text } => rope.remove(*at..*at + text.chars().count()),
-        }
-    }
-
     fn inverse(&self) -> Change {
         match self {
             Change::Insert { at, text } => Change::Remove { at: *at, text: text.clone() },
@@ -179,11 +170,12 @@ impl History {
         }
     }
 
-    /// Reverts the last undo step in `text`.
-    pub(crate) fn undo(&mut self, text: &mut Rope) -> Option<Restored> {
+    /// Reverts the last undo step, handing each change that does it to
+    /// `apply`.
+    pub(crate) fn undo(&mut self, mut apply: impl FnMut(&Change)) -> Option<Restored> {
         let transaction = self.undo.pop()?;
         for change in transaction.changes.iter().rev() {
-            change.inverse().apply(text);
+            apply(&change.inverse());
         }
         let restored = Restored { selections: transaction.before.clone(), version: transaction.version_before };
         self.redo.push(transaction);
@@ -191,11 +183,12 @@ impl History {
         Some(restored)
     }
 
-    /// Makes the last undone step again in `text`.
-    pub(crate) fn redo(&mut self, text: &mut Rope) -> Option<Restored> {
+    /// Makes the last undone step again, handing each of its changes to
+    /// `apply`.
+    pub(crate) fn redo(&mut self, mut apply: impl FnMut(&Change)) -> Option<Restored> {
         let transaction = self.redo.pop()?;
         for change in &transaction.changes {
-            change.apply(text);
+            apply(change);
         }
         let restored = Restored { selections: transaction.after.clone(), version: transaction.version_after };
         self.undo.push(transaction);

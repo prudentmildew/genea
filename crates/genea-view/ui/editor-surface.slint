@@ -13,12 +13,14 @@
 
 import { Theme } from "theme.slint";
 
-// One highlight run of a line, placed on the monospace grid by Rust. A
-// transparent colour means the theme's editor foreground.
+// One run of a line in one highlight, placed on the monospace grid by Rust.
+// Wide and non-Latin characters get runs of their own, so a fallback font's
+// advance can't push the rest of the line off the grid.
 export struct Run {
     x: length,
     text: string,
-    color: color,
+    // An index into Theme.syntax: 0 is plain text.
+    highlight: int,
 }
 
 // A problem underlined on a line (ticket #29), placed by Rust.
@@ -137,7 +139,7 @@ export component EditorSurface inherits Rectangle {
                 height: Theme.line-height;
                 vertical-alignment: center;
                 text: run.text;
-                color: run.color == Colors.transparent ? Theme.editor-foreground : run.color;
+                color: Theme.syntax[run.highlight];
                 font-family: Theme.editor-font;
                 font-size: Theme.editor-font-size;
             }

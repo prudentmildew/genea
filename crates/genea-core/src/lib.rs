@@ -30,6 +30,7 @@ mod jobs;
 mod problems;
 mod project;
 mod recent;
+mod syntax;
 mod templates;
 mod text;
 mod toolchain;
@@ -43,6 +44,7 @@ pub use config::{Config, TerminalPosition, Theme};
 pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use problems::{ProblemSource, Severity, TextPosition};
+pub use syntax::Highlight;
 pub use environment::LOGIN_SHELL_TIMEOUT;
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
@@ -50,8 +52,8 @@ pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem, ProjectView,
-    RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
+    Caret, EditorView, HighlightSpan, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
+    ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, PaneView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

@@ -21,6 +21,8 @@ genea-host.workspace = true
 # filter and rendering notifier (src/journal.rs, the only module using them).
 slint = { workspace = true, features = ["raw-window-handle-06", "unstable-fontique-011", "unstable-winit-030", "unstable-wgpu-30"] }
 raw-window-handle = "0.6.2"
+# Grid columns per char, to place highlight runs (the same widths the core uses).
+unicode-width.workspace = true
 memmap2 = "0.9.11"
 # The benchmark journal: proc_pid_rusage.
 libc = "0.2.190"

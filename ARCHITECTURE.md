@@ -104,6 +104,28 @@ use, and nothing else:
   the whole caret list. `EditorView::caret` is the primary,
   `EditorView::carets` every caret on the visible lines.
 
+### Syntax
+
+`src/syntax/` (ticket #24) holds an open file's tree-sitter tree and its
+highlight spans. Every change to a buffer's text (`Editor::replace`, undo
+and redo, all through `Editor::apply`) ends in `Editor::splice`, which
+applies it to the main thread's tree (`Tree::edit`, positions only) and
+shifts the spans, so a keystroke never waits on a parse. Don't edit the
+rope anywhere else. One background parse per file runs at a time
+(`Project::reparse`, `spawn_parse`): it reparses incrementally and
+recomputes the highlights, edits made meanwhile are replayed onto its result,
+and the next parse starts if the text moved on. Files over 5 MB get no syntax.
+
+- View state: `VisibleLine::highlights`, a list of `HighlightSpan`
+  (display columns + `genea_core::Highlight`). The view colours each
+  `Highlight` from the light or dark palette in `ui/theme.slint`
+  (`highlight_index` in `src/surface.rs` maps them; keep the two in step).
+- Languages, grammars and queries: `syntax/language.rs`. Embedded languages
+  (HTML `<script>`/`<style>`, Markdown inline and fenced code) come from the
+  grammars' injection queries. `.env` has no grammar: `syntax/dotenv.rs`.
+- Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
+  tokens over `Syntax::spans()` in `Editor::grid_line`.
+
 ## The host boundary
 
 `genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
@@ -237,8 +259,9 @@ chrome, native menus via muda (Slint's `MenuBar`).
 - Themes: `ui/theme.slint`'s `Theme` global has light and dark colours,
   chosen by `follow-system` (the system's appearance, through
   `Palette.color-scheme`) or `pinned-dark`, which `WindowController::sync`
-  sets from the config's `theme`. Use `Theme` colours, never literals; a
-  `Run` with a transparent colour is drawn in `Theme.editor-foreground`.
+  sets from the config's `theme`. Use `Theme` colours, never literals. Each
+  palette has its syntax colours (`Theme.syntax`); a `Run`'s `highlight`
+  indexes them, and 0 is plain text.
 - The left column (`ui/left-column.slint`): a view switcher and the active
   view, shown while the core's `left_column` is `Some`. A view's shortcut
   is a menu item that dispatches `ToggleLeftColumn` (Problems is ⌘6). A new
