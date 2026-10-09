@@ -57,5 +57,7 @@ pub use view::{
     ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, PaneView};
-pub use view::{TerminalCursor, TerminalLine, TerminalStatus, TerminalView};
+pub use view::{
+    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
+};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

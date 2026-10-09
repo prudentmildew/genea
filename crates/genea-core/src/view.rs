@@ -318,6 +318,63 @@ pub struct TerminalLine {
     /// The row's text in grid columns, without trailing blanks. A wide
     /// character takes two columns.
     pub text: String,
+    /// The row in stretches of one style, left to right, covering `text`
+    /// and any blank cells after it that have a background colour.
+    pub runs: Vec<TerminalRun>,
+}
+
+/// A stretch of a terminal row in one style.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalRun {
+    /// The grid columns it covers.
+    pub columns: Range<usize>,
+    pub text: String,
+    pub style: TerminalStyle,
+}
+
+/// How terminal text looks. Inverse video is already applied (the colours
+/// are swapped), and hidden text has its background as its foreground.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalStyle {
+    pub foreground: TerminalColor,
+    pub background: TerminalColor,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikeout: bool,
+    /// Faint text.
+    pub dim: bool,
+    /// The target of an OSC 8 hyperlink.
+    pub link: Option<String>,
+}
+
+impl Default for TerminalStyle {
+    fn default() -> Self {
+        TerminalStyle {
+            foreground: TerminalColor::Foreground,
+            background: TerminalColor::Background,
+            bold: false,
+            italic: false,
+            underline: false,
+            strikeout: false,
+            dim: false,
+            link: None,
+        }
+    }
+}
+
+/// A terminal colour. The theme decides the default colours and the 16
+/// ANSI ones; 256-colour indices above 15 and 24-bit colours are exact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalColor {
+    /// The theme's terminal text colour.
+    Foreground,
+    /// The theme's terminal background.
+    Background,
+    /// ANSI colour 0–15: black, red, green, yellow, blue, magenta, cyan,
+    /// white, then their bright versions.
+    Ansi(u8),
+    Rgb(u8, u8, u8),
 }
 
 /// The terminal's cursor cell.

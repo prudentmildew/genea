@@ -29,11 +29,12 @@ use alacritty_terminal::{
     Term,
     event::{Event, EventListener},
     grid::Dimensions,
-    term::{Config, TermMode, cell::Flags},
-    vte::ansi::{CursorShape, Processor, Timeout},
+    term::{Config, TermMode},
+    vte::ansi::{Processor, Timeout},
 };
 use genea_host::{Exit, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
 
+mod grid;
 mod input;
 
 use crate::{
@@ -272,7 +273,7 @@ impl Terminal {
         // Cleared before the copy: output parsed after it posts again.
         session.dirty.store(false, Ordering::SeqCst);
         let term = session.term.lock().unwrap();
-        (self.lines, self.cursor) = snapshot(&term);
+        (self.lines, self.cursor) = grid::snapshot(&term);
     }
 
     /// A terminal command from the user.
@@ -306,7 +307,7 @@ impl Terminal {
                 let _ = session.to_pty.send(ToPty::Resize(size.into()));
                 self.refresh();
             }
-            _ => self.lines.resize_with(size.rows, || TerminalLine { text: String::new() }),
+            _ => self.lines.resize_with(size.rows, blank_line),
         }
     }
 
@@ -394,43 +395,9 @@ fn write_pty(mut input: Box<dyn Write + Send>, control: &dyn PtyControl, from_co
 }
 
 fn blank_lines(size: Size) -> Vec<TerminalLine> {
-    (0..size.rows).map(|_| TerminalLine { text: String::new() }).collect()
+    (0..size.rows).map(|_| blank_line()).collect()
 }
 
-/// The visible rows and the cursor, as the user sees them.
-fn snapshot(term: &Term<Listener>) -> (Vec<TerminalLine>, Option<TerminalCursor>) {
-    let content = term.renderable_content();
-    let offset = content.display_offset as i32;
-    let rows = term.screen_lines();
-    let mut texts: Vec<String> = vec![String::new(); rows];
-    let mut widths = vec![0usize; rows];
-    for indexed in content.display_iter {
-        let Ok(row) = usize::try_from(indexed.point.line.0 + offset) else { continue };
-        let Some(text) = texts.get_mut(row) else { continue };
-        let cell = indexed.cell;
-        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-            continue;
-        }
-        let column = indexed.point.column.0;
-        // Pad to the cell's column (cells after a wide char's spacer).
-        while widths[row] < column {
-            text.push(' ');
-            widths[row] += 1;
-        }
-        let c = if cell.flags.intersects(Flags::HIDDEN | Flags::LEADING_WIDE_CHAR_SPACER) { ' ' } else { cell.c };
-        text.push(c);
-        if let Some(zero_width) = cell.zerowidth() {
-            text.extend(zero_width);
-        }
-        widths[row] += if cell.flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 };
-    }
-    let lines = texts
-        .into_iter()
-        .map(|text| TerminalLine { text: text.trim_end_matches([' ', '\t']).to_owned() })
-        .collect();
-    let cursor = content.cursor;
-    let line = cursor.point.line.0 + offset;
-    let cursor = (cursor.shape != CursorShape::Hidden && (0..rows as i32).contains(&line))
-        .then(|| TerminalCursor { line: line as usize, column: cursor.point.column.0 });
-    (lines, cursor)
+fn blank_line() -> TerminalLine {
+    TerminalLine { text: String::new(), runs: Vec::new() }
 }

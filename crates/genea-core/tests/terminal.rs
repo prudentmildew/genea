@@ -9,7 +9,8 @@
 use std::{path::Path, sync::mpsc, time::Duration};
 
 use genea_core::{
-    Command, Modifiers, ProjectId, TerminalKey, TerminalStatus, TerminalView, ToolState, ToolView, Workbench,
+    Command, Modifiers, ProjectId, TerminalColor, TerminalKey, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
+    ToolState, ToolView, Workbench,
 };
 use genea_host::PtySize;
 use genea_testkit::{FakePty, FixtureProject, TestHost};
@@ -217,4 +218,66 @@ fn a_shell_started_after_a_resize_gets_the_new_size() {
     workbench.settle().unwrap();
 
     assert_eq!(host.ptys().last().size(), PtySize { rows: 40, columns: 120 });
+}
+
+fn run(columns: std::ops::Range<usize>, text: &str, style: TerminalStyle) -> TerminalRun {
+    TerminalRun { columns, text: text.into(), style }
+}
+
+#[test]
+fn colours_and_attributes_come_with_the_text() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+
+    // Bold red (ANSI), a 24-bit foreground on a 256-colour background, and
+    // inverse video.
+    pty.output("\x1b[1;31mred\x1b[0m \x1b[38;2;10;20;30;48;5;196mrgb\x1b[0m \x1b[7minv\x1b[0m plain");
+    workbench.settle().unwrap();
+
+    let line = &terminal(&workbench, project).lines[0];
+    assert_eq!(line.text, "red rgb inv plain");
+    let plain = TerminalStyle::default();
+    assert_eq!(
+        line.runs,
+        [
+            run(0..3, "red", TerminalStyle { foreground: TerminalColor::Ansi(1), bold: true, ..plain.clone() }),
+            run(3..4, " ", plain.clone()),
+            run(
+                4..7,
+                "rgb",
+                TerminalStyle {
+                    foreground: TerminalColor::Rgb(10, 20, 30),
+                    background: TerminalColor::Rgb(255, 0, 0),
+                    ..plain.clone()
+                }
+            ),
+            run(7..8, " ", plain.clone()),
+            run(
+                8..11,
+                "inv",
+                TerminalStyle {
+                    foreground: TerminalColor::Background,
+                    background: TerminalColor::Foreground,
+                    ..plain.clone()
+                }
+            ),
+            run(11..17, " plain", plain.clone()),
+        ]
+    );
+}
+
+#[test]
+fn wide_characters_take_two_columns() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+
+    pty.output("日本 ok");
+    workbench.settle().unwrap();
+
+    let view = terminal(&workbench, project);
+    assert_eq!(view.lines[0].text, "日本 ok");
+    assert_eq!(view.lines[0].runs, [run(0..7, "日本 ok", TerminalStyle::default())]);
+    assert_eq!(view.cursor.unwrap().column, 7);
 }
