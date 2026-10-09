@@ -148,6 +148,13 @@ pub enum Command {
     /// comment (`/* */` in CSS, `<!-- -->` in HTML and Markdown). A
     /// selection that ends at the start of a line leaves that line out.
     ToggleLineComment,
+    /// ⌥↑: grows each selection to the smallest syntax node around it (the
+    /// inside of a block comes before the block). An empty selection grows
+    /// to the node at its caret.
+    ExpandSelection,
+    /// ⌥↓: undoes the last `ExpandSelection`, step by step, as long as
+    /// nothing else changed the selection or the text in between.
+    ShrinkSelection,
 }
 
 /// What to do with unsaved edits in a closing tab.

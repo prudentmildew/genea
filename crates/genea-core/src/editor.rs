@@ -101,6 +101,10 @@ pub(crate) struct Editor {
     /// carets it left. While both still hold, occurrences match whole words
     /// only; any other caret change or edit ends that.
     whole_words: Option<(u64, Vec<CaretSelection>)>,
+    /// Set by ⌥↑ (expand selection, ticket #25): the selections before
+    /// each expansion, for ⌥↓ to go back to, while the text and carets
+    /// are still what the last expansion left.
+    expansions: Option<structural::Expansions>,
     /// The tree and highlights, for files in a highlighted language.
     syntax: Option<Syntax>,
 }
@@ -130,6 +134,7 @@ impl Editor {
             read_only: false,
             history: History::default(),
             whole_words: None,
+            expansions: None,
             syntax,
         }
     }
@@ -930,6 +935,7 @@ pub(crate) struct Cursor {
     scroll_top: f64,
     preedit: String,
     whole_words: Option<(u64, Vec<CaretSelection>)>,
+    expansions: Option<structural::Expansions>,
 }
 
 impl Editor {
@@ -949,6 +955,7 @@ impl Editor {
             scroll_top: self.scroll_top,
             preedit: self.preedit.clone(),
             whole_words: self.whole_words.clone(),
+            expansions: self.expansions.clone(),
         }
     }
 
@@ -968,6 +975,7 @@ impl Editor {
         self.scroll_top = cursor.scroll_top;
         self.preedit.clone_from(&cursor.preedit);
         self.whole_words.clone_from(&cursor.whole_words);
+        self.expansions.clone_from(&cursor.expansions);
         self.scroll_by(0.0, viewport_rows);
     }
 }

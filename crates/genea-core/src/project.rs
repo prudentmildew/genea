@@ -420,6 +420,16 @@ impl Project {
                     editor.toggle_line_comment(now, self.viewport_rows);
                 }
             }
+            Command::ExpandSelection => {
+                if let Some(editor) = &mut self.editor {
+                    editor.expand_selection(self.viewport_rows);
+                }
+            }
+            Command::ShrinkSelection => {
+                if let Some(editor) = &mut self.editor {
+                    editor.shrink_selection(self.viewport_rows);
+                }
+            }
             Command::Save => {
                 if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
                     self.save(path, jobs);

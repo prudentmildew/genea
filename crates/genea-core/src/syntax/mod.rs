@@ -20,7 +20,7 @@
 mod dotenv;
 mod highlight;
 mod language;
-mod structure;
+pub(crate) mod structure;
 
 use std::{
     ops::Range,

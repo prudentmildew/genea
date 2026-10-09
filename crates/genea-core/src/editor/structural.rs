@@ -8,8 +8,17 @@ use std::{collections::BTreeSet, ops::Range, time::Instant};
 use super::{CaretSelection, Editor};
 use crate::{
     history::{Change, EditKind},
-    syntax::{Comment, Language},
+    syntax::{Comment, Language, Syntax, structure},
 };
+
+/// What ⌥↓ goes back through: the selections before each ⌥↑, valid while
+/// the text version and the carets are those the last ⌥↑ left.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Expansions {
+    version: u64,
+    carets: Vec<CaretSelection>,
+    before: Vec<Vec<CaretSelection>>,
+}
 
 /// One level of indentation. Ticket #26 resolves it from `.oxfmtrc.json`
 /// and `.editorconfig`; until then it is Oxfmt's default.
@@ -131,6 +140,57 @@ impl Editor {
             }
         }
         self.edit_text(edits, EditKind::Other, now, viewport_rows);
+    }
+
+    /// ⌥↑: grows every selection to the smallest syntax node (or a block's
+    /// inside) around it. An empty selection grows to the node at its
+    /// caret. Remembers the selections before, for `shrink_selection`.
+    pub(crate) fn expand_selection(&mut self, viewport_rows: f64) {
+        let Some(tree) = self.syntax.as_ref().and_then(Syntax::tree) else { return };
+        let before = self.carets.clone();
+        let mut expanded = false;
+        for i in 0..self.carets.len() {
+            let range = self.carets[i].range();
+            let bytes = self.text.char_to_byte(range.start)..self.text.char_to_byte(range.end);
+            if let Some(grown) = structure::expansion(tree, bytes) {
+                let start = self.text.byte_to_char(grown.start.min(self.text.len_bytes()));
+                let end = self.text.byte_to_char(grown.end.min(self.text.len_bytes()));
+                self.carets[i] = CaretSelection::selecting(start, end);
+                expanded = true;
+            }
+        }
+        if !expanded {
+            return;
+        }
+        self.merge_carets();
+        let mut history = match self.expansions.take() {
+            Some(expansions) if self.expansions_hold(&expansions, &before) => expansions.before,
+            _ => Vec::new(),
+        };
+        history.push(before);
+        self.expansions = Some(Expansions { version: self.version, carets: self.carets.clone(), before: history });
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// ⌥↓: puts back the selections from before the last ⌥↑, if nothing
+    /// else changed the selections or the text since.
+    pub(crate) fn shrink_selection(&mut self, viewport_rows: f64) {
+        let Some(mut expansions) = self.expansions.take() else { return };
+        if !self.expansions_hold(&expansions, &self.carets) {
+            return;
+        }
+        let Some(previous) = expansions.before.pop() else { return };
+        self.carets = previous;
+        if !expansions.before.is_empty() {
+            expansions.carets = self.carets.clone();
+            self.expansions = Some(expansions);
+        }
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Whether the selections are still the ones the last expansion left.
+    fn expansions_hold(&self, expansions: &Expansions, carets: &[CaretSelection]) -> bool {
+        expansions.version == self.version && expansions.carets == carets
     }
 
     /// Makes several changes as one edit, keeping every caret and selection
