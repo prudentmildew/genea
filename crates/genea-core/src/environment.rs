@@ -62,6 +62,8 @@ pub(crate) struct Environment {
     problem: Option<String>,
     /// Bumped by every capture, so a stale one's result is dropped.
     generation: u64,
+    /// A capture is running: see [`is_ready`](Self::is_ready).
+    capturing: bool,
 }
 
 /// How a capture ended.
@@ -83,7 +85,7 @@ struct Attempt {
 impl Environment {
     pub(crate) fn new(project: ProjectId, root: PathBuf, host: SharedHost) -> Self {
         let vars = host.launch_environment();
-        Environment { project, root, host, vars, problem: None, generation: 0 }
+        Environment { project, root, host, vars, problem: None, generation: 0, capturing: false }
     }
 
     /// Runs the login shell in the background and takes its variables.
@@ -92,9 +94,10 @@ impl Environment {
         let generation = self.generation;
         let launch = self.host.launch_environment();
         let Some(shell) = value(&launch, "SHELL").map(PathBuf::from) else {
-            (self.vars, self.problem) = (launch, None);
+            (self.vars, self.problem, self.capturing) = (launch, None, false);
             return;
         };
+        self.capturing = true;
         let attempt = Arc::new(Mutex::new(Attempt::default()));
         let id = self.project;
 
@@ -146,6 +149,13 @@ impl Environment {
         });
     }
 
+    /// Whether the variables are final for now: no capture is running.
+    /// Processes that should see the login shell's variables, like the
+    /// terminal's shell, wait for this.
+    pub(crate) fn is_ready(&self) -> bool {
+        !self.capturing
+    }
+
     pub(crate) fn notices(&self) -> Vec<Notice> {
         let reload = NoticeAction { label: "Reload environment".into(), command: Command::ReloadEnvironment };
         self.problem.iter().map(|message| Notice { message: message.clone(), action: Some(reload.clone()) }).collect()
@@ -192,6 +202,11 @@ impl ProcessEnv {
         spec.cwd.get_or_insert_with(|| self.root.clone());
         spec
     }
+
+    /// A variable's value, if set.
+    pub(crate) fn var(&self, key: &str) -> Option<&OsStr> {
+        value(&self.vars, key).map(OsString::as_os_str)
+    }
 }
 
 /// Applies a capture's outcome, unless a newer capture has started.
@@ -200,6 +215,7 @@ fn finished(core: &mut Core, id: ProjectId, generation: u64, launch: Vars, outco
     if environment.generation != generation {
         return;
     }
+    environment.capturing = false;
     (environment.vars, environment.problem) = match outcome {
         Outcome::Captured(vars) => (vars, None),
         Outcome::Fallback(message) => (launch, Some(message)),

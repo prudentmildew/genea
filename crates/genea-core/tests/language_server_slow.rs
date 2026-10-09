@@ -25,7 +25,7 @@ use std::{
 };
 
 use genea_core::{CaretMove, Command, LanguageServerState, ProblemSource, ProjectId, Severity, Workbench};
-use genea_host::{Clipboard, Clock, DownloadError, Downloads, Host, Processes, RealHost};
+use genea_host::{Clipboard, Clock, DownloadError, Downloads, Host, Processes, Ptys, RealHost};
 use genea_testkit::FixtureProject;
 
 /// The TypeScript the fixture installs: the templates' version.
@@ -57,6 +57,10 @@ impl Host for SlowHost {
 
     fn processes(&self) -> &dyn Processes {
         self.real.processes()
+    }
+
+    fn ptys(&self) -> &dyn Ptys {
+        self.real.ptys()
     }
 
     fn downloads(&self) -> &dyn Downloads {

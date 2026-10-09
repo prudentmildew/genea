@@ -8,3 +8,5 @@ publish.workspace = true
 
 [dependencies]
 ureq.workspace = true
+# The real PTY (ticket #38).
+libc.workspace = true

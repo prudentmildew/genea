@@ -20,6 +20,7 @@
 mod dotenv;
 mod highlight;
 mod language;
+pub(crate) mod structure;
 
 use std::{
     ops::Range,
@@ -28,7 +29,8 @@ use std::{
 
 pub use highlight::Highlight;
 pub(crate) use highlight::{Span, Spans};
-pub(crate) use language::Language;
+pub(crate) use language::{Comment, Language};
+pub(crate) use structure::{FoldRegion, Indent};
 use ropey::Rope;
 use tree_sitter::{InputEdit, Parser, Tree};
 
@@ -143,9 +145,42 @@ impl Syntax {
 
     /// The syntax tree, edited to the buffer's current positions; its
     /// structure is the last parse's.
-    #[allow(dead_code, reason = "structural editing (#25) reads it")]
     pub(crate) fn tree(&self) -> Option<&Tree> {
         self.tree.as_ref()
+    }
+
+    /// How a line break at `byte` (on `row`) indents the new line. `before`
+    /// is the line's text before the caret, `rest` the byte the text after
+    /// it starts at (whitespace skipped) and `next` that text's first char.
+    ///
+    /// The tree decides, and since it may be a parse behind (a brace typed
+    /// just before Return isn't in it yet), an opening bracket that ends
+    /// `before` and isn't in a string or comment counts too.
+    pub(crate) fn indent(&self, before: &str, byte: usize, row: usize, rest: usize, next: Option<char>) -> Indent {
+        let indent = self.tree.as_ref().map(|tree| structure::indent(tree, byte, row, rest)).unwrap_or_default();
+        if indent.deeper {
+            return indent;
+        }
+        let trimmed = before.trim_end();
+        let Some(last) = trimmed.chars().next_back() else { return indent };
+        let last_byte = byte - (before.len() - trimmed.len()) - last.len_utf8();
+        let literal = self.spans(last_byte..last_byte + 1).iter().any(|span| {
+            matches!(
+                span.highlight,
+                Highlight::String | Highlight::StringSpecial | Highlight::Comment | Highlight::Escape | Highlight::Literal
+            )
+        });
+        if literal {
+            return indent;
+        }
+        match last {
+            '{' | '[' | '(' => {
+                let close = structure::closing_bracket(&last.to_string()).and_then(|c| c.chars().next());
+                Indent { deeper: true, split: next.is_some() && next == close }
+            }
+            ':' if self.language == Language::Yaml => Indent { deeper: true, split: false },
+            _ => indent,
+        }
     }
 }
 

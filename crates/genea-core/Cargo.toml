@@ -14,7 +14,13 @@ ropey.workspace = true
 unicode-width.workspace = true
 jsonc-parser.workspace = true
 ignore.workspace = true
+editorconfig-parser.workspace = true
+fast-glob.workspace = true
+grep-searcher.workspace = true
+grep-regex.workspace = true
+grep-matcher.workspace = true
 notify.workspace = true
+nucleo-matcher.workspace = true
 tree-sitter.workspace = true
 streaming-iterator.workspace = true
 tree-sitter-typescript.workspace = true
@@ -24,8 +30,10 @@ tree-sitter-css.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-md.workspace = true
 tree-sitter-yaml.workspace = true
-# Templates: `git init` (ticket #60).
+# Templates: `git init` (ticket #60). The branch and the files at HEAD (#56).
 gix = { workspace = true, features = ["sha1"] }
+# The git gutter (ticket #56): line diffs against HEAD.
+imara-diff.workspace = true
 # Templates write package.json with its keys in the conventional order; the
 # update check (ticket #64) reads GitHub's release JSON.
 serde_json = { workspace = true, features = ["preserve_order"] }
@@ -34,6 +42,8 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 gen-lsp-types.workspace = true
 globset.workspace = true
 serde.workspace = true
+# The terminal's emulator (ticket #38).
+alacritty_terminal.workspace = true
 
 [dev-dependencies]
 genea-testkit.workspace = true

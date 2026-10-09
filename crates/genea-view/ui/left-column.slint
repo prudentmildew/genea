@@ -1,14 +1,15 @@
 // The left column (spec #19 story 54): a view switcher on top and the active
-// view below. Files (⌘1, the one a project opens with) and Problems (⌘6)
-// are there; Changes and Search join them in their tickets: add a
+// view below. Files (⌘1, the one a project opens with), Search (⌘⇧F) and
+// Problems (⌘6) are there; Changes joins them in its ticket: add a
 // `LeftView` value, a switcher tab and the view itself. The column is collapsed (not shown) while the core's
 // `left_column` is `None`.
 
 import { Theme } from "theme.slint";
 import { ProblemsView, ProblemRow } from "problems-view.slint";
 import { FilesView, FileEntry } from "files-view.slint";
+import { SearchView, SearchRow } from "search-view.slint";
 
-export enum LeftView { files, problems }
+export enum LeftView { files, search, problems }
 
 // A tab in the switcher.
 component SwitcherTab inherits Rectangle {
@@ -44,11 +45,20 @@ export component LeftColumn inherits Rectangle {
     in property <LeftView> view;
     in property <[ProblemRow]> problems;
     in property <[FileEntry]> files;
+    in property <string> search-query;
+    in property <bool> search-regex;
+    in property <bool> search-case-sensitive;
+    in property <bool> search-whole-word;
+    in property <[SearchRow]> search-rows;
+    in property <string> search-status;
+    in property <bool> search-status-error;
 
     // A switcher tab was clicked: show that view.
     callback show(LeftView);
     callback problem-clicked(int);
     callback file-clicked(int);
+    callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
+    callback search-result-clicked(int);
 
     background: Theme.chrome-background;
 
@@ -65,6 +75,14 @@ export component LeftColumn inherits Rectangle {
                     active: root.view == LeftView.files;
                     clicked => {
                         root.show(LeftView.files);
+                    }
+                }
+
+                SwitcherTab {
+                    label: "Search";
+                    active: root.view == LeftView.search;
+                    clicked => {
+                        root.show(LeftView.search);
                     }
                 }
 
@@ -89,6 +107,23 @@ export component LeftColumn inherits Rectangle {
             files: root.files;
             clicked(index) => {
                 root.file-clicked(index);
+            }
+        }
+
+        if root.view == LeftView.search: SearchView {
+            vertical-stretch: 1;
+            query: root.search-query;
+            regex: root.search-regex;
+            case-sensitive: root.search-case-sensitive;
+            whole-word: root.search-whole-word;
+            rows: root.search-rows;
+            status: root.search-status;
+            status-error: root.search-status-error;
+            search(text, regex, case-sensitive, whole-word) => {
+                root.search(text, regex, case-sensitive, whole-word);
+            }
+            clicked(index) => {
+                root.search-result-clicked(index);
             }
         }
 

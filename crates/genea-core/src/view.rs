@@ -10,7 +10,8 @@ use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{
     Highlight,
-    command::Command,
+    action::Action,
+    command::{Command, SearchQuery},
     config::Config,
     problems::{ProblemSource, Severity, TextPosition},
 };
@@ -47,6 +48,8 @@ pub struct ProjectView {
     pub problems: Vec<ProblemItem>,
     /// The view the left column shows, or `None` while it is collapsed.
     pub left_column: Option<LeftColumnView>,
+    /// The terminal pane (ticket #38).
+    pub terminal: TerminalView,
     /// The open toolchain picker ("Set runtime…", "Set package manager…",
     /// "Update toolchain…"), if any.
     pub toolchain_picker: Option<ToolchainPicker>,
@@ -54,6 +57,109 @@ pub struct ProjectView {
     /// a snapshot doesn't copy a large tree, and unchanged trees compare
     /// equal at once.
     pub files: Arc<[FileRow]>,
+    /// The Search view (⌘⇧F): the last query and its results.
+    pub search: SearchView,
+    /// The fuzzy finder overlay, while it is open (ticket #33).
+    pub finder: Option<FinderView>,
+}
+
+/// The fuzzy finder overlay: a query and the results matching it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderView {
+    pub mode: FinderMode,
+    /// What the user typed.
+    pub query: String,
+    /// Best first. While a new query is being matched, these are the last
+    /// query's results.
+    pub items: Vec<FinderItem>,
+    /// Index into `items` of the result Return opens or runs; `None`
+    /// without results.
+    pub selected: Option<usize>,
+}
+
+/// What the finder finds. Each mode has its shortcut, which opens the
+/// finder in it with `Command::OpenFinder`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FinderMode {
+    /// ⌘⇧O: the project's files, without `node_modules` and the config's
+    /// `exclude`. With an empty query, the recent files.
+    Files,
+    /// ⌘E: the files opened lately (by opening them or selecting their
+    /// tab), most recent first. A query narrows them, keeping that order.
+    /// With an empty query the file before the current one is selected.
+    RecentFiles,
+    /// ⌘⇧A: every action, with its shortcut. Choosing one runs it.
+    Actions,
+    /// ⇧⇧: files and actions together, best match first. With an empty
+    /// query, the recent files.
+    Everywhere,
+}
+
+/// A result in the finder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderItem {
+    /// A file's name, or an action's.
+    pub label: String,
+    /// A file's folder, relative to the project root (empty at the root,
+    /// and for actions).
+    pub detail: String,
+    /// The keyboard shortcut of an action that has one, e.g. `⌘S`.
+    pub shortcut: Option<String>,
+    pub kind: FinderItemKind,
+}
+
+/// What choosing a result does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FinderItemKind {
+    /// Opens the file (relative to the project root).
+    File(PathBuf),
+    /// Runs the action's command.
+    Action(Action),
+}
+
+/// The Search view: a query and its results, grouped by file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchView {
+    /// The query the results are for.
+    pub query: SearchQuery,
+    /// Files with matches, in case-insensitive name order, folder by
+    /// folder. Grows while `searching`. Shared, so a snapshot doesn't copy
+    /// a long list.
+    pub files: Arc<[SearchFile]>,
+    /// Matches in `files`.
+    pub match_count: usize,
+    /// The search is still running: more results may come.
+    pub searching: bool,
+    /// The search stopped at [`MAX_SEARCH_MATCHES`](crate::MAX_SEARCH_MATCHES):
+    /// there are more matches than `files` lists.
+    pub limited: bool,
+    /// Why the query can't be searched for (an invalid regex), if it can't.
+    pub error: Option<String>,
+}
+
+/// A file with matches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchFile {
+    /// Relative to the project root.
+    pub path: PathBuf,
+    /// Top to bottom; a line with several matches has one per match.
+    pub matches: Vec<SearchMatch>,
+}
+
+/// One match. Clicking it opens the file at `position` with
+/// `Command::OpenFileAt`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchMatch {
+    /// Where the match starts (0-based line, char column).
+    pub position: TextPosition,
+    /// `position` as the user reads it: `line:column`, 1-based.
+    pub location: String,
+    /// The line's text around the match: before it (without leading
+    /// whitespace), the match, and after it. Long lines are cut off with
+    /// `…`; tabs show as spaces.
+    pub before: String,
+    pub matched: String,
+    pub after: String,
 }
 
 /// A row in the Files view: a file, or a folder the user can expand.
@@ -115,6 +221,8 @@ pub enum LeftColumnView {
     Files,
     /// ⌘6.
     Problems,
+    /// ⌘⇧F: project search.
+    Search,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem
@@ -165,11 +273,13 @@ pub struct EditorView {
     pub conflict: bool,
     /// Lines in the file. A file ending in a newline has an empty last line.
     pub line_count: usize,
-    /// The first visible row, fractional while scrolling smoothly. The view
-    /// offsets the grid by `scroll_top - lines[0].index` rows.
+    /// The first visible row, fractional while scrolling smoothly. Rows
+    /// count the lines that aren't hidden in a collapsed fold (ticket #25),
+    /// so without folds a row is a line. The view offsets the grid by
+    /// `scroll_top - lines[0].row` rows.
     pub scroll_top: f64,
     /// The lines in the viewport, top to bottom, including a partly visible
-    /// last one.
+    /// last one. Lines hidden in a collapsed fold are left out.
     pub lines: Vec<VisibleLine>,
     /// Where the primary caret is in the file: the one the view scrolls to
     /// and the status bar reports. While composing, the view draws it after
@@ -184,6 +294,55 @@ pub struct EditorView {
     /// Problems in this file on the visible lines, from every source, top
     /// to bottom. A problem spanning lines has one entry per line.
     pub problems: Vec<InlineProblem>,
+    /// The bracket at the primary caret (the one after it, else the one
+    /// before it) and the bracket that matches it, top to bottom; empty
+    /// when the caret isn't at a bracket or it has no match. Brackets in
+    /// strings and comments don't count.
+    pub brackets: Vec<Caret>,
+    /// Git gutter markers on the visible lines, top to bottom: how the
+    /// buffer differs from the file at HEAD (ticket #56). Empty outside a
+    /// git repository and for files that aren't in HEAD. Worked out in the
+    /// background as you type, so they can be a moment behind the text.
+    pub gutter: Vec<GutterMark>,
+    /// The change shown by a click on its gutter marker
+    /// (`Command::ShowHunk`): the lines it replaced at HEAD, offered for
+    /// Rollback. Typing, a click in the text and most other commands close
+    /// it (`Command::HideHunk` does too); scrolling doesn't.
+    pub hunk: Option<HunkView>,
+}
+
+/// A change against HEAD, as its popover shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HunkView {
+    /// The buffer's lines it covers (0-based, end exclusive). Empty for
+    /// deleted lines: they were just above `lines.start`.
+    pub lines: Range<usize>,
+    pub change: LineChange,
+    /// The lines at HEAD, joined by `\n` without a final line break. Empty
+    /// for added lines.
+    pub head: String,
+}
+
+/// A git gutter marker on one line. Clicking it shows the change with
+/// `Command::ShowHunk { line }`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GutterMark {
+    /// 0-based line index in the file.
+    pub line: usize,
+    pub change: LineChange,
+}
+
+/// How a line differs from HEAD.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineChange {
+    /// The line isn't in HEAD.
+    Added,
+    /// The line replaces lines that are in HEAD.
+    Modified,
+    /// Lines that are in HEAD were deleted just above this line. (A file
+    /// ending in a newline has an empty last line, so there is always a
+    /// line below a deletion.)
+    Deleted,
 }
 
 /// Marked text from the IME (a dead key waiting for the next key), shown
@@ -203,6 +362,12 @@ pub struct Preedit {
 pub struct VisibleLine {
     /// 0-based line index in the file (the gutter shows `index + 1`).
     pub index: usize,
+    /// The row it is drawn on: its index minus the lines hidden in folds
+    /// above it.
+    pub row: usize,
+    /// Whether a fold region starts on this line, for the gutter's marker:
+    /// a click on it is `Command::ToggleFold`.
+    pub fold: Option<Fold>,
     /// The text as laid out on the grid: no line ending, tabs expanded to
     /// spaces, cut off after [`crate::MAX_VISIBLE_COLUMNS`] columns.
     pub text: String,
@@ -213,6 +378,15 @@ pub struct VisibleLine {
     /// Highlighted stretches of `text`, left to right, not overlapping.
     /// Text outside them is plain.
     pub highlights: Vec<HighlightSpan>,
+}
+
+/// A fold region's state, on the line it starts on (ticket #25).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    /// Its lines are shown.
+    Expanded,
+    /// Its lines are hidden; the view marks the line as folded.
+    Collapsed,
 }
 
 /// A stretch of a visible line in one highlight.
@@ -249,9 +423,16 @@ pub struct StatusBar {
     /// The open file's line ending, `LF` or `CRLF`, or `None` with no
     /// editor.
     pub line_ending: Option<String>,
+    /// How the open file is indented, as `.oxfmtrc.json` and
+    /// `.editorconfig` resolve it (ticket #26): `2 spaces`, `4 spaces` or
+    /// `Tabs`; `None` with no editor.
+    pub indentation: Option<String>,
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,
+    /// The git branch the project is on (the short commit id while HEAD is
+    /// detached), or `None` outside a git repository.
+    pub branch: Option<String>,
     /// Set while the open file is a large file (over
     /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
     /// language intelligence.
@@ -400,4 +581,123 @@ pub struct RecentProject {
     pub root: PathBuf,
     /// The folder's name.
     pub name: String,
+}
+
+/// The terminal pane next to the editor (ticket #38): one shell, drawn on a
+/// grid like the editor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalView {
+    /// The pane is showing; ⌥F12 collapses it.
+    pub visible: bool,
+    /// Keys and text go to the terminal, not the editor.
+    pub focused: bool,
+    pub status: TerminalStatus,
+    /// The title the program set (OSC 0 or 2), else the shell's name.
+    pub title: String,
+    /// The grid's size in cells.
+    pub rows: usize,
+    pub columns: usize,
+    /// The visible rows, top to bottom: always `rows` of them.
+    pub lines: Vec<TerminalLine>,
+    /// Where the terminal's cursor is on the visible rows; `None` while the
+    /// program hides it or it is scrolled out of view.
+    pub cursor: Option<TerminalCursor>,
+    /// Lines in the scrollback, above the screen (at most 10,000).
+    pub history: usize,
+    /// How many lines the view is scrolled back into the scrollback: 0
+    /// shows the screen.
+    pub scrolled_back: usize,
+    /// A full-screen program has switched to the alternate screen, which
+    /// has no scrollback.
+    pub alternate_screen: bool,
+    /// The program takes mouse clicks (mouse reporting is on).
+    pub mouse_reporting: bool,
+    /// The IME composition being typed (a dead key), drawn at the cursor.
+    pub preedit: Option<String>,
+}
+
+/// Whether the terminal's shell runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalStatus {
+    /// Waiting for the project environment, or starting.
+    Starting,
+    Running,
+    /// The shell exited, with its code if it exited normally.
+    Exited { code: Option<i32> },
+    /// The shell couldn't start: why.
+    Failed(String),
+}
+
+/// One visible row of the terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalLine {
+    /// The row's text in grid columns, without trailing blanks. A wide
+    /// character takes two columns.
+    pub text: String,
+    /// The row in stretches of one style, left to right, covering `text`
+    /// and any blank cells after it that have a background colour.
+    pub runs: Vec<TerminalRun>,
+}
+
+/// A stretch of a terminal row in one style.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalRun {
+    /// The grid columns it covers.
+    pub columns: Range<usize>,
+    pub text: String,
+    pub style: TerminalStyle,
+}
+
+/// How terminal text looks. Inverse video is already applied (the colours
+/// are swapped), and hidden text has its background as its foreground.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalStyle {
+    pub foreground: TerminalColor,
+    pub background: TerminalColor,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikeout: bool,
+    /// Faint text.
+    pub dim: bool,
+    /// The target of an OSC 8 hyperlink.
+    pub link: Option<String>,
+}
+
+impl Default for TerminalStyle {
+    fn default() -> Self {
+        TerminalStyle {
+            foreground: TerminalColor::Foreground,
+            background: TerminalColor::Background,
+            bold: false,
+            italic: false,
+            underline: false,
+            strikeout: false,
+            dim: false,
+            link: None,
+        }
+    }
+}
+
+/// A terminal colour. The theme decides the default colours and the 16
+/// ANSI ones; 256-colour indices above 15 and 24-bit colours are exact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalColor {
+    /// The theme's terminal text colour.
+    Foreground,
+    /// The theme's terminal background.
+    Background,
+    /// ANSI colour 0–15: black, red, green, yellow, blue, magenta, cyan,
+    /// white, then their bright versions.
+    Ansi(u8),
+    Rgb(u8, u8, u8),
+}
+
+/// The terminal's cursor cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalCursor {
+    /// 0-based visible row.
+    pub line: usize,
+    /// 0-based grid column.
+    pub column: usize,
 }

@@ -84,6 +84,8 @@ pub(crate) struct Toolchain {
     problems: Vec<String>,
     /// Bumped by every load, so a slow read can't replace a newer one.
     load_generation: u64,
+    /// `package.json` is being read.
+    loading: bool,
     /// The open toolchain picker, if any.
     picker: Option<Picker>,
     /// Bumped by every picker opened, so a slow listing can't fill a newer
@@ -175,6 +177,7 @@ impl Toolchain {
             slots: [None, None],
             problems: Vec::new(),
             load_generation: 0,
+            loading: false,
             picker: None,
             picker_generation: 0,
             lockfiles: Lockfiles::default(),
@@ -186,6 +189,7 @@ impl Toolchain {
     /// Reads `package.json` in the background, then starts every role.
     pub(crate) fn load(&mut self, jobs: &Jobs) {
         self.load_generation += 1;
+        self.loading = true;
         let generation = self.load_generation;
         self.lockfile_generation += 1;
         let lockfile_generation = self.lockfile_generation;
@@ -205,6 +209,7 @@ impl Toolchain {
                 let jobs = core.jobs.clone();
                 let Some(toolchain) = toolchain_mut(core, id) else { return };
                 if toolchain.load_generation == generation {
+                    toolchain.loading = false;
                     toolchain.package_manager_at = package_manager_at;
                     if toolchain.lockfile_generation == lockfile_generation {
                         toolchain.lockfiles = lockfiles;
@@ -602,6 +607,17 @@ impl Toolchain {
             SlotState::Ready(installed) => Some(installed),
             _ => None,
         })
+    }
+
+    /// Whether every role has settled: its tool is ready, or it failed or
+    /// is off. Nothing is being read, resolved or downloaded.
+    pub(crate) fn is_settled(&self) -> bool {
+        !self.loading
+            && self
+                .slots
+                .iter()
+                .flatten()
+                .all(|slot| !matches!(slot.state, SlotState::Resolving | SlotState::Downloading(_)))
     }
 
     pub(crate) fn view(&self) -> ToolchainView {

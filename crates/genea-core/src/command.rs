@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::{
     problems::TextPosition,
     templates::{PackageManagerPin, RuntimePin},
-    view::{LeftColumnView, ToolchainPickerKind},
+    view::{FinderMode, LeftColumnView, ToolchainPickerKind},
 };
 
 /// Something the user does in a project's window.
@@ -114,6 +114,16 @@ pub enum Command {
     Delete(CaretMove),
     /// Return: breaks the line at the caret with the file's line ending.
     NewLine,
+    /// Tab: with nothing selected, types the file's indentation at each
+    /// caret (a tab, or spaces up to the next multiple of its width); with a
+    /// selection, indents the selected lines by one level. The indentation
+    /// is what `.oxfmtrc.json` and `.editorconfig` resolve to (ticket #26),
+    /// shown in `StatusBar::indentation`.
+    Indent,
+    /// ⇧Tab: takes one level of indentation off each line the carets and
+    /// selections are on (a leading tab, or leading spaces back to the
+    /// previous multiple of the indentation's width).
+    Outdent,
     /// ⌘C: puts the selection on the system clipboard. Does nothing with
     /// nothing selected.
     Copy,
@@ -182,10 +192,163 @@ pub enum Command {
     /// intelligence starts once it is in `node_modules`.
     AddTypeScript,
 
+    // Structural editing (ticket #25).
+    /// ⌘/: comments out the lines the carets and selections are on, or
+    /// uncomments them if every one that isn't blank is commented. Uses the
+    /// language's line comment (`//`, `#`), or wraps each line in its block
+    /// comment (`/* */` in CSS, `<!-- -->` in HTML and Markdown). A
+    /// selection that ends at the start of a line leaves that line out.
+    ToggleLineComment,
+    /// ⌥↑: grows each selection to the smallest syntax node around it (the
+    /// inside of a block comes before the block). An empty selection grows
+    /// to the node at its caret.
+    ExpandSelection,
+    /// ⌥↓: undoes the last `ExpandSelection`, step by step, as long as
+    /// nothing else changed the selection or the text in between.
+    ShrinkSelection,
+    /// A click on a fold marker in the gutter: collapses the fold region
+    /// that starts on `line` (0-based, in the file), or expands it if it is
+    /// collapsed. A collapsed region's lines are hidden, keeping its first
+    /// line and the line its closing bracket or tag starts.
+    ToggleFold { line: usize },
+    /// ⌥⌘−: collapses the region that starts on the primary caret's line,
+    /// or else the innermost expanded region around the caret. Carets in
+    /// the hidden lines move to the region's start.
+    CollapseFold,
+    /// ⌥⌘+: expands the collapsed regions on the primary caret's line.
+    ExpandFold,
+    /// Collapses every fold region in the file.
+    CollapseAllFolds,
+    /// Expands every collapsed region.
+    ExpandAllFolds,
+
+    // Git (ticket #56).
+    /// A click on a git gutter marker of the focused file: shows the change
+    /// on that line (`EditorView::hunk`) with its lines at HEAD. A line
+    /// without a marker shows nothing.
+    ShowHunk { line: usize },
+    /// Closes the shown change (Esc, a click outside it).
+    HideHunk,
+    /// The shown change's Rollback: puts its lines at HEAD back in the
+    /// buffer, as an edit that Undo reverts, and closes it. Does nothing
+    /// without a shown change.
+    RollbackHunk,
     /// Answers an open file's conflict bar (`EditorView::conflict`): its
     /// file changed on disk while it had unsaved edits. The path is as in
     /// `EditorView::path`.
     ResolveConflict { path: PathBuf, choice: ConflictChoice },
+    // The terminal pane (ticket #38).
+    /// ⌥F12: shows the terminal pane and focuses it; if it is showing and
+    /// focused, collapses it and gives the editor the focus back. The
+    /// shell keeps running while the pane is collapsed.
+    ToggleTerminal,
+    /// Gives the terminal the keyboard focus (a click in it). The editor
+    /// gets it back with `FocusPane` or `SelectTab`.
+    FocusTerminal,
+    /// Tells the core how many rows and columns of cells fit in the
+    /// terminal pane. The shell is told too (SIGWINCH), and the grid
+    /// reflows.
+    SetTerminalSize { rows: usize, columns: usize },
+    /// Types text into the terminal: a key press or an IME commit.
+    TerminalText(String),
+    /// The IME's marked text in the terminal while a dead key composes,
+    /// drawn at the cursor but not sent. An empty string ends it; the
+    /// composed text then arrives as `TerminalText`.
+    TerminalPreedit(String),
+    /// A key that isn't plain text, or one with ⌃ or ⌥ held: sent to the
+    /// program the way xterm sends it. Return after the shell has exited
+    /// (or failed to start) starts a new one.
+    TerminalKey(TerminalKey, Modifiers),
+    /// The scroll wheel over the terminal, in rows (negative is up, towards
+    /// older output), over the cell at `line` and `column`. It scrolls the
+    /// scrollback, unless the program takes it: a program that reports the
+    /// mouse gets wheel events, and a full-screen one gets ↑ and ↓.
+    ScrollTerminal { rows: i32, line: usize, column: usize },
+    /// ⌘V in the terminal: types the clipboard's text, as one bracketed
+    /// paste if the program asked for that (so a shell doesn't run each
+    /// line as it arrives).
+    TerminalPaste,
+    /// A mouse button or movement over the terminal's cell at `line` and
+    /// `column` (0-based visible row and grid column). Reported to a
+    /// program that asked for the mouse, in the encoding it chose;
+    /// otherwise nothing happens.
+    TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
+
+    /// The Search view's query changed (⌘⇧F, ticket #34): cancels the
+    /// search in flight and searches the project in the background, results
+    /// streaming into `ProjectView::search`. An empty query clears the
+    /// results. A click on a result opens it with `OpenFileAt`.
+    Search(SearchQuery),
+
+    // The fuzzy finder (ticket #33): `ProjectView::finder`.
+    /// Opens the finder in a mode with an empty query, replacing a finder
+    /// that is open.
+    OpenFinder(FinderMode),
+    /// The finder's query changed (typing in it). Results are matched in
+    /// the background: `settle` (tests) or the change notification (the
+    /// app) says when they are in.
+    SetFinderQuery(String),
+    /// ↑ and ↓ in the finder: moves the selection by a number of results
+    /// (negative is up), wrapping around at either end.
+    MoveFinderSelection(isize),
+    /// Selects a result by its index (the pointer over it).
+    SelectFinderItem(usize),
+    /// Return, or a click: closes the finder and opens the selected file
+    /// or runs the selected action.
+    AcceptFinder,
+    /// Esc: closes the finder.
+    CloseFinder,
+}
+
+/// A key for the terminal that [`Command::TerminalText`] can't carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalKey {
+    Enter,
+    Backspace,
+    Tab,
+    Escape,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+    /// F1 to F12.
+    F(u8),
+    /// A character key with ⌃ or ⌥ held (⌃C is `Char('c')` with `ctrl`).
+    Char(char),
+}
+
+/// What the mouse did over the terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseAction {
+    Press(MouseButton),
+    Release(MouseButton),
+    /// Moved with the button down.
+    Drag(MouseButton),
+    /// Moved with no button down.
+    Move,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// Modifier keys held with a terminal key or mouse event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    /// ⌥, which the terminal treats as Meta.
+    pub alt: bool,
+    /// ⌃.
+    pub ctrl: bool,
 }
 
 /// What to do when an open file with unsaved edits changed on disk.
@@ -196,6 +359,19 @@ pub enum ConflictChoice {
     Reload,
     /// Keep the buffer as it is; the next save overwrites the file on disk.
     KeepMyEdits,
+}
+
+/// What the Search view searches the project for.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchQuery {
+    pub text: String,
+    /// `text` is a regular expression (Rust `regex` syntax); otherwise it
+    /// is matched literally.
+    pub regex: bool,
+    /// Match case; otherwise upper and lower case match each other.
+    pub case_sensitive: bool,
+    /// Only matches with no word character just before or after them.
+    pub whole_word: bool,
 }
 
 /// What to do with unsaved edits in a closing tab.

@@ -2,6 +2,7 @@
 
 mod external;
 mod language;
+mod finder;
 mod tabs;
 
 use std::{
@@ -20,11 +21,16 @@ use crate::{
     editor::Editor,
     environment::{Environment, ProcessEnv},
     files::FileIndex,
+    finder::Finder,
+    git::Git,
     history::EditKind,
+    indentation::{self, Indentation, IndentationConfig},
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     reading::{self, Contents, FirstScreen},
+    search::Search,
     syntax::ParseJob,
+    terminal::Terminal,
     toolchain::{LOCKFILES, Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
@@ -58,6 +64,10 @@ pub(crate) struct Project {
     config_problems: Vec<Problem>,
     /// Bumped by every config read, so a slow read can't replace a newer one.
     config_generation: u64,
+    /// What `.oxfmtrc.json` and `.editorconfig` say about indentation
+    /// (ticket #26), and a counter like `config_generation`'s.
+    indentation: IndentationConfig,
+    indentation_generation: u64,
     /// `genea.jsonc` files below the root (relative paths), each ignored
     /// with a warning.
     nested_configs: BTreeSet<PathBuf>,
@@ -65,14 +75,31 @@ pub(crate) struct Project {
     problems: Problems,
     /// What the left column shows; `None` while it is collapsed.
     left_column: Option<LeftColumnView>,
+    /// The change whose popover is open, by file and line (ticket #56).
+    shown_hunk: Option<(PathBuf, usize)>,
     /// The project's files, for the Files view (ticket #30).
     pub(crate) files: FileIndex,
+    /// The Search view's query and results (ticket #34).
+    pub(crate) search: Search,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
     /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
     language: Language,
+    /// The branch and the open files at HEAD (ticket #56).
+    pub(crate) git: Git,
+    /// The terminal pane's shell (ticket #38).
+    pub(crate) terminal: Terminal,
+    /// The fuzzy finder, while it is open (ticket #33).
+    finder: Option<Finder>,
+    /// Bumped by every finder match, so an older match can't replace a
+    /// newer one.
+    finder_generation: u64,
+    /// The file index version the last finder match used.
+    finder_files: u64,
+    /// Files opened lately, most recent first: Recent Files (⌘E).
+    recent_files: Vec<PathBuf>,
 }
 
 impl Project {
@@ -80,6 +107,8 @@ impl Project {
         Project {
             id,
             files: FileIndex::new(id, root.clone()),
+            git: Git::new(id, root.clone()),
+            search: Search::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -93,9 +122,17 @@ impl Project {
             config: Config::default(),
             config_problems: Vec::new(),
             config_generation: 0,
+            indentation: IndentationConfig::default(),
+            indentation_generation: 0,
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
+            shown_hunk: None,
+            terminal: Terminal::new(id),
+            finder: None,
+            finder_generation: 0,
+            finder_files: 0,
+            recent_files: Vec::new(),
         }
     }
 
@@ -110,8 +147,10 @@ impl Project {
             }),
         }
         self.load_config(jobs);
+        self.load_indentation(jobs);
         self.find_nested_configs(jobs);
         self.files.start(jobs);
+        self.git.reload(Vec::new(), jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -125,12 +164,19 @@ impl Project {
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
         self.language_files_changed(&changes);
+        if self.git.head_may_have_moved(&changes) {
+            let open = self.open_editors().map(|e| e.path().to_owned()).collect();
+            self.git.reload(open, jobs);
+        }
         self.check_open_files(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if let Some(toolchain) = &mut self.toolchain
             && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
         {
             toolchain.check_lockfiles(jobs);
+        }
+        if changes.rescan || changes.paths.iter().any(|path| self.is_indentation_config(path)) {
+            self.load_indentation(jobs);
         }
         if changes.rescan {
             self.load_config(jobs);
@@ -187,6 +233,32 @@ impl Project {
                 project.update_config_problems();
             })
         });
+    }
+
+    /// Reads what `.oxfmtrc.json` and `.editorconfig` say about indentation
+    /// in the background. Open files follow it at once: it is resolved per
+    /// keystroke and per view.
+    fn load_indentation(&mut self, jobs: &Jobs) {
+        self.indentation_generation += 1;
+        let generation = self.indentation_generation;
+        let root = self.root.clone();
+        let id = self.id;
+        jobs.spawn("read indentation config", move || {
+            let config = IndentationConfig::read(&root);
+            Box::new(move |core| {
+                let Some(project) = core.project_mut(id) else { return };
+                if project.indentation_generation == generation {
+                    project.indentation = config;
+                }
+            })
+        });
+    }
+
+    /// Whether a changed path is a file the indentation is read from. Only
+    /// the root's can change: the watcher doesn't see the folders above it.
+    fn is_indentation_config(&self, path: &Path) -> bool {
+        path.parent() == Some(&self.root)
+            && path.file_name().and_then(OsStr::to_str).is_some_and(indentation::is_config_file)
     }
 
     /// Walks the project in the background for `genea.jsonc` files below
@@ -264,6 +336,23 @@ impl Project {
         environment.process_env(tools.map(|installed| installed.bin_dir.as_path()))
     }
 
+    /// Whether the environment for new processes is final for now: the
+    /// login-shell capture has landed and the toolchain has settled, so the
+    /// pinned tools are on PATH.
+    fn environment_ready(&self) -> bool {
+        self.environment.as_ref().is_some_and(Environment::is_ready)
+            && self.toolchain.as_ref().is_none_or(Toolchain::is_settled)
+    }
+
+    /// Starts the terminal's shell once the environment is ready. Called
+    /// after opening and after every background result.
+    pub(crate) fn start_terminal_when_ready(&mut self, host: &SharedHost, jobs: &Jobs) {
+        if self.terminal.is_waiting() && self.environment_ready() {
+            let env = self.process_env();
+            self.terminal.start(env, host.clone(), jobs);
+        }
+    }
+
     /// Reads the toolchain pins and starts the downloads, in the background.
     /// A folder without a root `package.json` has no toolchain. (Checking is
     /// one stat on the main thread, like `open_project`'s folder check.)
@@ -291,25 +380,65 @@ impl Project {
 
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
+        // A shown change closes on anything but scrolling.
+        let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
+        let shown = if scrolling { None } else { self.shown_hunk.take() };
         match command {
-            Command::OpenFile(path) => self.open_file(path, None, jobs),
-            Command::OpenFileAt { path, at } => self.open_file(path, Some(at), jobs),
+            Command::ShowHunk { line } => {
+                self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
+            }
+            Command::HideHunk => {}
+            Command::RollbackHunk => {
+                // `shown_hunk` was taken above; it is still the one shown.
+                if let Some(editor) = &mut self.editor
+                    && let Some((path, line)) = shown.filter(|(path, _)| path == editor.path())
+                    && let Some((lines, text)) = self.git.rollback(&path, editor.version(), line)
+                {
+                    editor.replace_lines(lines, &text, now, self.viewport_rows);
+                }
+            }
             Command::OpenConfig => self.open_config(jobs),
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
             Command::ToggleFolder(path) => self.files.toggle(&path),
-            Command::SelectTab { .. }
-            | Command::FocusPane(_)
-            | Command::CloseTab { .. }
+            Command::Search(query) => self.search.start(query, &self.config.exclude, jobs),
+            Command::SelectTab { .. } | Command::FocusPane(_) => {
+                self.terminal.unfocus();
+                self.tab_command(command, jobs)
+            }
+            Command::OpenFile(path) => {
+                self.terminal.unfocus();
+                self.open_file(path, None, jobs)
+            }
+            Command::OpenFileAt { path, at } => {
+                self.terminal.unfocus();
+                self.open_file(path, Some(at), jobs)
+            }
+            Command::CloseTab { .. }
             | Command::ResolveClose(_)
             | Command::SplitRight
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
+            Command::ToggleTerminal
+            | Command::FocusTerminal
+            | Command::SetTerminalSize { .. }
+            | Command::TerminalText(_)
+            | Command::TerminalPreedit(_)
+            | Command::TerminalKey(..)
+            | Command::ScrollTerminal { .. }
+            | Command::TerminalMouse { .. }
+            | Command::TerminalPaste => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::RestartLanguageServer => self.restart_language_server(),
             Command::AddTypeScript => self.add_typescript(jobs),
+            Command::OpenFinder(_)
+            | Command::SetFinderQuery(_)
+            | Command::MoveFinderSelection(_)
+            | Command::SelectFinderItem(_)
+            | Command::AcceptFinder
+            | Command::CloseFinder => self.finder_command(command, jobs, host),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -448,8 +577,19 @@ impl Project {
                 }
             }
             Command::NewLine => {
+                let indentation = self.focused_indentation();
                 if let Some(editor) = &mut self.editor {
-                    editor.insert("\n", EditKind::Typing, now, self.viewport_rows);
+                    editor.new_line(indentation, now, self.viewport_rows);
+                }
+            }
+            Command::Indent | Command::Outdent => {
+                let indentation = self.focused_indentation();
+                if let Some(editor) = &mut self.editor {
+                    if command == Command::Indent {
+                        editor.indent(indentation, now, self.viewport_rows);
+                    } else {
+                        editor.outdent(indentation, now, self.viewport_rows);
+                    }
                 }
             }
             Command::Copy => {
@@ -482,6 +622,36 @@ impl Project {
                     editor.redo(self.viewport_rows);
                 }
             }
+            Command::ToggleLineComment => {
+                if let Some(editor) = &mut self.editor {
+                    editor.toggle_line_comment(now, self.viewport_rows);
+                }
+            }
+            Command::ExpandSelection => {
+                if let Some(editor) = &mut self.editor {
+                    editor.expand_selection(self.viewport_rows);
+                }
+            }
+            Command::ShrinkSelection => {
+                if let Some(editor) = &mut self.editor {
+                    editor.shrink_selection(self.viewport_rows);
+                }
+            }
+            Command::ToggleFold { line } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.toggle_fold(line, self.viewport_rows);
+                }
+            }
+            Command::CollapseFold | Command::ExpandFold | Command::CollapseAllFolds | Command::ExpandAllFolds => {
+                if let Some(editor) = &mut self.editor {
+                    match command {
+                        Command::CollapseFold => editor.collapse_fold(self.viewport_rows),
+                        Command::ExpandFold => editor.expand_fold(self.viewport_rows),
+                        Command::CollapseAllFolds => editor.collapse_all_folds(self.viewport_rows),
+                        _ => editor.expand_all_folds(self.viewport_rows),
+                    }
+                }
+            }
             Command::Save => {
                 if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
                     self.save(path, jobs);
@@ -489,8 +659,30 @@ impl Project {
             }
         }
         self.reparse(jobs);
+        if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
+            self.diff_file(&path, jobs);
+        }
         self.refresh_views();
         self.sync_language();
+    }
+
+    /// Starts a background diff of an open file with its text at HEAD, if
+    /// its gutter markers are behind and none is running (ticket #56).
+    pub(crate) fn diff_file(&mut self, path: &Path, jobs: &Jobs) {
+        let Some(editor) = self.open_editor(path) else { return };
+        let (version, text) = (editor.version(), editor.snapshot().text);
+        if let Some(job) = self.git.start_diff(path, version, text) {
+            let (id, path) = (self.id, path.to_owned());
+            jobs.spawn("diff with git HEAD", move || {
+                let diffed = job.run();
+                Box::new(move |core| {
+                    let jobs = core.jobs.clone();
+                    let Some(project) = core.project_mut(id) else { return };
+                    project.git.diffed(&path, diffed);
+                    project.diff_file(&path, &jobs);
+                })
+            });
+        }
     }
 
     /// Starts a background parse of the focused file if its syntax tree is
@@ -515,6 +707,12 @@ impl Project {
         let editor = self.editor.as_ref().map(|e| {
             let mut view = e.view(self.viewport_rows);
             view.problems = self.inline_problems(e, &view.lines);
+            view.gutter = self.gutter(e, &view.lines);
+            view.hunk = self
+                .shown_hunk
+                .as_ref()
+                .filter(|(path, _)| path == e.path())
+                .and_then(|(path, line)| self.git.hunk_view(path, e.version(), *line));
             view
         });
         let mut tabs = self.tabs_view(editor.as_ref());
@@ -524,6 +722,7 @@ impl Project {
                 && let Some(e) = self.open_editor(&view.path)
             {
                 view.problems = self.inline_problems(e, &view.lines);
+                view.gutter = self.gutter(e, &view.lines);
             }
         }
         let (errors, warnings) = self.problems.counts();
@@ -534,7 +733,9 @@ impl Project {
             config_notice: self.config_notice(),
             encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
             line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
+            indentation: self.editor.as_ref().map(|e| self.indentation_of(e.path()).label()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
+            branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
             language_servers: self.language_status(),
         };
@@ -556,9 +757,31 @@ impl Project {
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
+            terminal: self.terminal.view(),
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
+            search: self.search.view(),
+            finder: self.finder.as_ref().map(Finder::view),
         }
+    }
+
+    /// How a file (relative to the root, or absolute) is indented.
+    fn indentation_of(&self, path: &Path) -> Indentation {
+        self.indentation.resolve(&self.root.join(path))
+    }
+
+    /// How the focused file is indented.
+    fn focused_indentation(&self) -> Indentation {
+        self.editor.as_ref().map(|e| self.indentation_of(e.path())).unwrap_or_default()
+    }
+
+    /// The open file's git gutter markers on the visible lines; lines
+    /// hidden in a collapsed fold have none.
+    fn gutter(&self, editor: &Editor, lines: &[crate::view::VisibleLine]) -> Vec<crate::view::GutterMark> {
+        let (Some(first), Some(last)) = (lines.first(), lines.last()) else { return Vec::new() };
+        let mut marks = self.git.gutter(editor.path(), first.index..last.index + 1);
+        marks.retain(|m| lines.binary_search_by_key(&m.line, |l| l.index).is_ok());
+        marks
     }
 
     /// The open file's problems on the visible lines, in grid columns.
@@ -685,6 +908,7 @@ impl Project {
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
         self.open_generation += 1;
         if self.focus_open_file(&shown) {
+            self.opened_file(&shown);
             if let Some(at) = at {
                 self.go_to(at);
             }
@@ -747,12 +971,14 @@ impl Project {
             Some(first_screen) => first_screen.finish_loading(editor, rows),
             None => self.open_tab(editor),
         }
+        self.opened_file(&path);
         if let Some(at) = at
             && self.editor.as_ref().is_some_and(|e| e.path() == path)
         {
             self.go_to(at);
         }
         self.reparse_file(&path, jobs);
+        self.git.load_base(&path, jobs);
     }
 
     /// Reading a file failed: a notice says why. A tab showing its first

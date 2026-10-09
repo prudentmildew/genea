@@ -95,7 +95,12 @@ pub(super) struct TabsView {
 impl Project {
     pub(super) fn tab_command(&mut self, command: Command, jobs: &Jobs) {
         match command {
-            Command::SelectTab { pane, tab } => self.focus(pane, tab),
+            Command::SelectTab { pane, tab } => {
+                self.focus(pane, tab);
+                if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
+                    self.opened_file(&path);
+                }
+            }
             Command::FocusPane(pane) => {
                 if let Some(side) = self.panes.sides.get(pane)
                     && !side.tabs.is_empty()
@@ -111,6 +116,13 @@ impl Project {
             Command::ScrollPane { pane, rows } => self.scroll_pane(pane, rows),
             _ => {}
         }
+    }
+
+    /// The focused pane, its active tab and how many tabs it has; `None`
+    /// without tabs.
+    pub(super) fn active_tab(&self) -> Option<(usize, usize, usize)> {
+        let side = &self.panes.sides[self.panes.focused];
+        (!side.tabs.is_empty()).then_some((self.panes.focused, side.active, side.tabs.len()))
     }
 
     /// The editor of an open file, focused or not.

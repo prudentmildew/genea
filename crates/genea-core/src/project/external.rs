@@ -31,6 +31,7 @@ impl Project {
         if let Some(editor) = self.open_editor_mut(path) {
             editor.resolve_conflict(choice, now, rows);
             self.reparse_file(path, jobs);
+            self.diff_file(path, jobs);
         }
     }
 
@@ -50,6 +51,7 @@ impl Project {
                 let Some(editor) = project.open_editor_mut(&path) else { return };
                 if editor.disk_checked(checked, now, rows) {
                     project.reparse_file(&path, &jobs);
+                    project.diff_file(&path, &jobs);
                 } else {
                     project.check_disk(path, &jobs);
                 }

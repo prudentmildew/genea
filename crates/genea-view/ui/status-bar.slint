@@ -15,9 +15,13 @@ export component StatusBar inherits Rectangle {
     in property <bool> has-errors;
     // Toolchain download progress (ticket #35).
     in property <string> toolchain;
+    // The git branch (ticket #56), or empty outside a repository.
+    in property <string> branch;
     in property <string> caret;
     in property <string> encoding;
     in property <string> line-ending;
+    // The open file's indentation, "2 spaces" or "Tabs" (ticket #26).
+    in property <string> indentation;
     // The update notice ("Genea 0.2.0 is available"), or empty.
     in property <string> update;
     // Why the open file has no highlighting: it is over 5 MB (ticket #27).
@@ -154,8 +158,22 @@ export component StatusBar inherits Rectangle {
             vertical-alignment: center;
         }
 
+        if root.branch != "": Text {
+            text: root.branch;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
         Text {
             text: root.caret;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.indentation;
             color: Theme.chrome-foreground;
             font-size: Theme.chrome-font-size;
             vertical-alignment: center;

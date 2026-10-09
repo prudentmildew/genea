@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use genea_core::{CaretMove, Command};
+use genea_core::{CaretMove, Command, FinderMode};
 use slint::{SharedString, platform::Key};
 
 /// Modifier state of a key press. `cmd` is ⌘.
@@ -33,11 +33,21 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
             Command::SelectNextOccurrence
         });
     }
+    if let Some(command) = structural(text, m) {
+        return Some(command);
+    }
     if m.ctrl || m.cmd {
         return None;
     }
     if is(Key::Escape) {
         return Some(Command::CollapseCarets);
+    }
+    // Tab and ⇧Tab (ticket #26). ⇧Tab may come as Tab with ⇧ or as Backtab.
+    if is(Key::Backtab) || (is(Key::Tab) && m.shift) {
+        return Some(Command::Outdent);
+    }
+    if is(Key::Tab) {
+        return Some(Command::Indent);
     }
     if is(Key::Backspace) {
         Some(Command::Delete(if m.alt { CaretMove::WordLeft } else { CaretMove::Left }))
@@ -51,6 +61,25 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
     } else {
         None
     }
+}
+
+/// Structural editing keys (ticket #25) that aren't menu shortcuts: ⌥↑ and
+/// ⌥↓ (a menu would take them from the clone-caret gesture), and ⌥⌘+ for
+/// Expand on layouts where `+` has its own key (the menu has ⌥⌘=).
+fn structural(text: &str, m: Modifiers) -> Option<Command> {
+    let is = |key: Key| text == SharedString::from(key).as_str();
+    if m.alt && !(m.shift || m.cmd || m.ctrl) {
+        if is(Key::UpArrow) {
+            return Some(Command::ExpandSelection);
+        }
+        if is(Key::DownArrow) {
+            return Some(Command::ShrinkSelection);
+        }
+    }
+    if m.alt && m.cmd && !m.ctrl && matches!(text, "+" | "±") {
+        return Some(Command::ExpandFold);
+    }
+    None
 }
 
 /// The caret movement a key asks for, with or without ⇧.
@@ -72,6 +101,7 @@ fn movement(text: &str, m: Modifiers) -> Option<CaretMove> {
             return None;
         }
     } else if m.alt {
+        // ⌥↑ and ⌥↓ are expand and shrink selection (`structural`).
         if is(Key::LeftArrow) {
             CaretMove::WordLeft
         } else if is(Key::RightArrow) {
@@ -108,8 +138,33 @@ fn is_typed_text(text: &str) -> bool {
     !text.is_empty() && text.chars().all(|c| !c.is_control() && !('\u{E000}'..='\u{F8FF}').contains(&c))
 }
 
-/// Two ⌥ presses at most this far apart start the clone-caret gesture.
+/// Two ⌥ presses at most this far apart start the clone-caret gesture, and
+/// two ⇧ presses open Search Everywhere.
 const DOUBLE_PRESS: Duration = Duration::from_millis(400);
+
+/// ⇧⇧: Search Everywhere. Two presses of ⇧ alone, with no other key
+/// between them. Watches every key press, since it needs the ⇧ presses
+/// themselves.
+#[derive(Default)]
+pub struct DoubleShift {
+    last_shift: Option<Instant>,
+}
+
+impl DoubleShift {
+    /// The command for this key press, if it completes a ⇧⇧.
+    pub fn command_for(&mut self, text: &str) -> Option<Command> {
+        if text != SharedString::from(Key::Shift).as_str() && text != SharedString::from(Key::ShiftR).as_str() {
+            self.last_shift = None;
+            return None;
+        }
+        let now = Instant::now();
+        if self.last_shift.take().is_some_and(|at| now.duration_since(at) < DOUBLE_PRESS) {
+            return Some(Command::OpenFinder(FinderMode::Everywhere));
+        }
+        self.last_shift = Some(now);
+        None
+    }
+}
 
 /// WebStorm's Clone Caret Above and Below: press ⌥ twice and keep it held,
 /// then ↑ or ↓ (each press adds a caret). Watches every key press, since it

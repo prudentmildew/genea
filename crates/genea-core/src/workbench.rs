@@ -130,6 +130,7 @@ impl Workbench {
         project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
         project.start_environment(self.core.host.clone(), &self.core.jobs);
         project.start_language(self.core.host.clone(), &self.core.jobs);
+        project.start_terminal_when_ready(&self.core.host, &self.core.jobs);
         Ok(id)
     }
 
@@ -161,6 +162,8 @@ impl Workbench {
         let Core { projects, jobs, host, .. } = &mut self.core;
         if let Some(project) = projects.get_mut(&project) {
             project.dispatch(command, jobs, host.as_ref());
+            // A command may restart the terminal's shell.
+            project.start_terminal_when_ready(host, jobs);
         }
     }
 
@@ -282,11 +285,15 @@ impl Workbench {
         let _done = Done(&self.inbox);
         self.applied += 1;
         apply(&mut self.core);
-        // A pane without the focus shows a kept view (ticket #31).
+        // A pane without the focus shows a kept view (ticket #31), and the
+        // finder follows the files (ticket #33).
         for project in self.core.projects.values_mut() {
             project.refresh_views();
             // Language servers follow the open editors (ticket #42).
             project.sync_language();
+            // The terminal waits for the environment (ticket #38).
+            project.start_terminal_when_ready(&self.core.host, &self.core.jobs);
+            project.refresh_finder(&self.core.jobs);
         }
     }
 }

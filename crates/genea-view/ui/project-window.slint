@@ -1,15 +1,31 @@
 // A project window: the native menu bar (muda), the editor area (one pane
-// of tabs, or two side by side after a split) and the status bar. Every property is set from Rust (src/window.rs)
+// of tabs, or two side by side after a split), the terminal pane on the
+// right (ticket #38) and the status bar. Every property is set from Rust (src/window.rs)
 // out of the core's ProjectView; every callback turns input into a command.
 
 import { Theme } from "theme.slint";
-import { Line } from "editor-surface.slint";
+import { Line, HunkPopup } from "editor-surface.slint";
 import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ProblemRow } from "problems-view.slint";
+import { TerminalPane, TermRow, TermCursor } from "terminal-pane.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
+import { SearchRow } from "search-view.slint";
+import { Finder, FinderRow } from "finder.slint";
+
+// What the finder finds (the core's FinderMode).
+export enum FinderKind { files, recent-files, actions, everywhere }
+
+// The Code menu's items (ticket #25).
+export enum StructuralAction {
+    toggle-line-comment,
+    expand-fold,
+    collapse-fold,
+    expand-all-folds,
+    collapse-all-folds,
+}
 
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
@@ -26,11 +42,22 @@ export component ProjectWindow inherits Window {
     in property <LeftView> left-view;
     in property <[ProblemRow]> problems;
     in property <[FileEntry]> files;
+    // The Search view: the core's query and options, and its results.
+    in property <string> search-query;
+    in property <bool> search-regex;
+    in property <bool> search-case-sensitive;
+    in property <bool> search-whole-word;
+    in property <[SearchRow]> search-rows;
+    in property <string> search-status;
+    in property <bool> search-status-error;
     in property <string> status-encoding;
     in property <string> status-line-ending;
+    in property <string> status-indentation;
     in property <string> status-notice-action;
     in property <string> status-toolchain;
     in property <string> status-update;
+    // The git branch (ticket #56), or empty outside a repository.
+    in property <string> status-branch;
     // Why a large file has no highlighting (ticket #27), or empty.
     in property <string> status-large-file;
     // The focused file's rest is still being read.
@@ -46,6 +73,13 @@ export component ProjectWindow inherits Window {
     in property <bool> picker-loading;
     in property <[PickerRow]> picker-options;
 
+    // The fuzzy finder overlay (ticket #33), while `finder-open`.
+    in property <bool> finder-open;
+    in property <string> finder-title;
+    in property <[FinderRow]> finder-items;
+    in property <int> finder-selected;
+    in-out property <string> finder-query <=> finder.query;
+
     // The editor area (ticket #31): the left pane, and the right one while
     // split. `focused-pane` is 0 (left) or 1 (right).
     in property <bool> split;
@@ -59,6 +93,9 @@ export component ProjectWindow inherits Window {
     in property <[Line]> right-lines <=> right.lines;
     in property <SurfaceGeometry> left-geometry;
     in property <SurfaceGeometry> right-geometry;
+    // The shown git change, in the focused pane only.
+    in property <HunkPopup> left-hunk;
+    in property <HunkPopup> right-hunk;
     // Each pane's file changed on disk while it had unsaved edits (#32).
     in property <bool> left-conflict;
     in property <bool> right-conflict;
@@ -66,6 +103,20 @@ export component ProjectWindow inherits Window {
     out property <length> char-width: left.char-width;
     out property <length> viewport-height: left.viewport-height;
     out property <length> text-left: left.text-left;
+
+    // The terminal pane (ticket #38). Its width is the view's own: the
+    // splitter drags it.
+    in property <bool> terminal-visible: true;
+    in property <bool> terminal-focused;
+    in property <string> terminal-title;
+    in property <string> terminal-message;
+    in property <[TermRow]> terminal-rows;
+    in property <TermCursor> terminal-cursor;
+    in property <bool> terminal-mouse-reporting;
+    in-out property <length> terminal-width: 520px;
+    out property <length> terminal-char-width: terminal.char-width;
+    out property <length> terminal-grid-width: terminal.grid-width;
+    out property <length> terminal-grid-height: terminal.grid-height;
 
     // Menu commands.
     callback open-folder();
@@ -78,6 +129,8 @@ export component ProjectWindow inherits Window {
     callback select-all();
     callback reload-environment();
     callback restart-language-server();
+    // The Code menu's structural editing items (ticket #25).
+    callback structural(StructuralAction);
     // Toolchain commands (ticket #37).
     callback set-runtime();
     callback set-package-manager();
@@ -95,6 +148,10 @@ export component ProjectWindow inherits Window {
     callback problem-clicked(int);
     // A Files view row: open the file, or expand or collapse the folder.
     callback file-clicked(int);
+    // The Search view's query or options changed.
+    callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
+    // A Search view row: open the file, at the match for a match row.
+    callback search-result-clicked(int);
     callback close-tab();
     callback split-right();
     callback move-tab();
@@ -104,6 +161,24 @@ export component ProjectWindow inherits Window {
     callback notice-action();
     // Opens the release page of the update notice.
     callback open-update();
+
+    // The terminal pane.
+    callback toggle-terminal();
+    callback terminal-focus();
+    callback terminal-key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
+    callback terminal-committed(text: string);
+    callback terminal-preedit-changed(text: string);
+    callback terminal-mouse(kind: int, button: int, x: length, y: length, shift: bool, alt: bool, ctrl: bool, cmd: bool);
+    callback terminal-scrolled(delta-y: length, x: length, y: length);
+    callback terminal-size-changed();
+
+    // The finder: a shortcut opens it; the rest come from the overlay.
+    callback open-finder(FinderKind);
+    callback finder-edited(string);
+    callback finder-move(int);
+    callback finder-accept();
+    callback finder-close();
+    callback finder-clicked(int);
 
     // Tab strips; `pane` is 0 (left) or 1 (right).
     callback tab-clicked(pane: int, index: int);
@@ -122,6 +197,9 @@ export component ProjectWindow inherits Window {
     callback committed(text: string);
     callback preedit-changed(text: string);
     callback viewport-changed();
+    // The shown git change's buttons (ticket #56).
+    callback rollback-hunk();
+    callback hide-hunk();
 
     title: root.window-title;
     preferred-width: 1200px;
@@ -133,12 +211,25 @@ export component ProjectWindow inherits Window {
     changed viewport-height => {
         root.viewport-changed();
     }
+    changed terminal-grid-width => {
+        root.terminal-size-changed();
+    }
+    changed terminal-grid-height => {
+        root.terminal-size-changed();
+    }
+
+    // Gives the finder's query the keyboard focus, when it opens.
+    public function focus-finder() {
+        finder.focus-query();
+    }
 
     // Re-focuses the focused pane's hidden TextInput: once the native
     // window exists, so the IME is enabled (ADR 0004), and whenever the
     // core moves the focus to the other pane.
     public function refocus() {
-        if root.focused-pane == 1 {
+        if root.terminal-focused {
+            terminal.refocus();
+        } else if root.focused-pane == 1 {
             right.refocus();
         } else {
             left.refocus();
@@ -290,6 +381,60 @@ export component ProjectWindow inherits Window {
             }
         }
 
+        // Structural editing (ticket #25). Expand and Shrink Selection
+        // (⌥↑ / ⌥↓) are keys, not menu items, so the clone-caret gesture
+        // (⌥⌥↑) still gets the arrows.
+        Menu {
+            title: "Code";
+            MenuItem {
+                title: "Comment with Line Comment";
+                shortcut: @keys(Control + "/");
+                enabled: root.has-editor;
+                activated => {
+                    root.structural(StructuralAction.toggle-line-comment);
+                }
+            }
+
+            Menu {
+                title: "Folding";
+                // ⌘+ and ⌘− are zoom's (#13); these are WebStorm's
+                // Expand and Collapse Recursively keys.
+                MenuItem {
+                    title: "Expand";
+                    shortcut: @keys(Control + Alt + "=");
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.expand-fold);
+                    }
+                }
+
+                MenuItem {
+                    title: "Collapse";
+                    shortcut: @keys(Control + Alt + "-");
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.collapse-fold);
+                    }
+                }
+
+                MenuItem {
+                    title: "Expand All";
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.expand-all-folds);
+                    }
+                }
+
+                MenuItem {
+                    title: "Collapse All";
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.collapse-all-folds);
+                    }
+                }
+            }
+        }
+
         Menu {
             title: "View";
             MenuItem {
@@ -301,10 +446,61 @@ export component ProjectWindow inherits Window {
             }
 
             MenuItem {
+                title: "Search";
+                shortcut: @keys(Control + Shift + F);
+                activated => {
+                    root.toggle-view(LeftView.search);
+                }
+            }
+
+            MenuItem {
                 title: "Problems";
                 shortcut: @keys(Control + "6");
                 activated => {
                     root.toggle-view(LeftView.problems);
+                }
+            }
+
+            MenuItem {
+                title: "Terminal";
+                shortcut: @keys(Alt + F12);
+                activated => {
+                    root.toggle-terminal();
+                }
+            }
+        }
+
+        Menu {
+            title: "Navigate";
+            MenuItem {
+                title: "Go to File…";
+                shortcut: @keys(Control + Shift + O);
+                activated => {
+                    root.open-finder(FinderKind.files);
+                }
+            }
+
+            MenuItem {
+                title: "Recent Files";
+                shortcut: @keys(Control + E);
+                activated => {
+                    root.open-finder(FinderKind.recent-files);
+                }
+            }
+
+            MenuItem {
+                title: "Find Action…";
+                shortcut: @keys(Control + Shift + A);
+                activated => {
+                    root.open-finder(FinderKind.actions);
+                }
+            }
+
+            // Its shortcut is ⇧⇧ (src/keys.rs), which a menu can't show.
+            MenuItem {
+                title: "Search Everywhere";
+                activated => {
+                    root.open-finder(FinderKind.everywhere);
                 }
             }
         }
@@ -374,6 +570,13 @@ export component ProjectWindow inherits Window {
                 view: root.left-view;
                 problems: root.problems;
                 files: root.files;
+                search-query: root.search-query;
+                search-regex: root.search-regex;
+                search-case-sensitive: root.search-case-sensitive;
+                search-whole-word: root.search-whole-word;
+                search-rows: root.search-rows;
+                search-status: root.search-status;
+                search-status-error: root.search-status-error;
                 show(view) => {
                     root.show-view(view);
                 }
@@ -382,6 +585,12 @@ export component ProjectWindow inherits Window {
                 }
                 file-clicked(index) => {
                     root.file-clicked(index);
+                }
+                search(text, regex, case-sensitive, whole-word) => {
+                    root.search(text, regex, case-sensitive, whole-word);
+                }
+                search-result-clicked(index) => {
+                    root.search-result-clicked(index);
                 }
             }
 
@@ -397,6 +606,13 @@ export component ProjectWindow inherits Window {
                 has-editor: root.left-has-editor;
                 can-split: root.can-split;
                 geometry: root.left-geometry;
+                hunk: root.left-hunk;
+                rollback-hunk => {
+                    root.rollback-hunk();
+                }
+                hide-hunk => {
+                    root.hide-hunk();
+                }
                 conflict: root.left-conflict;
                 conflict-resolved(reload) => {
                     root.conflict-resolved(0, reload);
@@ -450,6 +666,13 @@ export component ProjectWindow inherits Window {
                 has-editor: root.right-has-editor;
                 can-split: root.can-split;
                 geometry: root.right-geometry;
+                hunk: root.right-hunk;
+                rollback-hunk => {
+                    root.rollback-hunk();
+                }
+                hide-hunk => {
+                    root.hide-hunk();
+                }
                 conflict: root.right-conflict;
                 conflict-resolved(reload) => {
                     root.conflict-resolved(1, reload);
@@ -488,6 +711,59 @@ export component ProjectWindow inherits Window {
                     root.preedit-changed(text);
                 }
             }
+
+            // The splitter: drag it to share the width between the editor
+            // and the terminal.
+            if root.terminal-visible: Rectangle {
+                width: 5px;
+
+                Rectangle {
+                    x: 2px;
+                    width: 1px;
+                    background: Theme.chrome-border;
+                }
+
+                splitter := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => {
+                        if self.pressed {
+                            root.terminal-width = clamp(
+                                root.terminal-width - (self.mouse-x - self.pressed-x),
+                                160px,
+                                max(160px, root.width - 320px));
+                        }
+                    }
+                }
+            }
+
+            terminal := TerminalPane {
+                width: root.terminal-visible ? root.terminal-width : 0px;
+                visible: root.terminal-visible;
+                title: root.terminal-title;
+                message: root.terminal-message;
+                focused: root.terminal-focused;
+                rows: root.terminal-rows;
+                cursor: root.terminal-cursor;
+                mouse-reporting: root.terminal-mouse-reporting;
+                focus-requested => {
+                    root.terminal-focus();
+                }
+                key(text, shift, cmd, alt, ctrl) => {
+                    root.terminal-key(text, shift, cmd, alt, ctrl);
+                }
+                committed(text) => {
+                    root.terminal-committed(text);
+                }
+                preedit-changed(text) => {
+                    root.terminal-preedit-changed(text);
+                }
+                mouse(kind, button, x, y, shift, alt, ctrl, cmd) => {
+                    root.terminal-mouse(kind, button, x, y, shift, alt, ctrl, cmd);
+                }
+                scrolled(delta-y, x, y) => {
+                    root.terminal-scrolled(delta-y, x, y);
+                }
+            }
         }
 
         StatusBar {
@@ -500,9 +776,11 @@ export component ProjectWindow inherits Window {
                 root.notice-action();
             }
             toolchain: root.status-toolchain;
+            branch: root.status-branch;
             caret: root.status-caret;
             encoding: root.status-encoding;
             line-ending: root.status-line-ending;
+            indentation: root.status-indentation;
             update: root.status-update;
             large-file: root.status-large-file;
             loading: root.status-loading;
@@ -517,6 +795,40 @@ export component ProjectWindow inherits Window {
             show-problems => {
                 root.show-view(LeftView.problems);
             }
+        }
+    }
+
+    // A click outside the finder closes it.
+    TouchArea {
+        visible: root.finder-open;
+        clicked => {
+            root.finder-close();
+        }
+    }
+
+    finder := Finder {
+        visible: root.finder-open;
+        width: min(640px, root.width - 40px);
+        height: min(420px, root.height - 80px);
+        x: (root.width - self.width) / 2;
+        y: 48px;
+        title: root.finder-title;
+        items: root.finder-items;
+        selected: root.finder-selected;
+        edited(text) => {
+            root.finder-edited(text);
+        }
+        move(by) => {
+            root.finder-move(by);
+        }
+        choose => {
+            root.finder-accept();
+        }
+        close => {
+            root.finder-close();
+        }
+        clicked(index) => {
+            root.finder-clicked(index);
         }
     }
 

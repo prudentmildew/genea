@@ -1,0 +1,260 @@
+// The terminal pane (ticket #38): a header over the terminal's grid, drawn
+// like the editor surface (a Rust-driven grid of Text items, ADR 0004).
+// Rust (src/terminal.rs) fills one slot per visible row and pushes only the
+// rows that changed, so an idle terminal never repaints.
+//
+// Keys and text arrive through a hidden TextInput, the same IME bridge as
+// the editor's, so dead keys compose here too.
+
+import { Theme } from "theme.slint";
+
+// A stretch of a row in one style, placed on the grid by Rust. Colours are
+// an index into Theme.terminal-palette (0 foreground, 1 background, 2–17
+// the ANSI colours), or -1 for the exact `fg`/`bg`.
+export struct TermRun {
+    x: length,
+    width: length,
+    text: string,
+    fg-index: int,
+    fg: color,
+    bg-index: int,
+    bg: color,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    strikeout: bool,
+    dim: bool,
+    link: bool,
+}
+
+export struct TermRow {
+    y: length,
+    runs: [TermRun],
+}
+
+// Where the cursor and the preedit are, placed by Rust.
+export struct TermCursor {
+    visible: bool,
+    x: length,
+    y: length,
+    preedit: string,
+    preedit-width: length,
+}
+
+export component TerminalPane inherits Rectangle {
+    in property <string> title;
+    // Shown over the grid while the shell isn't running ("Starting…").
+    in property <string> message;
+    in property <bool> focused;
+    in property <[TermRow]> rows;
+    in property <TermCursor> cursor;
+    // The program takes the mouse: no I-beam.
+    in property <bool> mouse-reporting;
+
+    out property <length> char-width: probe.preferred-width / 100;
+    out property <length> grid-width: grid.width;
+    out property <length> grid-height: grid.height;
+
+    callback focus-requested();
+    callback key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
+    callback committed(text: string);
+    callback preedit-changed(text: string);
+    // Mouse over the grid, in grid coordinates. `kind`: 0 press, 1
+    // release, 2 move; `button`: 0 none, 1 left, 2 middle, 3 right.
+    callback mouse(kind: int, button: int, x: length, y: length, shift: bool, alt: bool, ctrl: bool, cmd: bool);
+    callback scrolled(delta-y: length, x: length, y: length);
+
+    public function refocus() {
+        ime.clear-focus();
+        ime.focus();
+    }
+
+    background: Theme.terminal-palette[1];
+    forward-focus: ime;
+
+    probe := Text {
+        visible: false;
+        font-family: Theme.editor-font;
+        font-size: Theme.editor-font-size;
+        text: "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+    }
+
+    VerticalLayout {
+        Rectangle {
+            height: 28px;
+            background: Theme.chrome-background;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.chrome-border;
+            }
+
+            // The focused pane's marker, as on the editor's tabs.
+            Rectangle {
+                y: 0px;
+                height: 2px;
+                background: Theme.caret;
+                visible: root.focused;
+            }
+
+            Text {
+                x: 12px;
+                width: parent.width - 24px;
+                text: root.title;
+                color: root.focused ? Theme.chrome-foreground : Theme.chrome-muted;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+
+            grid := Rectangle {
+                x: 8px;
+                y: 4px;
+                width: parent.width - 16px;
+                height: parent.height - 8px;
+                clip: true;
+
+                for row in root.rows: Rectangle {
+                    y: row.y;
+                    height: Theme.line-height;
+
+                    for run in row.runs: Rectangle {
+                        x: run.x;
+                        width: run.width;
+                        height: Theme.line-height;
+                        background: run.bg-index == 1 ? transparent : run.bg-index < 0 ? run.bg : Theme.terminal-palette[run.bg-index];
+
+                        Text {
+                            x: 0px;
+                            height: Theme.line-height;
+                            vertical-alignment: center;
+                            text: run.text;
+                            color: run.fg-index < 0 ? run.fg : Theme.terminal-palette[run.fg-index];
+                            opacity: run.dim ? 0.6 : 1;
+                            font-family: Theme.editor-font;
+                            font-size: Theme.editor-font-size;
+                            font-weight: run.bold ? 700 : 400;
+                            font-italic: run.italic;
+                        }
+
+                        Rectangle {
+                            y: Theme.line-height - 2px;
+                            height: 1px;
+                            background: run.fg-index < 0 ? run.fg : Theme.terminal-palette[run.fg-index];
+                            visible: run.underline || run.link;
+                        }
+
+                        Rectangle {
+                            y: Theme.line-height / 2;
+                            height: 1px;
+                            background: run.fg-index < 0 ? run.fg : Theme.terminal-palette[run.fg-index];
+                            visible: run.strikeout;
+                        }
+                    }
+                }
+
+                // A block cursor: filled while focused, an outline otherwise.
+                Rectangle {
+                    x: root.cursor.x;
+                    y: root.cursor.y;
+                    width: max(root.char-width, root.cursor.preedit-width);
+                    height: Theme.line-height;
+                    visible: root.cursor.visible;
+                    background: root.focused && ime.has-focus ? Theme.terminal-cursor : transparent;
+                    border-width: root.focused && ime.has-focus ? 0px : 1px;
+                    border-color: Theme.caret;
+
+                    Text {
+                        x: 0px;
+                        height: Theme.line-height;
+                        vertical-alignment: center;
+                        text: root.cursor.preedit;
+                        color: Theme.terminal-palette[0];
+                        font-family: Theme.editor-font;
+                        font-size: Theme.editor-font-size;
+                    }
+                }
+
+                ime := TextInput {
+                    x: root.cursor.x;
+                    y: root.cursor.y;
+                    width: 1px;
+                    height: Theme.line-height;
+                    font-family: Theme.editor-font;
+                    font-size: Theme.editor-font-size;
+                    color: transparent;
+                    selection-background-color: transparent;
+                    selection-foreground-color: transparent;
+                    text-cursor-width: 0px;
+                    single-line: true;
+
+                    key-pressed(event) => {
+                        root.key(event.text, event.modifiers.shift, event.modifiers.control, event.modifiers.alt, event.modifiers.meta);
+                        accept
+                    }
+                    edited => {
+                        if (self.text != "") {
+                            root.committed(self.text);
+                            self.text = "";
+                        }
+                    }
+                    changed preedit-text => {
+                        root.preedit-changed(self.preedit-text);
+                    }
+                }
+
+                TouchArea {
+                    mouse-cursor: root.mouse-reporting ? default : text;
+                    scroll-event(event) => {
+                        root.scrolled(event.delta-y, self.mouse-x, self.mouse-y);
+                        accept
+                    }
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            ime.focus();
+                            root.focus-requested();
+                        }
+                        if (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
+                            root.mouse(
+                                event.kind == PointerEventKind.down ? 0 : 1,
+                                event.button == PointerEventButton.left ? 1 : event.button == PointerEventButton.middle ? 2 : event.button == PointerEventButton.right ? 3 : 0,
+                                self.mouse-x, self.mouse-y,
+                                event.modifiers.shift, event.modifiers.alt, event.modifiers.meta, event.modifiers.control);
+                        }
+                    }
+                    moved => {
+                        if (root.mouse-reporting) {
+                            root.mouse(2, 0, self.mouse-x, self.mouse-y, false, false, false, false);
+                        }
+                    }
+                }
+            }
+
+            // Over the bottom of the grid, so the grid's size stays put.
+            if root.message != "": Rectangle {
+                y: parent.height - self.height;
+                height: 28px;
+                background: Theme.chrome-background;
+
+                Rectangle {
+                    y: 0px;
+                    height: 1px;
+                    background: Theme.chrome-border;
+                }
+
+                Text {
+                    x: 12px;
+                    width: parent.width - 24px;
+                    text: root.message;
+                    color: Theme.chrome-muted;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}
