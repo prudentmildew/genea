@@ -22,6 +22,7 @@
 
 mod command;
 mod editor;
+mod environment;
 mod history;
 mod jobs;
 mod project;
@@ -35,6 +36,8 @@ mod workbench;
 
 pub use command::{CaretMove, Command};
 pub use editor::MAX_VISIBLE_COLUMNS;
+/// What `Workbench::spawn` takes and returns, from the host boundary.
+pub use genea_host::{Child, ProcessSpec};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{

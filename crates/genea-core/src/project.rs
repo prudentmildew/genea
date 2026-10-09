@@ -6,12 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use genea_host::Host;
+use genea_host::{Host, SharedHost};
 use ropey::Rope;
 
 use crate::{
     command::{CaretMove, Command},
     editor::Editor,
+    environment::{Environment, ProcessEnv},
     history::EditKind,
     jobs::Jobs,
     toolchain::{Toolchain, ToolchainContext},
@@ -32,6 +33,8 @@ pub(crate) struct Project {
     open_generation: u64,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
+    /// What its processes get (ticket #36); set by `start_environment`.
+    pub(crate) environment: Option<Environment>,
 }
 
 impl Project {
@@ -44,7 +47,23 @@ impl Project {
             notices: Vec::new(),
             open_generation: 0,
             toolchain: None,
+            environment: None,
         }
+    }
+
+    /// Captures the login shell's environment in the background, once per
+    /// open.
+    pub(crate) fn start_environment(&mut self, host: SharedHost, jobs: &Jobs) {
+        let environment = self.environment.insert(Environment::new(self.id, self.root.clone(), host));
+        environment.capture(jobs);
+    }
+
+    /// The environment for a process started for this project: pass every
+    /// spec through [`ProcessEnv::apply`] before spawning it. This is the
+    /// one way the terminal, scripts and language servers start processes.
+    pub(crate) fn process_env(&self) -> ProcessEnv {
+        let environment = self.environment.as_ref().expect("the environment starts when the project opens");
+        environment.process_env()
     }
 
     /// Reads the toolchain pins and starts the downloads, in the background.

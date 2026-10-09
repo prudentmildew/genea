@@ -3,6 +3,7 @@
 use std::{
     collections::BinaryHeap,
     cmp::Reverse,
+    ffi::OsString,
     io::{self, Write},
     path::{Path, PathBuf},
     process::Stdio,
@@ -76,6 +77,15 @@ impl Host for RealHost {
 
     fn clipboard(&self) -> &dyn Clipboard {
         self.clipboard.0.as_ref()
+    }
+
+    fn launch_environment(&self) -> Vec<(OsString, OsString)> {
+        let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        // launchd sets SHELL for apps; without it, assume macOS's default.
+        if !vars.iter().any(|(key, _)| key == "SHELL") {
+            vars.push(("SHELL".into(), "/bin/zsh".into()));
+        }
+        vars
     }
 }
 

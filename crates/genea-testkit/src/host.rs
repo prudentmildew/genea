@@ -6,6 +6,7 @@ use std::{
     ffi::{OsStr, OsString},
     io::{self, PipeReader, PipeWriter, Write},
     path::Path,
+    process::Stdio,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -41,6 +42,7 @@ struct Inner {
     downloads: ScriptedDownloads,
     support: tempfile::TempDir,
     clipboard: TestClipboard,
+    launch_environment: Mutex<Vec<(OsString, OsString)>>,
 }
 
 impl Default for Inner {
@@ -51,6 +53,7 @@ impl Default for Inner {
             downloads: ScriptedDownloads::default(),
             support: tempfile::Builder::new().prefix("genea-support-").tempdir().expect("create a temp dir"),
             clipboard: TestClipboard::default(),
+            launch_environment: Mutex::new(vec![("PATH".into(), "/usr/bin:/bin:/usr/sbin:/sbin".into())]),
         }
     }
 }
@@ -97,6 +100,19 @@ impl TestHost {
     pub fn clipboard(&self) -> &TestClipboard {
         &self.inner.clipboard
     }
+
+    /// Sets the environment Genea was started with. By default it is only a
+    /// system `PATH`, with no `SHELL`, so no login shell is run: name one
+    /// with `SHELL` and script it (see [`ScriptedProcesses::script_shell`])
+    /// to test the environment capture.
+    pub fn set_launch_environment<K, V>(&self, vars: impl IntoIterator<Item = (K, V)>)
+    where
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        *self.inner.launch_environment.lock().unwrap() =
+            vars.into_iter().map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())).collect();
+    }
 }
 
 impl Host for TestHost {
@@ -118,6 +134,10 @@ impl Host for TestHost {
 
     fn clipboard(&self) -> &dyn Clipboard {
         &self.inner.clipboard
+    }
+
+    fn launch_environment(&self) -> Vec<(OsString, OsString)> {
+        self.inner.launch_environment.lock().unwrap().clone()
     }
 }
 
@@ -281,6 +301,35 @@ impl ScriptedProcesses {
         script: impl Fn(&ProcessSpec, FakeProcess) -> i32 + Send + Sync + 'static,
     ) {
         self.scripts.lock().unwrap().insert(program.as_ref().to_owned(), Arc::new(script));
+    }
+
+    /// Plays a login shell: each spawn runs the command after `-c` with a
+    /// real `/bin/sh`, in the spec's working folder, with exactly `vars` as
+    /// its environment (what the user's rc files would export). Its output
+    /// and exit code are the process's. Scripting the program again
+    /// replaces the variables.
+    pub fn script_shell<K, V>(&self, program: impl AsRef<OsStr>, vars: impl IntoIterator<Item = (K, V)>)
+    where
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let vars: Vec<(OsString, OsString)> =
+            vars.into_iter().map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())).collect();
+        self.script(program, move |spec, io| {
+            let Some(command) = spec.args.iter().skip_while(|arg| *arg != "-c").nth(1) else { return 2 };
+            let mut sh = std::process::Command::new("/bin/sh");
+            sh.arg("-c")
+                .arg(command)
+                .env_clear()
+                .envs(vars.iter().map(|(k, v)| (k, v)))
+                .stdin(Stdio::from(io.stdin))
+                .stdout(Stdio::from(io.stdout))
+                .stderr(Stdio::from(io.stderr));
+            if let Some(cwd) = &spec.cwd {
+                sh.current_dir(cwd);
+            }
+            sh.status().map_or(127, |status| status.code().unwrap_or(1))
+        });
     }
 
     /// Every spawn so far, scripted or not, in order.
