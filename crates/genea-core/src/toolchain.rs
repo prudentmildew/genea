@@ -74,6 +74,8 @@ pub(crate) struct Toolchain {
     problems: Vec<String>,
     /// Bumped by every load, so a slow read can't replace a newer one.
     load_generation: u64,
+    /// `package.json` is being read.
+    loading: bool,
 }
 
 struct Slot {
@@ -102,12 +104,13 @@ enum SlotState {
 
 impl Toolchain {
     pub(crate) fn new(project: ProjectId, root: PathBuf, context: ToolchainContext) -> Self {
-        Toolchain { project, root, context, slots: [None, None], problems: Vec::new(), load_generation: 0 }
+        Toolchain { project, root, context, slots: [None, None], problems: Vec::new(), load_generation: 0, loading: false }
     }
 
     /// Reads `package.json` in the background, then starts every role.
     pub(crate) fn load(&mut self, jobs: &Jobs) {
         self.load_generation += 1;
+        self.loading = true;
         let generation = self.load_generation;
         let (id, path) = (self.project, self.root.join("package.json"));
         jobs.spawn("read toolchain pins", move || {
@@ -120,6 +123,7 @@ impl Toolchain {
                 let jobs = core.jobs.clone();
                 let Some(toolchain) = toolchain_mut(core, id) else { return };
                 if toolchain.load_generation == generation {
+                    toolchain.loading = false;
                     toolchain.loaded(pins, &jobs);
                 }
             })
@@ -265,6 +269,17 @@ impl Toolchain {
             SlotState::Ready(installed) => Some(installed),
             _ => None,
         })
+    }
+
+    /// Whether every role has settled: its tool is ready, or it failed or
+    /// is off. Nothing is being read, resolved or downloaded.
+    pub(crate) fn is_settled(&self) -> bool {
+        !self.loading
+            && self
+                .slots
+                .iter()
+                .flatten()
+                .all(|slot| !matches!(slot.state, SlotState::Resolving | SlotState::Downloading(_)))
     }
 
     pub(crate) fn view(&self) -> ToolchainView {

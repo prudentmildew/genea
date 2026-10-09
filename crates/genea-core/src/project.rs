@@ -22,6 +22,7 @@ use crate::{
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     syntax::ParseJob,
+    terminal::Terminal,
     text::Decoded,
     toolchain::{Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
@@ -63,6 +64,8 @@ pub(crate) struct Project {
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
+    /// The terminal pane's shell (ticket #38).
+    pub(crate) terminal: Terminal,
 }
 
 impl Project {
@@ -84,6 +87,7 @@ impl Project {
             nested_configs: BTreeSet::new(),
             problems: Problems::default(),
             left_column: None,
+            terminal: Terminal::new(id),
         }
     }
 
@@ -240,6 +244,23 @@ impl Project {
         let environment = self.environment.as_ref().expect("the environment starts when the project opens");
         let tools = self.toolchain.iter().flat_map(Toolchain::installed);
         environment.process_env(tools.map(|installed| installed.bin_dir.as_path()))
+    }
+
+    /// Whether the environment for new processes is final for now: the
+    /// login-shell capture has landed and the toolchain has settled, so the
+    /// pinned tools are on PATH.
+    fn environment_ready(&self) -> bool {
+        self.environment.as_ref().is_some_and(Environment::is_ready)
+            && self.toolchain.as_ref().is_none_or(Toolchain::is_settled)
+    }
+
+    /// Starts the terminal's shell once the environment is ready. Called
+    /// after opening and after every background result.
+    pub(crate) fn start_terminal_when_ready(&mut self, host: &SharedHost, jobs: &Jobs) {
+        if self.terminal.is_waiting() && self.environment_ready() {
+            let env = self.process_env();
+            self.terminal.start(env, host.clone(), jobs);
+        }
     }
 
     /// Reads the toolchain pins and starts the downloads, in the background.
@@ -485,6 +506,7 @@ impl Project {
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
+            terminal: self.terminal.view(),
         }
     }
 

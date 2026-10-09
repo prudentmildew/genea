@@ -47,6 +47,8 @@ pub struct ProjectView {
     pub problems: Vec<ProblemItem>,
     /// The view the left column shows, or `None` while it is collapsed.
     pub left_column: Option<LeftColumnView>,
+    /// The terminal pane (ticket #38).
+    pub terminal: TerminalView,
 }
 
 /// One side of the editor area: a tab strip and the active tab's editor.
@@ -281,4 +283,48 @@ pub struct RecentProject {
     pub root: PathBuf,
     /// The folder's name.
     pub name: String,
+}
+
+/// The terminal pane next to the editor (ticket #38): one shell, drawn on a
+/// grid like the editor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalView {
+    pub status: TerminalStatus,
+    /// The grid's size in cells.
+    pub rows: usize,
+    pub columns: usize,
+    /// The visible rows, top to bottom: always `rows` of them.
+    pub lines: Vec<TerminalLine>,
+    /// Where the terminal's cursor is on the visible rows; `None` while the
+    /// program hides it or it is scrolled out of view.
+    pub cursor: Option<TerminalCursor>,
+}
+
+/// Whether the terminal's shell runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalStatus {
+    /// Waiting for the project environment, or starting.
+    Starting,
+    Running,
+    /// The shell exited, with its code if it exited normally.
+    Exited { code: Option<i32> },
+    /// The shell couldn't start: why.
+    Failed(String),
+}
+
+/// One visible row of the terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalLine {
+    /// The row's text in grid columns, without trailing blanks. A wide
+    /// character takes two columns.
+    pub text: String,
+}
+
+/// The terminal's cursor cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalCursor {
+    /// 0-based visible row.
+    pub line: usize,
+    /// 0-based grid column.
+    pub column: usize,
 }

@@ -32,6 +32,7 @@ mod project;
 mod recent;
 mod syntax;
 mod templates;
+mod terminal;
 mod text;
 mod toolchain;
 mod update;
@@ -56,4 +57,5 @@ pub use view::{
     ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, PaneView};
+pub use view::{TerminalCursor, TerminalLine, TerminalStatus, TerminalView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};
