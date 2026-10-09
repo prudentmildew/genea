@@ -1,5 +1,6 @@
 //! One open project: its folder and what its window shows.
 
+mod external;
 mod tabs;
 
 use std::{
@@ -11,7 +12,6 @@ use std::{
 };
 
 use genea_host::{Host, SharedHost};
-use ropey::Rope;
 
 use crate::{
     command::Command,
@@ -23,14 +23,17 @@ use crate::{
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
+    reading::{self, Contents, FirstScreen},
     syntax::ParseJob,
-    text::Decoded,
-    toolchain::{Toolchain, ToolchainContext},
+    toolchain::{LOCKFILES, Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
 use tabs::Panes;
+
+/// The status-bar item for a large file.
+const LARGE_FILE_NOTICE: &str = "Over 5 MB: no highlighting or language features";
 
 /// Rows assumed until the view reports its viewport.
 const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
@@ -125,9 +128,16 @@ impl Project {
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
         if self.git.head_may_have_moved(&changes) {
-            self.git.reload(self.open_paths(), jobs);
+            let open = self.open_editors().map(|e| e.path().to_owned()).collect();
+            self.git.reload(open, jobs);
         }
+        self.check_open_files(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
+        if let Some(toolchain) = &mut self.toolchain
+            && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
+        {
+            toolchain.check_lockfiles(jobs);
+        }
         if changes.rescan {
             self.load_config(jobs);
             self.find_nested_configs(jobs);
@@ -275,6 +285,16 @@ impl Project {
         &self.root
     }
 
+    /// Replaces a whole-project source's problems.
+    pub(crate) fn replace_problems(&mut self, source: ProblemSource, problems: Vec<Problem>) {
+        self.problems.replace(source, problems);
+    }
+
+    /// Shows a message in the project's window.
+    pub(crate) fn notify(&mut self, message: String) {
+        self.notices.push(Notice { message, action: None });
+    }
+
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
         // A shown change closes on anything but scrolling.
@@ -309,6 +329,7 @@ impl Project {
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
+            Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -350,6 +371,37 @@ impl Project {
                     toolchain.pin_defaults(jobs);
                 }
             }
+            Command::OpenToolchainPicker(kind) => match &mut self.toolchain {
+                Some(toolchain) => toolchain.open_picker(kind, jobs),
+                None => self.notices.push(Notice {
+                    message: "Genea manages the runtime and package manager of a project with a package.json at its \
+                              root, and this folder has none."
+                        .into(),
+                    action: None,
+                }),
+            },
+            Command::FilterToolchainPicker(query) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.filter_picker(query);
+                }
+            }
+            Command::CloseToolchainPicker => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.close_picker();
+                }
+            }
+            Command::SetRuntime(pin) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.set_runtime(pin, jobs);
+                }
+            }
+            Command::SetPackageManager(pin) => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.set_package_manager(pin, jobs);
+                }
+            }
+            // The workbench handles it: it needs the recent projects.
+            Command::RemoveUnusedToolchains => {}
             Command::ReloadEnvironment => {
                 if let Some(environment) = &mut self.environment {
                     environment.capture(jobs);
@@ -532,6 +584,7 @@ impl Project {
             line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             branch: self.git.branch().map(str::to_owned),
+            large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
@@ -550,6 +603,7 @@ impl Project {
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
+            toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
         }
     }
@@ -603,8 +657,8 @@ impl Project {
     /// Writes an open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
     fn save(&mut self, path: PathBuf, jobs: &Jobs) {
-        let Some(editor) = self.open_editor(&path).filter(|e| !e.is_read_only()) else { return };
-        let snapshot = editor.snapshot();
+        let Some(editor) = self.open_editor_mut(&path).filter(|e| !e.is_read_only()) else { return };
+        let snapshot = editor.start_save();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
         jobs.spawn("save file", move || {
@@ -676,6 +730,9 @@ impl Project {
     /// is read; a failed read or a binary file leaves it and adds a notice.
     /// A file that isn't valid UTF-8 opens read-only. A file that is
     /// already open just has its tab focused, keeping its buffer.
+    ///
+    /// A file that may be large opens as soon as its first screen is read,
+    /// read-only until the rest is in (ticket #27, `reading`).
     fn open_file(&mut self, path: PathBuf, at: Option<TextPosition>, jobs: &Jobs) {
         let absolute = self.root.join(&path);
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
@@ -688,45 +745,77 @@ impl Project {
         }
         let generation = self.open_generation;
         let id = self.id;
+        let rows = self.viewport_rows.ceil() as usize;
+        let first_screen_jobs = jobs.clone();
         jobs.spawn("open file", move || {
-            let read = std::fs::read(&absolute).map(Decoded::from_bytes);
+            let read = reading::read(&absolute, rows, |first_screen| {
+                let shown = shown.clone();
+                first_screen_jobs.busy().finish(Box::new(move |core| {
+                    let Some(project) = core.project_mut(id) else { return };
+                    if project.open_generation == generation {
+                        let FirstScreen { text, size } = first_screen;
+                        project.open_tab(Editor::loading(shown, text, size, generation));
+                    }
+                }));
+            });
             Box::new(move |core| {
                 let jobs = core.jobs.clone();
                 let Some(project) = core.project_mut(id) else { return };
-                if project.open_generation != generation {
-                    return;
-                }
-                match read {
-                    Ok(Decoded::Text(text)) => {
-                        project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)));
-                        project.reparse_file(&shown, &jobs);
-                        project.git.load_base(&shown, &jobs);
-                        if let Some(at) = at {
-                            project.go_to(at);
-                        }
-                    }
-                    Ok(Decoded::Invalid(text)) => {
-                        project.notices.push(Notice {
-                            message: format!("{} isn't valid UTF-8, so it's open read-only.", shown.display()),
-                            action: None,
-                        });
-                        project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)).read_only());
-                        project.reparse_file(&shown, &jobs);
-                        project.git.load_base(&shown, &jobs);
-                        if let Some(at) = at {
-                            project.go_to(at);
-                        }
-                    }
-                    Ok(Decoded::Binary) => project.notices.push(Notice {
-                        message: format!("{} is a binary file, so Genea doesn't open it in the editor.", shown.display()),
-                        action: None,
-                    }),
-                    Err(error) => project
-                        .notices
-                        .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()), action: None }),
-                }
+                project.file_read(shown, generation, at, read, &jobs);
             })
         });
+    }
+
+    /// The OpenFile with this generation has read its file: shows it in a
+    /// new tab, or in the tab already showing its first screen.
+    fn file_read(
+        &mut self,
+        path: PathBuf,
+        generation: u64,
+        at: Option<TextPosition>,
+        read: io::Result<Contents>,
+        jobs: &Jobs,
+    ) {
+        let loading = self.open_editor(&path).is_some_and(|e| e.is_loading(generation));
+        if !loading && self.open_generation != generation {
+            return;
+        }
+        let editor = match read {
+            Ok(Contents::Text(text)) => Editor::new(path.clone(), text),
+            Ok(Contents::Invalid(text)) => {
+                self.notices.push(Notice {
+                    message: format!("{} isn't valid UTF-8, so it's open read-only.", path.display()),
+                    action: None,
+                });
+                Editor::new(path.clone(), text).read_only()
+            }
+            Ok(Contents::Binary) => {
+                let message = format!("{} is a binary file, so Genea doesn't open it in the editor.", path.display());
+                return self.open_failed(&path, generation, message);
+            }
+            Err(error) => return self.open_failed(&path, generation, format!("Couldn't open {}: {error}", path.display())),
+        };
+        let rows = self.viewport_rows;
+        match self.open_editor_mut(&path).filter(|e| e.is_loading(generation)) {
+            Some(first_screen) => first_screen.finish_loading(editor, rows),
+            None => self.open_tab(editor),
+        }
+        if let Some(at) = at
+            && self.editor.as_ref().is_some_and(|e| e.path() == path)
+        {
+            self.go_to(at);
+        }
+        self.reparse_file(&path, jobs);
+        self.git.load_base(&path, jobs);
+    }
+
+    /// Reading a file failed: a notice says why. A tab showing its first
+    /// screen keeps that, read-only.
+    fn open_failed(&mut self, path: &Path, generation: u64, message: String) {
+        if let Some(first_screen) = self.open_editor_mut(path).filter(|e| e.is_loading(generation)) {
+            first_screen.stop_loading();
+        }
+        self.notices.push(Notice { message, action: None });
     }
 }
 

@@ -8,6 +8,7 @@ import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ProblemRow } from "problems-view.slint";
+import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
 
 export component ProjectWindow inherits Window {
@@ -32,6 +33,17 @@ export component ProjectWindow inherits Window {
     in property <string> status-update;
     // The git branch (ticket #56), or empty outside a repository.
     in property <string> status-branch;
+    // Why a large file has no highlighting (ticket #27), or empty.
+    in property <string> status-large-file;
+    // The focused file's rest is still being read.
+    in property <bool> status-loading;
+
+    // The toolchain picker (ticket #37), shown while `picker-visible`.
+    in property <bool> picker-visible;
+    in property <string> picker-title;
+    in property <string> picker-message;
+    in property <bool> picker-loading;
+    in property <[PickerRow]> picker-options;
 
     // The editor area (ticket #31): the left pane, and the right one while
     // split. `focused-pane` is 0 (left) or 1 (right).
@@ -49,6 +61,9 @@ export component ProjectWindow inherits Window {
     // The shown git change, in the focused pane only.
     in property <HunkPopup> left-hunk;
     in property <HunkPopup> right-hunk;
+    // Each pane's file changed on disk while it had unsaved edits (#32).
+    in property <bool> left-conflict;
+    in property <bool> right-conflict;
     // Both panes have the same font and height.
     out property <length> char-width: left.char-width;
     out property <length> viewport-height: left.viewport-height;
@@ -64,6 +79,14 @@ export component ProjectWindow inherits Window {
     callback paste();
     callback select-all();
     callback reload-environment();
+    // Toolchain commands (ticket #37).
+    callback set-runtime();
+    callback set-package-manager();
+    callback update-toolchain();
+    callback remove-unused-toolchains();
+    callback picker-filter-edited(string);
+    callback picker-picked(int);
+    callback picker-cancelled();
     callback show-about();
     callback open-config();
     // A left-column view's shortcut: show it, or collapse the column.
@@ -87,6 +110,8 @@ export component ProjectWindow inherits Window {
     callback tab-clicked(pane: int, index: int);
     callback tab-closed(pane: int, index: int);
     callback tab-moved(pane: int, index: int);
+    // A pane's conflict bar: Reload (`reload`) or Keep my edits.
+    callback conflict-resolved(pane: int, reload: bool);
 
     // Editor input. Keys, commits and the preedit come from the focused
     // pane only, so they carry no pane.
@@ -167,6 +192,37 @@ export component ProjectWindow inherits Window {
                 title: "Reload Environment";
                 activated => {
                     root.reload-environment();
+                }
+            }
+
+            MenuSeparator { }
+
+            // The toolchain pickers and upkeep (ticket #37, ADR 0005).
+            MenuItem {
+                title: "Set Runtime…";
+                activated => {
+                    root.set-runtime();
+                }
+            }
+
+            MenuItem {
+                title: "Set Package Manager…";
+                activated => {
+                    root.set-package-manager();
+                }
+            }
+
+            MenuItem {
+                title: "Update Toolchain…";
+                activated => {
+                    root.update-toolchain();
+                }
+            }
+
+            MenuItem {
+                title: "Remove Unused Toolchains";
+                activated => {
+                    root.remove-unused-toolchains();
                 }
             }
         }
@@ -344,6 +400,10 @@ export component ProjectWindow inherits Window {
                 hide-hunk => {
                     root.hide-hunk();
                 }
+                conflict: root.left-conflict;
+                conflict-resolved(reload) => {
+                    root.conflict-resolved(0, reload);
+                }
                 tab-clicked(index) => {
                     root.tab-clicked(0, index);
                 }
@@ -400,6 +460,10 @@ export component ProjectWindow inherits Window {
                 hide-hunk => {
                     root.hide-hunk();
                 }
+                conflict: root.right-conflict;
+                conflict-resolved(reload) => {
+                    root.conflict-resolved(1, reload);
+                }
                 tab-clicked(index) => {
                     root.tab-clicked(1, index);
                 }
@@ -451,12 +515,44 @@ export component ProjectWindow inherits Window {
             encoding: root.status-encoding;
             line-ending: root.status-line-ending;
             update: root.status-update;
+            large-file: root.status-large-file;
+            loading: root.status-loading;
             update-clicked => {
                 root.open-update();
             }
             show-problems => {
                 root.show-view(LeftView.problems);
             }
+        }
+    }
+
+    // A click outside the picker closes it.
+    if root.picker-visible: TouchArea {
+        clicked => {
+            root.picker-cancelled();
+        }
+    }
+
+    if root.picker-visible: ToolchainPicker {
+        x: (root.width - self.width) / 2;
+        y: 40px;
+        width: min(440px, root.width - 32px);
+        height: min(440px, root.height - 80px);
+        title: root.picker-title;
+        message: root.picker-message;
+        loading: root.picker-loading;
+        options: root.picker-options;
+        init => {
+            self.focus-filter();
+        }
+        filter-edited(text) => {
+            root.picker-filter-edited(text);
+        }
+        picked(index) => {
+            root.picker-picked(index);
+        }
+        cancelled => {
+            root.picker-cancelled();
         }
     }
 }

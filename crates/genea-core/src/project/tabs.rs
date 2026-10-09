@@ -111,9 +111,9 @@ impl Project {
         self.editor.iter().chain(&self.panes.parked).find(|e| e.path() == path)
     }
 
-    /// Every open file, focused or not.
-    pub(super) fn open_paths(&self) -> Vec<PathBuf> {
-        self.editor.iter().chain(&self.panes.parked).map(|e| e.path().to_owned()).collect()
+    /// Every open file's editor, focused or not.
+    pub(super) fn open_editors(&self) -> impl Iterator<Item = &Editor> {
+        self.editor.iter().chain(&self.panes.parked)
     }
 
     pub(super) fn open_editor_mut(&mut self, path: &Path) -> Option<&mut Editor> {

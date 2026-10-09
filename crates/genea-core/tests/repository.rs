@@ -307,6 +307,15 @@ fn rollback_without_a_shown_change_does_nothing() {
 }
 
 #[test]
+fn a_file_reloaded_after_a_change_on_disk_gets_its_markers() {
+    let (fixture, mut workbench, project) = editing_main();
+    fixture.write("src/main.ts", "one\ntwo\nthree\nfour\nfive\n");
+    workbench.settle().unwrap();
+    assert_eq!(text(&workbench, project), "one\ntwo\nthree\nfour\nfive\n");
+    assert_eq!(markers(&workbench, project), [(4, LineChange::Added)]);
+}
+
+#[test]
 fn every_change_in_the_file_has_its_markers() {
     let (_fixture, mut workbench, project) = editing_main();
     type_at(&mut workbench, project, 0, 0, "zero\n");
