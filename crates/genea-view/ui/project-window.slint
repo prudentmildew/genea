@@ -3,7 +3,7 @@
 // out of the core's ProjectView; every callback turns input into a command.
 
 import { Theme } from "theme.slint";
-import { Line } from "editor-surface.slint";
+import { Line, HunkPopup } from "editor-surface.slint";
 import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
@@ -41,6 +41,8 @@ export component ProjectWindow inherits Window {
     in property <string> status-notice-action;
     in property <string> status-toolchain;
     in property <string> status-update;
+    // The git branch (ticket #56), or empty outside a repository.
+    in property <string> status-branch;
     // Why a large file has no highlighting (ticket #27), or empty.
     in property <string> status-large-file;
     // The focused file's rest is still being read.
@@ -66,6 +68,9 @@ export component ProjectWindow inherits Window {
     in property <[Line]> right-lines <=> right.lines;
     in property <SurfaceGeometry> left-geometry;
     in property <SurfaceGeometry> right-geometry;
+    // The shown git change, in the focused pane only.
+    in property <HunkPopup> left-hunk;
+    in property <HunkPopup> right-hunk;
     // Each pane's file changed on disk while it had unsaved edits (#32).
     in property <bool> left-conflict;
     in property <bool> right-conflict;
@@ -130,6 +135,9 @@ export component ProjectWindow inherits Window {
     callback committed(text: string);
     callback preedit-changed(text: string);
     callback viewport-changed();
+    // The shown git change's buttons (ticket #56).
+    callback rollback-hunk();
+    callback hide-hunk();
 
     title: root.window-title;
     preferred-width: 1200px;
@@ -451,6 +459,13 @@ export component ProjectWindow inherits Window {
                 has-editor: root.left-has-editor;
                 can-split: root.can-split;
                 geometry: root.left-geometry;
+                hunk: root.left-hunk;
+                rollback-hunk => {
+                    root.rollback-hunk();
+                }
+                hide-hunk => {
+                    root.hide-hunk();
+                }
                 conflict: root.left-conflict;
                 conflict-resolved(reload) => {
                     root.conflict-resolved(0, reload);
@@ -504,6 +519,13 @@ export component ProjectWindow inherits Window {
                 has-editor: root.right-has-editor;
                 can-split: root.can-split;
                 geometry: root.right-geometry;
+                hunk: root.right-hunk;
+                rollback-hunk => {
+                    root.rollback-hunk();
+                }
+                hide-hunk => {
+                    root.hide-hunk();
+                }
                 conflict: root.right-conflict;
                 conflict-resolved(reload) => {
                     root.conflict-resolved(1, reload);
@@ -554,6 +576,7 @@ export component ProjectWindow inherits Window {
                 root.notice-action();
             }
             toolchain: root.status-toolchain;
+            branch: root.status-branch;
             caret: root.status-caret;
             encoding: root.status-encoding;
             line-ending: root.status-line-ending;

@@ -96,6 +96,20 @@ use, and nothing else:
   applied when the rows are built, so `exclude` changes need no disk read).
   The finder and search should take their file list from here and hide the
   same paths; hidden files still open with `OpenFile`.
+- **Git** (`src/git.rs`, ticket #56): read-only, through `gix` on
+  background jobs (each read opens the repository with `gix::discover`
+  from the root, so a project inside a bigger repository works too). HEAD
+  is read at open and again when the watcher sees `.git/HEAD`, `refs/` or
+  `packed-refs` change (or `.git` appear), with every open file's text at
+  HEAD (its *base*); a newly opened file reads its own. Gutter markers
+  (`EditorView::gutter`) come from a line diff (`imara-diff`) of the base
+  and a rope snapshot, one job per file at a time, restarted when it lands
+  if the buffer's version moved on, like the syntax parse.
+  `Command::ShowHunk`/`RollbackHunk` act on the hunks only while they are
+  up to date with the buffer; Rollback is an ordinary undoable edit
+  (`Editor::replace_lines`). A repository whose git folder is outside the
+  project isn't watched. Tests make repositories with the `git` binary
+  (`tests/repository.rs`).
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -343,8 +357,11 @@ chrome, native menus via muda (Slint's `MenuBar`).
   `src/welcome.rs`: the welcome window's sync.
 - `src/surface.rs`: the editor surface, a ring of line slots (the line on
   row R in slot R % slots; rows skip folded lines) with a per-slot diff,
-  plus base-row rebasing for `f32` precision. A press on a gutter fold
-  marker is `ToggleFold`.
+  plus base-row rebasing for `f32` precision. The gutter is line numbers,
+  then git markers, then fold markers at its right edge. A press on a fold
+  marker is `ToggleFold`; elsewhere in those two columns, on a line with a
+  git marker, it is `ShowHunk`. Git markers and the change's popover are
+  placed by row, so lines hidden in a fold have none.
 - `src/fonts.rs`: registers Apple Color Emoji and Hiragino Sans GB (CJK),
   memory-mapped, the first time visible text has an emoji or CJK character
   that Menlo and Apple Symbols lack. It is

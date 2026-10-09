@@ -403,6 +403,8 @@ fn wire(controller: &WindowController) {
         };
         with_app(move |app| app.dispatch(key, command));
     });
+    window.on_rollback_hunk(menu(Command::RollbackHunk));
+    window.on_hide_hunk(menu(Command::HideHunk));
     window.on_set_runtime(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Runtime)));
     window.on_set_package_manager(menu(Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager)));
     window.on_update_toolchain(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Update)));

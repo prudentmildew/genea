@@ -26,8 +26,10 @@ tree-sitter-css.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-md.workspace = true
 tree-sitter-yaml.workspace = true
-# Templates: `git init` (ticket #60).
+# Templates: `git init` (ticket #60). The branch and the files at HEAD (#56).
 gix = { workspace = true, features = ["sha1"] }
+# The git gutter (ticket #56): line diffs against HEAD.
+imara-diff.workspace = true
 # Templates write package.json with its keys in the conventional order; the
 # update check (ticket #64) reads GitHub's release JSON.
 serde_json = { workspace = true, features = ["preserve_order"] }
