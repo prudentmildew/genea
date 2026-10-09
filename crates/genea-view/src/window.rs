@@ -56,6 +56,9 @@ pub struct WindowController {
     option_press: bool,
 }
 
+/// How far left of the text a press still hits a git gutter marker.
+const GIT_MARKER_WIDTH: f32 = 14.0;
+
 /// A press this soon after a double-click on the same line is a triple-click.
 const TRIPLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -127,6 +130,10 @@ impl WindowController {
     pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool, alt: bool) {
         self.focus_pane(workbench, pane);
         let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
+        if self.on_git_marker(workbench, pane, x, line) {
+            self.dispatch(workbench, Command::ShowHunk { line });
+            return;
+        }
         let triple = self.last_double_click.take().is_some_and(|(at, clicked_line)| {
             clicked_line == line && at.elapsed() < TRIPLE_CLICK_INTERVAL
         });
@@ -141,6 +148,18 @@ impl WindowController {
             Command::PlaceCaret { line, column }
         };
         self.dispatch(workbench, command);
+    }
+
+    /// Whether a press at `x` on `line` hits the line's git gutter marker
+    /// (the strip just left of the text).
+    fn on_git_marker(&self, workbench: &Workbench, pane: usize, x: f32, line: usize) -> bool {
+        let text_left = self.window.get_text_left();
+        if !(text_left - GIT_MARKER_WIDTH..text_left).contains(&x) {
+            return false;
+        }
+        let Some(view) = workbench.project(self.project) else { return false };
+        let editor = view.panes.get(pane).and_then(|p| p.editor.as_ref());
+        editor.is_some_and(|e| e.gutter.iter().any(|m| m.line == line))
     }
 
     /// A drag with the button down extends the selection.
@@ -255,6 +274,7 @@ impl WindowController {
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
         window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
+        window.set_status_branch(view.status.branch.clone().unwrap_or_default().into());
 
         window.set_split(view.panes.len() > 1);
         window.set_can_split(view.can_split);

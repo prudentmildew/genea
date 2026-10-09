@@ -48,6 +48,22 @@ export struct Line {
     // The x of each caret on this line other than the primary one, which
     // is drawn on its own (multi-caret, ticket #52).
     carets: [length],
+    // The git gutter marker (ticket #56): 0 none, 1 added, 2 modified,
+    // 3 deleted (lines removed just above this one).
+    change: int,
+}
+
+// A change against HEAD, shown by a click on its gutter marker (ticket
+// #56): its lines at HEAD and Rollback. Placed by Rust.
+export struct HunkPopup {
+    shown: bool,
+    // The top of the popover, relative to the base line like `Line.y`:
+    // just below the change's lines.
+    y: length,
+    // The lines at HEAD, tabs expanded; empty for added lines.
+    head: [string],
+    // Says how many more lines at HEAD aren't listed, or is empty.
+    more: string,
 }
 
 export component EditorSurface inherits Rectangle {
@@ -61,6 +77,7 @@ export component EditorSurface inherits Rectangle {
     // its underline is; 0 when not composing.
     in property <length> compose-x;
     in property <length> preedit-width;
+    in property <HunkPopup> hunk;
 
     // The width of one grid cell, measured by Slint's own shaper.
     out property <length> char-width: probe.preferred-width / 100;
@@ -79,6 +96,9 @@ export component EditorSurface inherits Rectangle {
     callback committed(text: string);
     // The IME's marked text while composing; empty when it ends.
     callback preedit-changed(text: string);
+    // The shown change's buttons.
+    callback rollback-hunk();
+    callback hide-hunk();
 
     // The IME is enabled only for a focused TextInput in a native window
     // that exists, so the app calls this once the window is shown.
@@ -123,6 +143,26 @@ export component EditorSurface inherits Rectangle {
                 color: Theme.gutter-foreground;
                 font-family: Theme.editor-font;
                 font-size: Theme.editor-font-size;
+            }
+
+            // The git marker: a bar beside an added or modified line, a
+            // wedge on the top edge of the line below deleted ones. A
+            // click on it (src/window.rs) shows the change.
+            Rectangle {
+                x: Theme.gutter-width - 8px;
+                width: 3px;
+                height: Theme.line-height;
+                background: line.change == 1 ? Theme.git-added : Theme.git-modified;
+                visible: line.change == 1 || line.change == 2;
+            }
+
+            Rectangle {
+                x: Theme.gutter-width - 10px;
+                y: -2px;
+                width: 7px;
+                height: 4px;
+                background: Theme.git-deleted;
+                visible: line.change == 3;
             }
 
             // Steady like the primary caret.
@@ -222,6 +262,91 @@ export component EditorSurface inherits Rectangle {
         }
         double-clicked => {
             root.double-clicked(self.mouse-x, self.mouse-y);
+        }
+    }
+
+    // The shown change: above the TouchArea, so its clicks stay its own.
+    // It scrolls with the lines.
+    if root.hunk.shown: Rectangle {
+        x: Theme.gutter-width;
+        y: root.offset-y + root.hunk.y;
+        width: min(root.width - Theme.gutter-width - 16px, 640px);
+        height: popup.preferred-height;
+        background: Theme.chrome-background;
+        border-width: 1px;
+        border-color: Theme.chrome-border;
+        border-radius: 4px;
+
+        // Clicks inside the popover don't reach the text below it.
+        TouchArea {
+            mouse-cursor: default;
+        }
+
+        popup := VerticalLayout {
+            padding: 6px;
+            spacing: 4px;
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                Text {
+                    text: "Rollback";
+                    color: Theme.link;
+                    font-size: Theme.chrome-font-size;
+                    vertical-alignment: center;
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.rollback-hunk();
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.hunk.head.length == 0 ? "Added lines, not in HEAD" : "At HEAD:";
+                    color: Theme.chrome-muted;
+                    font-size: Theme.chrome-font-size;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                Text {
+                    text: "×";
+                    color: Theme.chrome-muted;
+                    font-size: Theme.chrome-font-size;
+                    vertical-alignment: center;
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.hide-hunk();
+                        }
+                    }
+                }
+            }
+
+            if root.hunk.head.length > 0: Rectangle {
+                background: Theme.git-head-background;
+                clip: true;
+
+                VerticalLayout {
+                    for line in root.hunk.head: Text {
+                        height: Theme.line-height;
+                        vertical-alignment: center;
+                        text: line;
+                        color: Theme.editor-foreground;
+                        font-family: Theme.editor-font;
+                        font-size: Theme.editor-font-size;
+                    }
+                }
+            }
+
+            if root.hunk.more != "": Text {
+                text: root.hunk.more;
+                color: Theme.chrome-muted;
+                font-size: Theme.chrome-font-size;
+            }
         }
     }
 }

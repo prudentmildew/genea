@@ -10,15 +10,18 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::{EditorView, Highlight, HighlightSpan, Severity, grid_pieces};
+use genea_core::{EditorView, Highlight, HighlightSpan, HunkView, LineChange, Severity, grid_pieces};
 use slint::{Model, ModelRc, VecModel};
 use unicode_width::UnicodeWidthChar;
 
-use crate::{Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry};
+use crate::{HunkPopup, Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry};
 
 /// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
 /// ui/theme.slint.
 pub const LINE_HEIGHT: f32 = 15.6;
+
+/// Lines at HEAD a change's popover lists; it says how many more there are.
+const MAX_HUNK_LINES: usize = 20;
 
 /// Line `y`s are relative to a base line so `f32` stays exact deep into a
 /// huge file. The base moves (and every slot is rebuilt) past this distance.
@@ -35,6 +38,8 @@ struct SlotState {
     highlights: Vec<HighlightSpan>,
     /// Display columns of the carets on the line other than the primary.
     carets: Vec<usize>,
+    /// The git gutter marker, as `Line.change` has it.
+    change: i32,
     /// The cell width the runs, selections and carets were laid out with.
     char_width: f32,
 }
@@ -47,6 +52,8 @@ pub struct Surface {
     base: usize,
     rows: f64,
     scroll_top: f64,
+    /// The shown git change and the base line, as last pushed.
+    hunk: Option<(HunkView, usize)>,
 }
 
 impl Surface {
@@ -57,7 +64,7 @@ impl Surface {
         } else {
             window.set_right_lines(ModelRc::from(lines.clone()));
         }
-        Surface { pane, lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0 }
+        Surface { pane, lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0, hunk: None }
     }
 
     /// The viewport's height in rows, if it changed since the last call.
@@ -118,6 +125,11 @@ impl Surface {
                         .filter(|c| c.line == line.index && **c != editor.caret)
                         .map(|c| c.column)
                         .collect(),
+                    change: editor.gutter.iter().find(|m| m.line == line.index).map_or(0, |m| match m.change {
+                        LineChange::Added => 1,
+                        LineChange::Modified => 2,
+                        LineChange::Deleted => 3,
+                    }),
                     char_width,
                 });
             }
@@ -169,6 +181,7 @@ impl Surface {
                             s.carets.iter().map(|&column| column as f32 * char_width).collect::<Vec<_>>(),
                         ))
                     },
+                    change: s.change,
                 },
             };
             self.lines.set_row_data(slot, row);
@@ -187,7 +200,56 @@ impl Surface {
             geometry.caret_y = ((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32;
         }
         set_geometry(window, self.pane, geometry);
+        self.sync_hunk(window, editor.and_then(|e| e.hunk.as_ref()));
     }
+
+    /// Shows or hides the git change's popover, below the change's lines
+    /// (or on the edge where lines were deleted), when it changed.
+    fn sync_hunk(&mut self, window: &ProjectWindow, hunk: Option<&HunkView>) {
+        let wanted = hunk.map(|h| (h.clone(), self.base));
+        if wanted == self.hunk {
+            return;
+        }
+        let popup = match hunk {
+            None => HunkPopup::default(),
+            Some(hunk) => {
+                let below = if hunk.lines.is_empty() { hunk.lines.start } else { hunk.lines.end };
+                let lines: Vec<&str> = if hunk.head.is_empty() { Vec::new() } else { hunk.head.split('\n').collect() };
+                let head: Vec<slint::SharedString> =
+                    lines.iter().take(MAX_HUNK_LINES).map(|line| expand_tabs(line).into()).collect();
+                let more = lines.len().saturating_sub(MAX_HUNK_LINES);
+                HunkPopup {
+                    shown: true,
+                    y: (below as f64 - self.base as f64) as f32 * LINE_HEIGHT,
+                    head: ModelRc::new(VecModel::from(head)),
+                    more: if more == 0 { "".into() } else { format!("{more} more lines at HEAD").into() },
+                }
+            }
+        };
+        if self.pane == 0 {
+            window.set_left_hunk(popup);
+        } else {
+            window.set_right_hunk(popup);
+        }
+        self.hunk = wanted;
+    }
+}
+
+/// A line with its tabs expanded to the grid's tab stops (every 4 columns).
+fn expand_tabs(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut column = 0;
+    for c in line.chars() {
+        if c == '\t' {
+            let next = (column / 4 + 1) * 4;
+            out.extend(std::iter::repeat_n(' ', next - column));
+            column = next;
+        } else {
+            out.push(c);
+            column += c.width().unwrap_or(0);
+        }
+    }
+    out
 }
 
 /// Sets a pane's geometry; Slint skips an equal value, so nothing repaints.

@@ -31,6 +31,13 @@ export global Theme {
     // Underlines and markers for problems.
     out property <color> error: root.dark ? #f85149 : #cf222e;
     out property <color> warning: root.dark ? #d29922 : #9a6700;
+    // Git gutter markers (ticket #56): lines added, modified and deleted
+    // against HEAD.
+    out property <color> git-added: root.dark ? #3fb950 : #1a7f37;
+    out property <color> git-modified: root.dark ? #58a6ff : #0969da;
+    out property <color> git-deleted: root.dark ? #f85149 : #cf222e;
+    // The background of a change's lines at HEAD in its popover.
+    out property <color> git-head-background: root.dark ? #2d1517 : #ffebe9;
 
     out property <color> chrome-background: root.dark ? #161b22 : #f6f8fa;
     out property <color> chrome-border: root.dark ? #30363d : #d0d7de;
