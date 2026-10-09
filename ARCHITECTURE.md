@@ -85,6 +85,20 @@ use, and nothing else:
   applied when the rows are built, so `exclude` changes need no disk read).
   The finder and search should take their file list from here and hide the
   same paths; hidden files still open with `OpenFile`.
+- **Git** (`src/git.rs`, ticket #56): read-only, through `gix` on
+  background jobs (each read opens the repository with `gix::discover`
+  from the root, so a project inside a bigger repository works too). HEAD
+  is read at open and again when the watcher sees `.git/HEAD`, `refs/` or
+  `packed-refs` change (or `.git` appear), with every open file's text at
+  HEAD (its *base*); a newly opened file reads its own. Gutter markers
+  (`EditorView::gutter`) come from a line diff (`imara-diff`) of the base
+  and a rope snapshot, one job per file at a time, restarted when it lands
+  if the buffer's version moved on, like the syntax parse.
+  `Command::ShowHunk`/`RollbackHunk` act on the hunks only while they are
+  up to date with the buffer; Rollback is an ordinary undoable edit
+  (`Editor::replace_lines`). A repository whose git folder is outside the
+  project isn't watched. Tests make repositories with the `git` binary
+  (`tests/repository.rs`).
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
