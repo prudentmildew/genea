@@ -14,9 +14,9 @@ use std::{
 };
 
 use genea_core::{
-    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, LeftColumnView, MAX_SEARCH_MATCHES, PaneView,
-    ProblemItem, ProjectId, SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme,
-    ToolchainOption, Workbench,
+    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView, LeftColumnView,
+    MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId, SearchFile, SearchView, Severity, TerminalPosition,
+    TextPosition, Theme as ConfigTheme, ToolchainOption, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -24,8 +24,11 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    FileEntry, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app, dialogs, fonts,
-    keys::Modifiers, links, surface::Surface,
+    FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app,
+    dialogs, fonts,
+    keys::Modifiers,
+    links,
+    surface::Surface,
     terminal::{self, TerminalSurface},
 };
 
@@ -72,6 +75,10 @@ pub struct WindowController {
     /// the user saw and an unchanged list isn't pushed again.
     picker_options: Vec<ToolchainOption>,
     picker_rows: Rc<VecModel<PickerRow>>,
+    /// The finder's mode while it is open, and its results as last pushed.
+    finder_mode: Option<FinderMode>,
+    finder_items: Vec<FinderItem>,
+    finder_rows: Rc<VecModel<FinderRow>>,
 }
 
 /// How far left of the text a press still hits a git gutter marker: its
@@ -96,6 +103,8 @@ impl WindowController {
         window.set_files(ModelRc::from(file_rows.clone()));
         let search = SearchResults::default();
         window.set_search_rows(ModelRc::from(search.rows.clone()));
+        let finder_rows = Rc::new(VecModel::default());
+        window.set_finder_items(ModelRc::from(finder_rows.clone()));
         Ok(WindowController {
             key,
             window,
@@ -118,6 +127,9 @@ impl WindowController {
             picker_open: false,
             picker_options: Vec::new(),
             picker_rows,
+            finder_mode: None,
+            finder_items: Vec::new(),
+            finder_rows,
         })
     }
 
@@ -349,6 +361,7 @@ impl WindowController {
         }
         window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
         window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
+        window.set_status_indentation(view.status.indentation.clone().unwrap_or_default().into());
         let action = view.notices.last().and_then(|n| n.action.clone());
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
@@ -423,10 +436,16 @@ impl WindowController {
         if let Some(editor) = editor.filter(|e| !e.lines.is_empty()) {
             crate::journal::mark_shown(&editor.path);
         }
-        if view.focused_pane != self.focused_pane || view.terminal.focused != self.terminal_focused {
+        // The finder takes the keyboard focus when it opens, from the
+        // terminal too; when it closes, the focused pane or the terminal
+        // gets it back.
+        let finder_closed = self.sync_finder(view.finder.as_ref());
+        if view.focused_pane != self.focused_pane || view.terminal.focused != self.terminal_focused || finder_closed {
             self.focused_pane = view.focused_pane;
             self.terminal_focused = view.terminal.focused;
-            window.invoke_refocus();
+            if view.finder.is_none() {
+                self.window.invoke_refocus();
+            }
         }
 
         if let Some(prompt) = &view.close_prompt
@@ -438,6 +457,52 @@ impl WindowController {
                 with_app(move |app| app.resolve_close(key, choice))
             });
         }
+    }
+
+    /// Shows the finder overlay as the core has it. Returns whether it just
+    /// closed, so the editor takes the keyboard back.
+    fn sync_finder(&mut self, finder: Option<&FinderView>) -> bool {
+        let window = &self.window;
+        let Some(finder) = finder else {
+            window.set_finder_open(false);
+            return self.finder_mode.take().is_some();
+        };
+        window.set_finder_open(true);
+        window.set_finder_title(finder_title(finder.mode).into());
+        // The query is the TextInput's own text; set it only when the core's
+        // differs, i.e. when a finder (re)opens empty.
+        if window.get_finder_query() != finder.query.as_str() {
+            window.set_finder_query(finder.query.as_str().into());
+        }
+        if self.finder_mode != Some(finder.mode) {
+            self.finder_mode = Some(finder.mode);
+            window.invoke_focus_finder();
+        }
+        if finder.items != self.finder_items {
+            let rows: Vec<FinderRow> = finder
+                .items
+                .iter()
+                .map(|item| FinderRow {
+                    label: item.label.as_str().into(),
+                    detail: item.detail.as_str().into(),
+                    shortcut: item.shortcut.as_deref().unwrap_or_default().into(),
+                })
+                .collect();
+            for row in &rows {
+                fonts::prepare(&row.label);
+                fonts::prepare(&row.detail);
+            }
+            self.finder_rows.set_vec(rows);
+            self.finder_items = finder.items.clone();
+        }
+        window.set_finder_selected(finder.selected.map_or(-1, |i| i as i32));
+        false
+    }
+
+    /// A finder result was clicked: choose it.
+    pub fn click_finder_item(&mut self, workbench: &mut Workbench, index: usize) {
+        workbench.dispatch(self.project, Command::SelectFinderItem(index));
+        self.dispatch(workbench, Command::AcceptFinder);
     }
 
     /// The close prompt was answered.
@@ -573,6 +638,16 @@ fn search_status(search: &SearchView) -> String {
         format!("{counts} (stopped at {MAX_SEARCH_MATCHES})")
     } else {
         counts
+    }
+}
+
+/// The finder's heading.
+fn finder_title(mode: FinderMode) -> &'static str {
+    match mode {
+        FinderMode::Files => "Go to File",
+        FinderMode::RecentFiles => "Recent Files",
+        FinderMode::Actions => "Find Action",
+        FinderMode::Everywhere => "Search Everywhere",
     }
 }
 

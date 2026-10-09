@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::{
     problems::TextPosition,
     templates::{PackageManagerPin, RuntimePin},
-    view::{LeftColumnView, ToolchainPickerKind},
+    view::{FinderMode, LeftColumnView, ToolchainPickerKind},
 };
 
 /// Something the user does in a project's window.
@@ -114,6 +114,16 @@ pub enum Command {
     Delete(CaretMove),
     /// Return: breaks the line at the caret with the file's line ending.
     NewLine,
+    /// Tab: with nothing selected, types the file's indentation at each
+    /// caret (a tab, or spaces up to the next multiple of its width); with a
+    /// selection, indents the selected lines by one level. The indentation
+    /// is what `.oxfmtrc.json` and `.editorconfig` resolve to (ticket #26),
+    /// shown in `StatusBar::indentation`.
+    Indent,
+    /// ⇧Tab: takes one level of indentation off each line the carets and
+    /// selections are on (a leading tab, or leading spaces back to the
+    /// previous multiple of the indentation's width).
+    Outdent,
     /// ⌘C: puts the selection on the system clipboard. Does nothing with
     /// nothing selected.
     Copy,
@@ -276,6 +286,25 @@ pub enum Command {
     /// streaming into `ProjectView::search`. An empty query clears the
     /// results. A click on a result opens it with `OpenFileAt`.
     Search(SearchQuery),
+
+    // The fuzzy finder (ticket #33): `ProjectView::finder`.
+    /// Opens the finder in a mode with an empty query, replacing a finder
+    /// that is open.
+    OpenFinder(FinderMode),
+    /// The finder's query changed (typing in it). Results are matched in
+    /// the background: `settle` (tests) or the change notification (the
+    /// app) says when they are in.
+    SetFinderQuery(String),
+    /// ↑ and ↓ in the finder: moves the selection by a number of results
+    /// (negative is up), wrapping around at either end.
+    MoveFinderSelection(isize),
+    /// Selects a result by its index (the pointer over it).
+    SelectFinderItem(usize),
+    /// Return, or a click: closes the finder and opens the selected file
+    /// or runs the selected action.
+    AcceptFinder,
+    /// Esc: closes the finder.
+    CloseFinder,
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.

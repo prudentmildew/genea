@@ -95,8 +95,10 @@ use, and nothing else:
   `Arc` so an unchanged tree costs nothing to snapshot) is built from it on
   the main thread, minus the config's `exclude` (a `.gitignore` matcher
   applied when the rows are built, so `exclude` changes need no disk read).
-  The finder should take its file list from here and hide the same paths;
-  hidden files still open with `OpenFile`.
+  The finder takes its file list from here and hides the same paths;
+  hidden files still open with `OpenFile`. `FileIndex::file_list` is that
+  list (relative paths, `exclude` applied, cached until
+  `FileIndex::version` changes).
 - **Git** (`src/git.rs`, ticket #56): read-only, through `gix` on
   background jobs (each read opens the repository with `gix::discover`
   from the root, so a project inside a bigger repository works too). HEAD
@@ -124,6 +126,21 @@ use, and nothing else:
   case-insensitive). `ProjectView::search` holds the query, the results
   (`Arc`, like the tree) and the state; a search stops at
   `MAX_SEARCH_MATCHES`. It searches what is on disk, not unsaved edits.
+- **The finder** (`src/finder.rs` for matching, `src/project/finder.rs` for
+  the project's side, ticket #33): `Command::OpenFinder(FinderMode)` opens
+  the overlay (`ProjectView::finder`); each `SetFinderQuery` starts a
+  background job that matches with `nucleo-matcher` (generation counter for
+  stale results). After every Apply, `Workbench::run` calls
+  `Project::refresh_finder`, which matches again if the file index's version
+  moved, so results follow files on disk and `exclude`. Recent files
+  (`Project::recent_files`, in memory) are recorded when a file opens or
+  its tab is selected. Actions (`src/action.rs`) are the commands a user
+  can run by name: a new menu item or shortcut that is a core command gets
+  an `Action` variant with its name and shortcut label (keep the labels in
+  step with `genea-view`'s menus and `src/keys.rs`). A file chosen takes
+  the focus from the terminal, as `OpenFile` does; editing actions
+  (`Action::edits`) do what the Edit menu does while the terminal has it.
+  Symbols (#47) add a `FinderItemKind` and a mode.
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -185,10 +202,10 @@ element's tags (HTML, JSX); comments, Markdown sections and code blocks, and
 YAML pairs fold too. `editor/structural.rs` turns the answers into edits,
 carets and view state:
 
-- Return (`Editor::new_line`) indents one `INDENT_UNIT` deeper inside a
-  block and splits a bracket pair. The tree may be a parse behind, so an
-  opening bracket at the end of the line (outside strings and comments)
-  counts too. #26 replaces `INDENT_UNIT` with the resolved indentation.
+- Return (`Editor::new_line`) indents one level of the file's
+  indentation (below) deeper inside a block and splits a bracket pair. The
+  tree may be a parse behind, so an opening bracket at the end of the line
+  (outside strings and comments) counts too.
 - ⌘/ (`ToggleLineComment`) uses `Language::comment`; ⌥↑/⌥↓ walk nodes, with
   the shrink history in the tab's `Cursor`; `EditorView::brackets` holds the
   bracket at the caret and its match.
@@ -200,6 +217,27 @@ carets and view state:
 - Edits that keep selections where they were (comments) go through
   `edit_text`; edits that put each caret somewhere in its replacement go
   through `replace_placing`.
+
+### Indentation
+
+Ticket #26 (`src/indentation.rs`, `editor/indent.rs`). A file's `useTabs`
+and `tabWidth` are resolved the way Oxfmt resolves them, with the crates
+Oxfmt uses (`editorconfig-parser`, `fast-glob`): `.oxfmtrc.json` (or
+`.oxfmtrc.jsonc`) overrides that match the file, in order, over its root
+options; then the nearest `.editorconfig`'s matching sections fill in what
+is unset (`indent_size` only when indenting with spaces, else `tab_width`);
+then 2 spaces. Both files are found from the project root upwards, like
+Oxfmt from its working directory, and one Oxfmt would reject counts as
+none. Genea never reads Prettier or Biome config and never guesses from a
+file's contents.
+
+`IndentationConfig::read` runs in a job when the project opens and again
+when the watcher sees a root `.oxfmtrc.json(c)` or `.editorconfig` change
+(folders above the root aren't watched). Resolving a file is cheap and
+needs no disk, so `Project::indentation_of(path)` is called per keystroke
+and per view: open files follow a config edit without a reopen. It drives
+`Command::Indent` (Tab), `Command::Outdent` (⇧Tab), Return's auto-indent
+and `StatusBar::indentation`. Tabs are still drawn 4 columns wide.
 
 ### Large files
 
