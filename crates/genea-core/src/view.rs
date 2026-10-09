@@ -439,14 +439,19 @@ pub struct RecentProject {
     pub name: String,
 }
 
-/// The terminal pane next to the editor (ticket #38): one shell, drawn on a
-/// grid like the editor.
+/// The terminal pane next to the editor (tickets #38 and #39): tabs of
+/// shells, the active one drawn on a grid like the editor. The fields after
+/// `active` describe the active tab (blank while the pane has no tabs).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalView {
     /// The pane is showing; ⌥F12 collapses it.
     pub visible: bool,
     /// Keys and text go to the terminal, not the editor.
     pub focused: bool,
+    /// The tabs, left to right. Empty once the last one is closed.
+    pub tabs: Vec<TerminalTabView>,
+    /// The index of the tab the pane shows.
+    pub active: usize,
     pub status: TerminalStatus,
     /// The title the program set (OSC 0 or 2), else the shell's name.
     pub title: String,
@@ -470,6 +475,14 @@ pub struct TerminalView {
     pub mouse_reporting: bool,
     /// The IME composition being typed (a dead key), drawn at the cursor.
     pub preedit: Option<String>,
+}
+
+/// A terminal tab, as its header shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalTabView {
+    /// The title the program set, else the shell's name.
+    pub title: String,
+    pub status: TerminalStatus,
 }
 
 /// Whether the terminal's shell runs.

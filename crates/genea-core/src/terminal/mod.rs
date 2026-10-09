@@ -1,10 +1,13 @@
-//! The terminal (ticket #38): one shell per project, on a PTY from the
-//! host, emulated by `alacritty_terminal`.
+//! The terminal (tickets #38 and #39): a pane of tabs, each a shell on a
+//! PTY from the host, emulated by `alacritty_terminal`.
 //!
-//! The shell is the user's `$SHELL` as a login shell, in the project root,
+//! Each shell is the user's `$SHELL` as a login shell, in the project root,
 //! with the project environment and `TERM=xterm-256color`. It starts once
 //! that environment is final: the login-shell capture has landed and the
 //! toolchain has settled (so the pinned tools are on its PATH).
+//!
+//! `path:line:col` references in a tab's output (`links.rs`) are found
+//! when its grid is copied, relative to the tab's directory.
 //!
 //! Threads (spec #19, Threading): a reader thread reads the PTY and parses
 //! the output into the [`Term`] under a lock; a writer thread writes typed
@@ -46,7 +49,7 @@ use crate::{
     command::{Command, Modifiers, TerminalKey},
     environment::ProcessEnv,
     jobs::Jobs,
-    view::{TerminalLine, TerminalStatus, TerminalView},
+    view::{TerminalLine, TerminalStatus, TerminalTabView, TerminalView},
     workbench::{Core, ProjectId},
 };
 
@@ -63,25 +66,43 @@ const PARSE_CHUNK: usize = 16 * 1024;
 /// The shell when the environment names none: macOS's default.
 const DEFAULT_SHELL: &str = "/bin/zsh";
 
+/// The terminal pane: its tabs, and what they share (the grid's size, the
+/// focus, the IME composition).
 pub(crate) struct Terminal {
     project: ProjectId,
+    /// The project root: the shells' directory.
+    root: PathBuf,
     size: Size,
-    shell: Shell,
-    /// Bumped by every start, so a stale session's results are dropped.
-    generation: u64,
-    /// What the terminal showed when last copied from the session; copied
-    /// again when read after new output (see [`Terminal::screen`]).
-    screen: RefCell<Screen>,
-    /// The running shell's file name, the title until the program sets one.
-    shell_name: String,
-    /// The title the program set.
-    title: Option<String>,
+    /// Left to right. Empty once the user closed the last one; showing the
+    /// pane again opens a new one.
+    tabs: Vec<Tab>,
+    /// The index of the tab the pane shows.
+    active: usize,
+    /// Numbers every start of a shell, so a stale session's results are
+    /// dropped and each result finds its tab.
+    sessions: u64,
     /// The pane is showing.
     visible: bool,
     /// The pane has the keyboard focus.
     focused: bool,
     /// The IME composition being typed.
     preedit: Option<String>,
+}
+
+/// One tab: a shell and what it shows.
+struct Tab {
+    /// The folder its output's relative paths are relative to.
+    directory: PathBuf,
+    shell: Shell,
+    /// The number of the shell's latest start (see `Terminal::sessions`).
+    session: u64,
+    /// What the tab showed when last copied from the session; copied again
+    /// when read after new output (see [`Tab::screen`]).
+    screen: RefCell<Screen>,
+    /// The running shell's file name, the title until the program sets one.
+    shell_name: String,
+    /// The title the program set.
+    title: Option<String>,
 }
 
 enum Shell {
@@ -225,154 +246,96 @@ impl Drop for Started {
 }
 
 impl Terminal {
-    pub(crate) fn new(project: ProjectId) -> Self {
-        let screen = Screen {
-            lines: blank_lines(DEFAULT_SIZE),
-            cursor: None,
-            history: 0,
-            scrolled_back: 0,
-            mode: TermMode::empty(),
-        };
-        Terminal {
+    pub(crate) fn new(project: ProjectId, root: PathBuf) -> Self {
+        let mut terminal = Terminal {
             project,
+            root,
             size: DEFAULT_SIZE,
-            shell: Shell::Waiting,
-            generation: 0,
-            screen: RefCell::new(screen),
-            shell_name: String::new(),
-            title: None,
+            tabs: Vec::new(),
+            active: 0,
+            sessions: 0,
             visible: true,
             focused: false,
             preedit: None,
-        }
+        };
+        terminal.add_tab();
+        terminal
     }
 
-    /// Whether the terminal waits for the project environment to start its
-    /// shell.
-    pub(crate) fn is_waiting(&self) -> bool {
-        matches!(self.shell, Shell::Waiting)
-    }
-
-    /// Starts the shell in the background with `env`, the project's
-    /// environment.
-    pub(crate) fn start(&mut self, env: ProcessEnv, host: SharedHost, jobs: &Jobs) {
-        self.generation += 1;
-        self.shell = Shell::Starting;
-        let (generation, id, size) = (self.generation, self.project, self.size);
-        jobs.spawn("start the terminal's shell", move || {
-            // The login shell's own SHELL, else the one it was started as.
-            let launch = host.launch_environment();
-            let launch_shell = launch.iter().rev().find(|(key, _)| key == "SHELL").map(|(_, value)| value.as_os_str());
-            let shell = env.var("SHELL").or(launch_shell).filter(|s| !s.is_empty()).unwrap_or(OsStr::new(DEFAULT_SHELL));
-            let shell = PathBuf::from(shell);
-            let mut spec = ProcessSpec::new(&shell).arg("-l").env("TERM", "xterm-256color").env("COLORTERM", "truecolor");
-            // Apps started from Finder have no locale; shells then mangle
-            // anything but ASCII.
-            if ["LANG", "LC_ALL", "LC_CTYPE"].iter().all(|key| env.var(key).is_none()) {
-                spec = spec.env("LANG", "en_US.UTF-8");
-            }
-            let spec = env.apply(spec);
-            let started = host.ptys().spawn(&spec, size.into()).map(|pty| Started(Some(pty)));
-            Box::new(move |core: &mut Core| {
-                let jobs = core.jobs.clone();
-                if let Some(project) = core.project_mut(id) {
-                    project.terminal.started(generation, shell, started, &jobs);
-                }
-            })
+    /// Adds a tab, waiting for the project environment to start its shell,
+    /// and shows it.
+    fn add_tab(&mut self) {
+        self.tabs.push(Tab {
+            directory: self.root.clone(),
+            shell: Shell::Waiting,
+            session: 0,
+            screen: RefCell::new(Screen::blank(self.size)),
+            shell_name: String::new(),
+            title: None,
         });
+        self.show_tab(self.tabs.len() - 1);
     }
 
-    fn started(&mut self, generation: u64, shell: PathBuf, started: io::Result<Started>, jobs: &Jobs) {
-        if generation != self.generation {
-            return;
+    /// Makes another tab the active one. A program that asked hears that
+    /// its tab lost or gained the focus.
+    fn show_tab(&mut self, index: usize) {
+        if self.focused {
+            self.report_focus(b"\x1b[O");
         }
-        let pty = match started {
-            Ok(mut started) => started.0.take().expect("taken once"),
-            Err(error) => {
-                self.shell = Shell::Failed(format!("Couldn't start your shell ({}): {error}", shell.display()));
-                return;
-            }
-        };
-        let Pty { output, input, control } = pty;
-        let control: Arc<dyn PtyControl> = Arc::from(control);
-        let (to_pty, from_core) = mpsc::channel();
-        let config = Config { scrolling_history: SCROLLBACK, ..Config::default() };
-        let requests = Arc::new(Mutex::new(Requests::default()));
-        let size = Arc::new(Mutex::new(self.size));
-        let listener = Listener { to_pty: to_pty.clone(), requests: requests.clone(), size: size.clone() };
-        let term = Arc::new(Mutex::new(Term::new(config, &self.size, listener)));
-        let dirty = Arc::new(AtomicBool::new(true));
+        self.active = index;
+        self.preedit = None;
+        if self.focused {
+            self.report_focus(b"\x1b[I");
+        }
+    }
 
-        let writer_control = control.clone();
-        std::thread::Builder::new()
-            .name("genea: terminal input".into())
-            .spawn(move || write_pty(input, writer_control.as_ref(), from_core))
-            .expect("spawn the terminal's writer");
-        let reader = Reader {
-            output,
-            term: term.clone(),
-            control: control.clone(),
-            dirty: dirty.clone(),
-            requests: requests.clone(),
-            jobs: jobs.clone(),
-            project: self.project,
-            generation,
-        };
-        std::thread::Builder::new()
-            .name("genea: terminal output".into())
-            .spawn(move || reader.run())
-            .expect("spawn the terminal's reader");
-        self.shell_name = shell.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-        self.title = None;
-        self.shell = Shell::Running(Session { term, to_pty, control, dirty, requests, size });
+    /// Whether a tab waits for the project environment to start its shell.
+    pub(crate) fn is_waiting(&self) -> bool {
+        self.tabs.iter().any(|tab| matches!(tab.shell, Shell::Waiting))
+    }
+
+    /// Starts the waiting tabs' shells in the background with `env`, the
+    /// project's environment.
+    pub(crate) fn start(&mut self, env: ProcessEnv, host: SharedHost, jobs: &Jobs) {
+        for index in 0..self.tabs.len() {
+            if matches!(self.tabs[index].shell, Shell::Waiting) {
+                self.sessions += 1;
+                let tab = &mut self.tabs[index];
+                tab.session = self.sessions;
+                tab.start(self.project, self.size, env.clone(), host.clone(), jobs);
+            }
+        }
+    }
+
+    /// The tab running the shell with this session number.
+    fn session_tab(&mut self, session: u64) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|tab| tab.session == session)
+    }
+
+    fn started(&mut self, session: u64, shell: PathBuf, started: io::Result<Started>, jobs: &Jobs) {
+        let (project, size) = (self.project, self.size);
+        if let Some(tab) = self.session_tab(session) {
+            tab.started(project, size, shell, started, jobs);
+        }
     }
 
     /// New output was parsed: do what the program asked. The grid is
     /// copied when view state is next read.
-    fn output_arrived(&mut self, generation: u64, host: &dyn Host) {
-        if generation != self.generation {
-            return;
-        }
-        let Shell::Running(session) = &self.shell else { return };
-        let requests = std::mem::take(&mut *session.requests.lock().unwrap());
-        if let Some(title) = requests.title {
-            self.title = title;
-        }
-        if let Some(text) = requests.copy {
-            host.clipboard().write_text(&text);
+    fn output_arrived(&mut self, session: u64, host: &dyn Host) {
+        if let Some(tab) = self.session_tab(session) {
+            tab.output_arrived(host);
         }
     }
 
     /// The shell's side of the PTY closed: it exited.
-    fn exited(&mut self, generation: u64, exit: Exit) {
-        if generation != self.generation {
-            return;
+    fn exited(&mut self, session: u64, exit: Exit) {
+        if let Some(tab) = self.session_tab(session) {
+            tab.exited(exit);
         }
-        // The last screen stays.
-        drop(self.screen());
-        self.shell = Shell::Exited(exit);
-        self.screen.get_mut().cursor = None;
     }
 
-    /// What the terminal shows, copied from the emulator if it changed
-    /// since the last copy.
-    fn screen(&self) -> Ref<'_, Screen> {
-        if let Shell::Running(session) = &self.shell
-            // Cleared before the copy: output parsed after it wakes the
-            // main thread again.
-            && session.dirty.swap(false, Ordering::SeqCst)
-        {
-            let term = session.term.lock().unwrap();
-            *self.screen.borrow_mut() = grid::snapshot(&term);
-        }
-        self.screen.borrow()
-    }
-
-    /// The emulator changed on the main thread (a resize, a scroll).
-    fn touched(&self) {
-        if let Shell::Running(session) = &self.shell {
-            session.dirty.store(true, Ordering::SeqCst);
-        }
+    fn active_tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.active)
     }
 
     /// A terminal command from the user.
@@ -383,16 +346,19 @@ impl Terminal {
                     self.visible = false;
                     self.unfocus();
                 } else {
-                    self.visible = true;
-                    self.focus();
+                    self.show();
                 }
             }
-            Command::FocusTerminal => {
-                self.visible = true;
-                self.focus();
+            Command::FocusTerminal => self.show(),
+            Command::NewTerminalTab => {
+                self.add_tab();
+                self.show();
             }
-            Command::TerminalKey(TerminalKey::Enter, _) if matches!(self.shell, Shell::Exited(_) | Shell::Failed(_)) => {
-                self.restart()
+            Command::TerminalKey(TerminalKey::Enter, _)
+                if self.active_tab().is_some_and(|tab| matches!(tab.shell, Shell::Exited(_) | Shell::Failed(_))) =>
+            {
+                let size = self.size;
+                self.tabs[self.active].restart(size);
             }
             Command::TerminalPaste => {
                 if let (Some(text), Some(mode)) = (host.clipboard().read_text(), self.mode()) {
@@ -419,6 +385,15 @@ impl Terminal {
         }
     }
 
+    /// Shows the pane and focuses it, with a new tab if it has none.
+    fn show(&mut self) {
+        if self.tabs.is_empty() {
+            self.add_tab();
+        }
+        self.visible = true;
+        self.focus();
+    }
+
     /// The editor takes the keyboard focus.
     pub(crate) fn unfocus(&mut self) {
         if std::mem::replace(&mut self.focused, false) {
@@ -432,41 +407,28 @@ impl Terminal {
         }
     }
 
-    /// Tells a program that asked (focus reporting) about a focus change.
+    /// Tells the active tab's program, if it asked (focus reporting), about
+    /// a focus change.
     fn report_focus(&mut self, report: &[u8]) {
         if self.mode().is_some_and(|mode| mode.contains(TermMode::FOCUS_IN_OUT)) {
             self.send(report.to_vec());
         }
     }
 
-    /// Clears the pane and waits to start a new shell.
-    fn restart(&mut self) {
-        self.shell = Shell::Waiting;
-        let screen = self.screen.get_mut();
-        screen.lines = blank_lines(self.size);
-        screen.cursor = None;
-        self.title = None;
-    }
-
-    /// The modes the running program has set.
+    /// The modes the active tab's program has set.
     fn mode(&self) -> Option<TermMode> {
-        let Shell::Running(session) = &self.shell else { return None };
+        let Shell::Running(session) = &self.active_tab()?.shell else { return None };
         Some(*session.term.lock().unwrap().mode())
     }
 
+    /// Every tab takes the pane's size.
     fn resize(&mut self, size: Size) {
         if size == self.size {
             return;
         }
         self.size = size;
-        match &self.shell {
-            Shell::Running(session) => {
-                *session.size.lock().unwrap() = size;
-                session.term.lock().unwrap().resize(size);
-                let _ = session.to_pty.send(ToPty::Resize(size.into()));
-                self.touched();
-            }
-            _ => self.screen.get_mut().lines.resize_with(size.rows, blank_line),
+        for tab in &mut self.tabs {
+            tab.resize(size);
         }
     }
 
@@ -483,38 +445,40 @@ impl Terminal {
         } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
             let key = if up { TerminalKey::Up } else { TerminalKey::Down };
             self.send(input::key(key, Modifiers::default(), mode).repeat(count));
-        } else if let Shell::Running(session) = &self.shell {
+        } else if let Some(tab) = self.active_tab()
+            && let Shell::Running(session) = &tab.shell
+        {
             session.term.lock().unwrap().scroll_display(Scroll::Delta(-rows));
-            self.touched();
+            tab.touched();
         }
     }
 
-    /// Sends input to the program, scrolling back to the bottom first.
+    /// Sends input to the active tab's program, scrolling back to the
+    /// bottom first.
     fn send(&mut self, bytes: Vec<u8>) {
-        let Shell::Running(session) = &self.shell else { return };
-        if bytes.is_empty() {
-            return;
-        }
-        let _ = session.to_pty.send(ToPty::Input(bytes));
-        if self.screen().scrolled_back > 0 {
-            session.term.lock().unwrap().scroll_display(Scroll::Bottom);
-            self.touched();
+        if let Some(tab) = self.active_tab() {
+            tab.send(bytes);
         }
     }
 
     pub(crate) fn view(&self) -> TerminalView {
-        let status = match &self.shell {
-            Shell::Waiting | Shell::Starting => TerminalStatus::Starting,
-            Shell::Running(_) => TerminalStatus::Running,
-            Shell::Exited(exit) => TerminalStatus::Exited { code: exit.code },
-            Shell::Failed(message) => TerminalStatus::Failed(message.clone()),
+        let tabs = self.tabs.iter().map(|tab| TerminalTabView { title: tab.title(), status: tab.status() }).collect();
+        let active = self.active_tab();
+        let blank;
+        let screen = match active {
+            Some(tab) => tab.screen(),
+            None => {
+                blank = RefCell::new(Screen::blank(self.size));
+                blank.borrow()
+            }
         };
-        let screen = self.screen();
         TerminalView {
             visible: self.visible,
             focused: self.focused,
-            status,
-            title: self.title.clone().unwrap_or_else(|| self.shell_name.clone()),
+            tabs,
+            active: self.active,
+            status: active.map_or(TerminalStatus::Starting, Tab::status),
+            title: active.map(Tab::title).unwrap_or_default(),
             rows: self.size.rows,
             columns: self.size.columns,
             lines: screen.lines.clone(),
@@ -528,6 +492,165 @@ impl Terminal {
     }
 }
 
+impl Tab {
+    /// Starts the shell in the background with `env`, the project's
+    /// environment.
+    fn start(&mut self, project: ProjectId, size: Size, env: ProcessEnv, host: SharedHost, jobs: &Jobs) {
+        self.shell = Shell::Starting;
+        let session = self.session;
+        jobs.spawn("start the terminal's shell", move || {
+            // The login shell's own SHELL, else the one it was started as.
+            let launch = host.launch_environment();
+            let launch_shell = launch.iter().rev().find(|(key, _)| key == "SHELL").map(|(_, value)| value.as_os_str());
+            let shell = env.var("SHELL").or(launch_shell).filter(|s| !s.is_empty()).unwrap_or(OsStr::new(DEFAULT_SHELL));
+            let shell = PathBuf::from(shell);
+            let mut spec = ProcessSpec::new(&shell).arg("-l").env("TERM", "xterm-256color").env("COLORTERM", "truecolor");
+            // Apps started from Finder have no locale; shells then mangle
+            // anything but ASCII.
+            if ["LANG", "LC_ALL", "LC_CTYPE"].iter().all(|key| env.var(key).is_none()) {
+                spec = spec.env("LANG", "en_US.UTF-8");
+            }
+            let spec = env.apply(spec);
+            let started = host.ptys().spawn(&spec, size.into()).map(|pty| Started(Some(pty)));
+            Box::new(move |core: &mut Core| {
+                let jobs = core.jobs.clone();
+                if let Some(project) = core.project_mut(project) {
+                    project.terminal.started(session, shell, started, &jobs);
+                }
+            })
+        });
+    }
+
+    fn started(&mut self, project: ProjectId, size: Size, shell: PathBuf, started: io::Result<Started>, jobs: &Jobs) {
+        if !matches!(self.shell, Shell::Starting) {
+            return;
+        }
+        let pty = match started {
+            Ok(mut started) => started.0.take().expect("taken once"),
+            Err(error) => {
+                self.shell = Shell::Failed(format!("Couldn't start your shell ({}): {error}", shell.display()));
+                return;
+            }
+        };
+        let Pty { output, input, control } = pty;
+        let control: Arc<dyn PtyControl> = Arc::from(control);
+        let (to_pty, from_core) = mpsc::channel();
+        let config = Config { scrolling_history: SCROLLBACK, ..Config::default() };
+        let requests = Arc::new(Mutex::new(Requests::default()));
+        let shared_size = Arc::new(Mutex::new(size));
+        let listener = Listener { to_pty: to_pty.clone(), requests: requests.clone(), size: shared_size.clone() };
+        let term = Arc::new(Mutex::new(Term::new(config, &size, listener)));
+        let dirty = Arc::new(AtomicBool::new(true));
+
+        let writer_control = control.clone();
+        std::thread::Builder::new()
+            .name("genea: terminal input".into())
+            .spawn(move || write_pty(input, writer_control.as_ref(), from_core))
+            .expect("spawn the terminal's writer");
+        let reader = Reader {
+            output,
+            term: term.clone(),
+            control: control.clone(),
+            dirty: dirty.clone(),
+            requests: requests.clone(),
+            jobs: jobs.clone(),
+            project,
+            session: self.session,
+        };
+        std::thread::Builder::new()
+            .name("genea: terminal output".into())
+            .spawn(move || reader.run())
+            .expect("spawn the terminal's reader");
+        self.shell_name = shell.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        self.title = None;
+        self.shell = Shell::Running(Session { term, to_pty, control, dirty, requests, size: shared_size });
+    }
+
+    fn output_arrived(&mut self, host: &dyn Host) {
+        let Shell::Running(session) = &self.shell else { return };
+        let requests = std::mem::take(&mut *session.requests.lock().unwrap());
+        if let Some(title) = requests.title {
+            self.title = title;
+        }
+        if let Some(text) = requests.copy {
+            host.clipboard().write_text(&text);
+        }
+    }
+
+    fn exited(&mut self, exit: Exit) {
+        // The last screen stays.
+        drop(self.screen());
+        self.shell = Shell::Exited(exit);
+        self.screen.get_mut().cursor = None;
+    }
+
+    /// Clears the tab and waits to start a new shell.
+    fn restart(&mut self, size: Size) {
+        self.shell = Shell::Waiting;
+        *self.screen.get_mut() = Screen::blank(size);
+        self.title = None;
+    }
+
+    /// What the tab shows, copied from the emulator if it changed since the
+    /// last copy.
+    fn screen(&self) -> Ref<'_, Screen> {
+        if let Shell::Running(session) = &self.shell
+            // Cleared before the copy: output parsed after it wakes the
+            // main thread again.
+            && session.dirty.swap(false, Ordering::SeqCst)
+        {
+            let term = session.term.lock().unwrap();
+            *self.screen.borrow_mut() = grid::snapshot(&term);
+        }
+        self.screen.borrow()
+    }
+
+    /// The emulator changed on the main thread (a resize, a scroll).
+    fn touched(&self) {
+        if let Shell::Running(session) = &self.shell {
+            session.dirty.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn resize(&mut self, size: Size) {
+        match &self.shell {
+            Shell::Running(session) => {
+                *session.size.lock().unwrap() = size;
+                session.term.lock().unwrap().resize(size);
+                let _ = session.to_pty.send(ToPty::Resize(size.into()));
+                self.touched();
+            }
+            _ => self.screen.get_mut().lines.resize_with(size.rows, blank_line),
+        }
+    }
+
+    /// Sends input to the program, scrolling back to the bottom first.
+    fn send(&self, bytes: Vec<u8>) {
+        let Shell::Running(session) = &self.shell else { return };
+        if bytes.is_empty() {
+            return;
+        }
+        let _ = session.to_pty.send(ToPty::Input(bytes));
+        if self.screen().scrolled_back > 0 {
+            session.term.lock().unwrap().scroll_display(Scroll::Bottom);
+            self.touched();
+        }
+    }
+
+    fn status(&self) -> TerminalStatus {
+        match &self.shell {
+            Shell::Waiting | Shell::Starting => TerminalStatus::Starting,
+            Shell::Running(_) => TerminalStatus::Running,
+            Shell::Exited(exit) => TerminalStatus::Exited { code: exit.code },
+            Shell::Failed(message) => TerminalStatus::Failed(message.clone()),
+        }
+    }
+
+    fn title(&self) -> String {
+        self.title.clone().unwrap_or_else(|| self.shell_name.clone())
+    }
+}
+
 /// The reader thread: PTY output into the emulator, then an Apply.
 struct Reader {
     output: Box<dyn Read + Send>,
@@ -537,14 +660,14 @@ struct Reader {
     requests: Arc<Mutex<Requests>>,
     jobs: Jobs,
     project: ProjectId,
-    generation: u64,
+    session: u64,
 }
 
 impl Reader {
     fn run(mut self) {
         let mut processor: Processor<Unsynchronized> = Processor::new();
         let mut buffer = vec![0; 64 * 1024];
-        let (id, generation) = (self.project, self.generation);
+        let (id, session) = (self.project, self.session);
         loop {
             let n = match self.output.read(&mut buffer) {
                 Ok(0) => break,
@@ -563,7 +686,7 @@ impl Reader {
                 self.jobs.busy().finish(Box::new(move |core| {
                     let host = core.host.clone();
                     if let Some(project) = core.project_mut(id) {
-                        project.terminal.output_arrived(generation, host.as_ref());
+                        project.terminal.output_arrived(session, host.as_ref());
                     }
                 }));
             }
@@ -571,7 +694,7 @@ impl Reader {
         let exit = self.control.wait().unwrap_or(Exit { code: None, signal: None });
         self.jobs.busy().finish(Box::new(move |core| {
             if let Some(project) = core.project_mut(id) {
-                project.terminal.exited(generation, exit);
+                project.terminal.exited(session, exit);
             }
         }));
     }
@@ -590,8 +713,16 @@ fn write_pty(mut input: Box<dyn Write + Send>, control: &dyn PtyControl, from_co
     }
 }
 
-fn blank_lines(size: Size) -> Vec<TerminalLine> {
-    (0..size.rows).map(|_| blank_line()).collect()
+impl Screen {
+    fn blank(size: Size) -> Self {
+        Screen {
+            lines: (0..size.rows).map(|_| blank_line()).collect(),
+            cursor: None,
+            history: 0,
+            scrolled_back: 0,
+            mode: TermMode::empty(),
+        }
+    }
 }
 
 fn blank_line() -> TerminalLine {

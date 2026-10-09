@@ -85,6 +85,7 @@ impl Project {
             id,
             files: FileIndex::new(id, root.clone()),
             git: Git::new(id, root.clone()),
+            terminal: Terminal::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -101,7 +102,6 @@ impl Project {
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
             shown_hunk: None,
-            terminal: Terminal::new(id),
         }
     }
 
@@ -366,7 +366,8 @@ impl Project {
             | Command::TerminalKey(..)
             | Command::ScrollTerminal { .. }
             | Command::TerminalMouse { .. }
-            | Command::TerminalPaste => self.terminal.command(command, host),
+            | Command::TerminalPaste
+            | Command::NewTerminalTab => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);

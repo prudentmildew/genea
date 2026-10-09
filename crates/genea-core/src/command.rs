@@ -252,6 +252,11 @@ pub enum Command {
     /// program that asked for the mouse, in the encoding it chose;
     /// otherwise nothing happens.
     TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
+    // Terminal tabs and links (ticket #39). The commands above act on the
+    // active tab.
+    /// ⌘T in the terminal, or the pane's +: opens a tab with a new shell,
+    /// shows it and focuses the pane.
+    NewTerminalTab,
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.
