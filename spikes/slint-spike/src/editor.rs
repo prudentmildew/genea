@@ -145,6 +145,12 @@ impl Editor {
         }
     }
 
+    /// PROTOTYPE (#18): leave the caret on, for the blink-stop policy.
+    pub fn show_caret(&mut self, window: &EditorWindow) {
+        self.cursor_visible = true;
+        window.set_caret_visible(!self.loading);
+    }
+
     pub fn max_scroll(&self) -> f32 {
         (LINE_HEIGHT * self.rope.len_lines() as f32 - self.viewport_height).max(0.)
     }

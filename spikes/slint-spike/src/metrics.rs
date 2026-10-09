@@ -98,6 +98,19 @@ fn mark(f: impl FnOnce(&mut Log)) {
     });
 }
 
+thread_local! {
+    static VISIBLE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// PROTOTYPE (#18): when AppKit first reports the window visible.
+pub fn mark_visible() {
+    VISIBLE.with(|v| if v.get().is_none() { v.set(Some(Instant::now())) });
+}
+
+pub fn visible() -> Option<Instant> {
+    VISIBLE.with(|v| v.get())
+}
+
 pub fn mark_key() {
     let now = Instant::now();
     mark(|l| l.keys.push(now));

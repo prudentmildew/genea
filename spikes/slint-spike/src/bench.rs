@@ -99,7 +99,14 @@ async fn start() -> Value {
     };
     let first = journal.first_frame().expect("a rendered frame");
     let base = metrics::base();
+    // Content is on screen once both the frame is presented and the window is visible.
+    while metrics::visible().is_none() && Instant::now() < deadline {
+        sleep(Duration::from_millis(10)).await;
+    }
+    let visible = metrics::visible().unwrap_or(first.end);
     json!({
+        "start_to_visible_ms": ms(sys::since_process_start(visible)),
+        "start_to_content_visible_ms": ms(sys::since_process_start(visible.max(first.end))),
         "start_to_first_frame_ms": ms(sys::since_process_start(first.end)),
         "main_to_first_frame_ms": ms(first.end - base),
         "before_first_frame": journal.longest_stall((base, first.end)),

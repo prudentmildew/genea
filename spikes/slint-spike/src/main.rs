@@ -8,6 +8,7 @@
 mod bench;
 mod editor;
 mod metrics;
+mod prewarm;
 mod suite;
 mod sys;
 mod synth;
@@ -25,7 +26,8 @@ pub fn fixture(name: &str) -> PathBuf {
 
 fn trace(what: &str) {
     if std::env::var("SPIKE_TRACE").is_ok() {
-        eprintln!("{:>8.2} ms  {what}", sys::since_process_start(std::time::Instant::now()).as_secs_f64() * 1000.0);
+        let fp = sys::usage(std::process::id() as i32).map_or(0.0, |u| u.footprint_mb);
+        eprintln!("{:>8.2} ms  {fp:>6.1} MB  {what}", sys::since_process_start(std::time::Instant::now()).as_secs_f64() * 1000.0);
     }
 }
 
@@ -53,6 +55,7 @@ pub mod app {
 
 fn main() {
     trace("main");
+    prewarm::start();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |name: &str| {
         args.iter()
@@ -89,6 +92,13 @@ fn run_app(file: PathBuf, bench: Option<(String, Option<PathBuf>)>) {
 
     let window = EditorWindow::new().unwrap();
     trace("window component built");
+    // PROTOTYPE (#18): SPIKE_WINDOW=WxH in points, to see what scales with window size.
+    if let Some((w, h)) = std::env::var("SPIKE_WINDOW").ok().and_then(|v| {
+        let (w, h) = v.split_once('x')?;
+        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    }) {
+        window.window().set_size(slint::LogicalSize::new(w, h));
+    }
     let editor = editor::Editor::new(&window);
     app::init(window.clone_strong(), editor);
 
@@ -103,6 +113,10 @@ fn run_app(file: PathBuf, bench: Option<(String, Option<PathBuf>)>) {
     window.on_viewport_changed(|| app::with(|editor, window| editor.sync(window)));
 
     window.window().on_winit_window_event(|_, event| {
+        if let slint::winit_030::winit::event::WindowEvent::Occluded(false) = event {
+            metrics::mark_visible();
+            trace("visible");
+        }
         if let slint::winit_030::winit::event::WindowEvent::KeyboardInput { event, .. } = event
             && event.state.is_pressed()
         {
@@ -114,9 +128,13 @@ fn run_app(file: PathBuf, bench: Option<(String, Option<PathBuf>)>) {
         window
             .window()
             .set_rendering_notifier(|state, _| match state {
-                RenderingState::BeforeRendering => metrics::mark_before_rendering(),
+                RenderingState::BeforeRendering => {
+                    metrics::mark_before_rendering();
+                    trace("before rendering");
+                }
                 RenderingState::AfterRendering => {
                     metrics::mark_after_rendering();
+                    trace("after rendering");
                     // Benchmark auto-scroll: one step per rendered frame.
                     Timer::single_shot(Duration::ZERO, || {
                         app::with(|editor, window| editor.auto_scroll_step(window))
@@ -127,6 +145,8 @@ fn run_app(file: PathBuf, bench: Option<(String, Option<PathBuf>)>) {
             .unwrap();
     }
 
+    // PROTOTYPE (#18): SPIKE_FILE overrides the benchmark's file.
+    let file = std::env::var_os("SPIKE_FILE").map(PathBuf::from).unwrap_or(file);
     let large = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0)
         > editor::HIGHLIGHT_LIMIT as u64;
     app::with(|editor, window| {
@@ -138,10 +158,21 @@ fn run_app(file: PathBuf, bench: Option<(String, Option<PathBuf>)>) {
     });
     trace("file opened");
 
-    let blink = Timer::default();
+    let blink = std::rc::Rc::new(Timer::default());
     if std::env::var_os("SPIKE_NO_BLINK").is_none() {
         blink.start(TimerMode::Repeated, Duration::from_millis(530), || {
             app::with(|editor, window| editor.blink(window))
+        });
+    }
+    // PROTOTYPE (#18): SPIKE_BLINK_STOP_AFTER=S stops blinking (caret left on) after S seconds,
+    // standing in for "stop blinking after S seconds without input".
+    let blink_stop = Timer::default();
+    if let Some(secs) = std::env::var("SPIKE_BLINK_STOP_AFTER").ok().and_then(|v| v.parse::<f64>().ok()) {
+        let blink = blink.clone();
+        blink_stop.start(TimerMode::SingleShot, Duration::from_secs_f64(secs), move || {
+            blink.stop();
+            app::with(|editor, window| editor.show_caret(window));
+            trace("blink stopped");
         });
     }
 

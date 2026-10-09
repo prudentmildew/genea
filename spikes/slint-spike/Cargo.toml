@@ -18,6 +18,10 @@ libc = "0.2"
 streaming-iterator = "0.1"
 cocoa = "=0.26.0"
 objc = "0.2"
+# PROTOTYPE (#18): the same versions Slint uses, for the floor binary.
+winit = "=0.30.13"
+wgpu = { version = "=30.0.1", default-features = false, features = ["metal"] }
+pollster = "0.4"
 
 [profile.release]
 debug = "limited"
@@ -26,3 +30,9 @@ codegen-units = 1
 
 [build-dependencies]
 slint-build = "=1.18.1"
+
+# PROTOTYPE (#18): env-gated experiments inside Slint, see patches/README.md.
+[patch.crates-io]
+i-slint-common = { path = "patches/i-slint-common" }
+i-slint-renderer-skia = { path = "patches/i-slint-renderer-skia" }
+wgpu-hal = { path = "patches/wgpu-hal" }

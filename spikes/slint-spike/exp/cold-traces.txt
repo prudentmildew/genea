@@ -1,0 +1,32 @@
+== cold trace: baseline
+   38.77 ms     2.2 MB  main
+  312.48 ms     8.5 MB  backend selected
+  313.46 ms     8.5 MB  window component built
+  330.99 ms     9.4 MB  file opened
+  331.04 ms     9.5 MB  shown
+  570.09 ms    23.8 MB  visible
+  574.91 ms   108.1 MB  before rendering
+  614.11 ms   116.1 MB  after rendering
+  663.48 ms   131.0 MB  before rendering
+  664.72 ms   146.4 MB  after rendering
+  "first_draw_ms": 39.2,
+  "start_to_content_visible_ms": 643.71,
+  "start_to_first_frame_ms": 643.71,
+  "start_to_visible_ms": 570.09,
+== cold trace: SPIKE_NO_SYSTEM_FONTS=1 SLINT_DEFAULT_FONT=/System/Library/Fonts/Menlo.ttc
+   65.92 ms     2.2 MB  main
+  234.41 ms     8.4 MB  backend selected
+  235.33 ms     8.4 MB  window component built
+  237.25 ms     8.5 MB  file opened
+  237.29 ms     8.6 MB  shown
+  603.21 ms    23.8 MB  visible
+  608.12 ms   108.0 MB  before rendering
+  645.20 ms   116.1 MB  after rendering
+  711.05 ms   131.1 MB  before rendering
+  712.35 ms   146.4 MB  after rendering
+  776.42 ms   146.5 MB  before rendering
+  776.83 ms   146.5 MB  after rendering
+  "first_draw_ms": 37.08,
+  "start_to_content_visible_ms": 676.42,
+  "start_to_first_frame_ms": 676.42,
+  "start_to_visible_ms": 603.2,

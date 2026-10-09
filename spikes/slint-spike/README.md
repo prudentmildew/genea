@@ -1,5 +1,7 @@
 # Slint spike (PROTOTYPE, throwaway)
 
+> Extended on branch `prototype/slint-budgets` for **Are the start-time and idle-memory budgets achievable, or should they be revised?** (prudentmildew/genea#18). See [Start time and idle memory](#start-time-and-idle-memory-18) below.
+
 Answers **Does Slint meet Genea's budgets?** (prudentmildew/genea#15). It lives only on the `prototype/slint-spike` branch and is never merged. The verdict is recorded on the issue.
 
 It's the GPUI spike (branch `prototype/gpui-spike`) ported to Slint `1.18.1`, using the winit backend and the Skia renderer, which draws to Metal through wgpu 30. It has the same ropey buffer, tree-sitter TypeScript highlighting of the visible lines, one cursor, pixel scrolling and blinking caret. The editor surface is Genea's own (`ui/editor.slint`), not Slint's `TextEdit`. Each highlight run is one Slint `Text`, laid out by Rust on a Menlo monospace grid. Lines sit in a ring of slots (`slot = line % slots`), so scrolling only replaces the slots of lines coming into view. `syntax.rs`, `sys.rs`, `synth.rs`, `suite.rs` and the fixtures are the GPUI spike's, unchanged.
@@ -50,3 +52,42 @@ The verdict and full numbers are on the issue. `results/raw.json` is the unconst
 - **Idle memory** is 112 MB, 65 MB before the second frame: the same shape as GPUI. `footprint` attributes ~83 MB to graphics: ~47 MB GPU-private, 30 MB drawable IOSurfaces and 6 MB IOAccelerator. Setting the `CAMetalLayer` to two drawables (`SPIKE_TWO_DRAWABLES=1`) didn't change it.
 - **Licences**: `cargo deny check licenses` passes. Slint's crates are `GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0`, and only the royalty-free licence is allowed in `deny.toml`. `r-efi` has LGPL only as an OR alternative. There are no MPL exceptions. The prebuilt Skia binary is BSD-3 and includes ICU data (Unicode licence).
 - **Feel**: typing and trackpad scrolling, including momentum, felt native, the same as GPUI (the user's judgement).
+
+## Start time and idle memory (#18)
+
+Branch `prototype/slint-budgets`, Apple M5 MacBook Air, 60 Hz. Warm figures use n = 20, cold figures n = 10 after `purge`. The verdict is on the issue.
+
+### What was added
+
+- `src/bin/floor.rs` gives two floors: `floor winit` is a bare winit window, and `floor wgpu` adds a wgpu Metal surface and clears it once. `floor-appkit/main.swift` is a plain AppKit window (built to `target/release/floor-appkit` with `swiftc -O floor-appkit/main.swift -o target/release/floor-appkit`). Each one prints its milestones in ms since process start, including `visible`, when AppKit first reports the window visible.
+- The spike records `visible` too. The start bench now reports `start_to_content_visible_ms`, the later of the first frame being presented and the window being visible.
+- Experiment knobs: `SPIKE_WINDOW=WxH`, `SPIKE_FILE`, `SPIKE_BLINK_STOP_AFTER=S`, `SPIKE_PREWARM=1` (a CoreText warm-up on a background thread), and the patched crates (`patches/README.md`). With `SPIKE_TRACE=1`, every trace line also prints the footprint.
+- `exp/run.py` (warm or cold starts plus the idle footprint for one configuration), `exp/floors.py` and `exp/cold.sh`. Raw results are in `exp/results.jsonl` and `exp/cold-traces.txt`.
+
+### Start time
+
+| p50 / p95 (ms) | warm | cold (`purge`) |
+|---|---|---|
+| Plain AppKit window visible | 154 / 163 | 620 / 704 |
+| Bare winit window visible | 120 / 127 | 621 / 736 |
+| Raw wgpu, first present | 138 / 147 | 634 / 762 |
+| Spike: content visible | 180–190 / 196–200 | 849 / 952 |
+| Spike without the system-font scan | 157 / 176 | 663 / 742 |
+
+- **The floor is AppKit and WindowServer.** A winit window with nothing drawn becomes visible at ~120 ms warm. In that time, `NSApplication` init takes ~30 ms, launch ~20 ms, window creation ~27 ms, and WindowServer takes ~30 ms to show the window. A plain Swift AppKit app is no faster. `purge` evicts AppKit too (`NSApplication` init goes from ~30 to ~200 ms), so the cold floor is ~620–750 ms.
+- **Slint's system-font scan** (`fontique`, inside `BackendSelector::select`) costs ~25 ms warm and ~185 ms cold. Without it, the spike sits at the cold floor and ~40–50 ms above the warm one.
+- **The first draw takes ~21 ms warm and ~38 ms cold.** About half of it is CoreText rasterizing the first glyphs, mostly a one-time load of font language metadata. A background CoreText warm-up doesn't help, because Skia rasterizes from an in-memory copy of the font, not the system font.
+- **The occlusion gate isn't a lever.** wgpu skips drawing until AppKit reports the window visible. With the gate bypassed, the frame is ready ~35 ms earlier but the window appears ~20 ms later, so content shows up at the same time.
+
+### Idle memory
+
+| Idle footprint | MB |
+|---|---|
+| Bare winit window | 19 |
+| Raw wgpu, one frame presented | 42 |
+| Spike, caret blinking | 111–112 |
+| Spike, caret not blinking (or blink stopped ≥ 1 s ago) | **65–66** |
+
+- **The blink is the miss.** About 45–60 MB of GPU driver memory (`footprint`: "Owned physical footprint (unmapped) (graphics)") stays dirty while frames keep being rendered. About 1 s after the last frame, the driver marks it reclaimable and it drops out of the footprint. A 530 ms blink keeps it resident. With `SPIKE_BLINK_STOP_AFTER=10`, the footprint went 112 → 69 → 65 MB within 10 s of the blink stopping. This memory isn't Skia's resource cache, which holds ~4 MB. Capping or purging that cache did nothing, or made things worse.
+- **Drawables scale with window size**: two drawables take 10, 30 and 57 MB at 600×400, 1200×800 and 1800×1100 pt. Everything else stays flat. Reducing the frame latency to 1 didn't change it.
+- What remains at 66 MB: drawables 30 MB, malloc ~16 MB, graphics ~6 MB, the rest images and data.
