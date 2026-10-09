@@ -301,3 +301,76 @@ impl Downloads for ScriptedDownloads {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Smoke tests of the fakes themselves, so tests built on them can trust them.
+
+    use super::*;
+    use std::io::{BufRead, BufReader, Read};
+
+    #[test]
+    fn the_manual_clock_fires_due_timers_in_order_only_when_advanced() {
+        let host = TestHost::new();
+        let fired = Arc::new(Mutex::new(Vec::new()));
+        for (ms, name) in [(300, "c"), (100, "a"), (200, "b")] {
+            let fired = fired.clone();
+            Host::clock(&host).after(Duration::from_millis(ms), Box::new(move || fired.lock().unwrap().push(name)));
+        }
+        let start = Host::clock(&host).now();
+
+        host.clock().advance(Duration::from_millis(250));
+        assert_eq!(*fired.lock().unwrap(), ["a", "b"]);
+        assert_eq!(Host::clock(&host).now() - start, Duration::from_millis(250));
+        assert_eq!(host.clock().pending_timers(), 1);
+
+        host.clock().advance(Duration::from_millis(50));
+        assert_eq!(*fired.lock().unwrap(), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_scripted_process_talks_over_real_pipes_and_exits_with_its_code() {
+        let host = TestHost::new();
+        host.processes().script("tsc", |spec, mut io| {
+            let mut line = String::new();
+            BufReader::new(&mut io.stdin).read_line(&mut line).unwrap();
+            write!(io.stdout, "{} got {line}", spec.args[0].to_string_lossy()).unwrap();
+            3
+        });
+        let spec = ProcessSpec::new("/project/node_modules/.bin/tsc").arg("--lsp");
+
+        let mut child = Host::processes(&host).spawn(&spec).unwrap();
+        child.stdin.take().unwrap().write_all(b"hello\n").unwrap();
+        let mut out = String::new();
+        child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+
+        assert_eq!(out, "--lsp got hello\n");
+        assert_eq!(child.control.wait().unwrap(), Exit::code(3));
+        assert_eq!(host.processes().spawned(), [spec]);
+    }
+
+    #[test]
+    fn an_unscripted_process_is_not_found() {
+        let host = TestHost::new();
+        let error = Host::processes(&host).spawn(&ProcessSpec::new("node")).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn downloads_answer_from_the_table_or_404() {
+        let host = TestHost::new();
+        host.downloads().serve("https://example.test/a", "body");
+        host.downloads().fail("https://example.test/b", 500);
+
+        let mut sink = Vec::new();
+        assert_eq!(Host::downloads(&host).fetch("https://example.test/a", &mut sink).unwrap(), 4);
+        assert_eq!(sink, b"body");
+        let status = |url| match Host::downloads(&host).fetch(url, &mut Vec::new()) {
+            Err(DownloadError::Status(code)) => code,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(status("https://example.test/b"), 500);
+        assert_eq!(status("https://example.test/missing"), 404);
+        assert_eq!(host.downloads().requests().len(), 3);
+    }
+}
