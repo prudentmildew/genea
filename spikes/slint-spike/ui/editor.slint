@@ -1,0 +1,104 @@
+// PROTOTYPE: the Slint spike's editor surface (prudentmildew/genea#15). Not
+// Slint's TextEdit: one Text item per highlight run, laid out by the Rust side
+// on a monospace grid. Lines live in a ring of slots (slot = line % slots), so
+// scrolling only replaces the slots of lines that come into view.
+
+export struct Run {
+    x: length,
+    text: string,
+    color: color,
+}
+
+export struct Line {
+    y: length,
+    number: string,
+    runs: [Run],
+}
+
+export component EditorWindow inherits Window {
+    title: "Slint spike (PROTOTYPE)";
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    background: #fafafa;
+    forward-focus: keys;
+
+    in property <[Line]> lines;
+    // The line container's offset: -(scroll_top - base_line * line_height).
+    in property <length> offset-y;
+    in property <length> caret-x;
+    in property <length> caret-y;
+    in property <bool> caret-visible: true;
+
+    // Advance of one Menlo 13px cell, measured by Slint's own shaper.
+    out property <length> char-width: probe.preferred-width / 100;
+    out property <length> viewport-height: body.height;
+
+    callback key-pressed(KeyEvent) -> EventResult;
+    callback scrolled(length);
+    callback viewport-changed();
+
+    changed viewport-height => { root.viewport-changed(); }
+
+    probe := Text {
+        visible: false;
+        font-family: "Menlo";
+        font-size: 13px;
+        text: "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+    }
+
+    body := Rectangle {
+        clip: true;
+
+        keys := FocusScope {
+            key-pressed(event) => { return root.key-pressed(event); }
+        }
+
+        Rectangle {
+            y: root.offset-y;
+            height: 0px;
+
+            for line in root.lines: Rectangle {
+                y: line.y;
+                height: 20px;
+
+                Text {
+                    x: 0px;
+                    width: 52px;
+                    height: 20px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    text: line.number;
+                    color: #9a9a9a;
+                    font-family: "Menlo";
+                    font-size: 13px;
+                }
+
+                for run in line.runs: Text {
+                    x: 64px + run.x;
+                    height: 20px;
+                    vertical-alignment: center;
+                    text: run.text;
+                    color: run.color;
+                    font-family: "Menlo";
+                    font-size: 13px;
+                }
+            }
+
+            Rectangle {
+                x: 64px + root.caret-x;
+                y: root.caret-y;
+                width: 2px;
+                height: 20px;
+                background: #1f6feb;
+                visible: root.caret-visible && keys.has-focus;
+            }
+        }
+
+        TouchArea {
+            scroll-event(event) => {
+                root.scrolled(event.delta-y);
+                return accept;
+            }
+        }
+    }
+}

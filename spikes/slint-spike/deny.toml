@@ -1,0 +1,17 @@
+# PROTOTYPE: licence gate for the Slint spike (ADR 0003: any GPL crate in the
+# pinned dependency tree is a failure). Only permissive licences are allowed,
+# plus Slint's royalty-free licence, which Slint's crates offer as an OR
+# alternative to GPL-3.0. Whether its attribution term is acceptable is a
+# separate decision (see the issue).
+[licenses]
+allow = [
+  "MIT", "MIT-0", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause",
+  "BSD-3-Clause", "ISC", "Zlib", "0BSD", "Unlicense", "CC0-1.0", "BSL-1.0",
+  "Unicode-3.0", "bzip2-1.0.6",
+  "LicenseRef-Slint-Royalty-free-2.0",
+]
+confidence-threshold = 0.9
+
+# Genea ships for Apple Silicon macOS only.
+[graph]
+targets = ["aarch64-apple-darwin"]

@@ -1,0 +1,355 @@
+{
+  "cold_start": "skipped: needs passwordless sudo for `purge` (run `sudo -v` first)",
+  "huge": {
+    "bytes": 103017651,
+    "footprint_mb_with_file": 285.5792007446289,
+    "longest_stall_jump_to_end": {
+      "max_ms": 3.99,
+      "over_16ms": 0,
+      "top_ms": [
+        3.99,
+        2.7,
+        1.99,
+        0.09,
+        0.09
+      ]
+    },
+    "longest_stall_while_opening": {
+      "max_ms": 1.35,
+      "over_16ms": 0,
+      "top_ms": [
+        1.35,
+        0.81,
+        0.06,
+        0.04,
+        0.04
+      ]
+    },
+    "open_to_first_screen_ms": 98.3,
+    "rope_built_ms": 92.92,
+    "scrolling": {
+      "frames": {
+        "display_fps": 60.0,
+        "draw_ms": {
+          "max": 2.17,
+          "n": 240,
+          "p50": 1.38,
+          "p95": 1.89,
+          "p99": 2.14
+        },
+        "flush_present_ms": {
+          "max": 0.28,
+          "n": 240,
+          "p50": 0.14,
+          "p95": 0.21,
+          "p99": 0.23
+        },
+        "fps": 59.98004663282181,
+        "frame_work_ms": {
+          "max": 4.69,
+          "n": 240,
+          "p50": 1.99,
+          "p95": 2.64,
+          "p99": 3.08
+        },
+        "frames_over_8_3ms_work": 0,
+        "interval_ms": {
+          "max": 18.96,
+          "n": 239,
+          "p50": 16.64,
+          "p95": 17.61,
+          "p99": 17.98
+        },
+        "late_intervals": 0,
+        "late_pct": 0.0,
+        "presented": 240,
+        "tick_to_before_rendering_ms": {
+          "max": 2.78,
+          "n": 240,
+          "p50": 0.44,
+          "p95": 0.65,
+          "p99": 0.76
+        }
+      },
+      "longest_stall": {
+        "max_ms": 4.73,
+        "over_16ms": 0,
+        "top_ms": [
+          4.73,
+          3.17,
+          3.13,
+          2.98,
+          2.88
+        ]
+      },
+      "px_per_frame": 30.0,
+      "view_sync_ms": {
+        "max": 0.18,
+        "n": 241,
+        "p50": 0.08,
+        "p95": 0.14,
+        "p99": 0.17
+      }
+    },
+    "window_visible_at_end": true
+  },
+  "idle": {
+    "cpu_pct": 0.8546626071815172,
+    "footprint_mb": 111.56343841552734,
+    "wakeups_per_s": 29.894965770473657
+  },
+  "label": "raw",
+  "open": {
+    "longest_stall": {
+      "max_ms": 4.84,
+      "over_16ms": 0,
+      "top_ms": [
+        4.84,
+        4.09,
+        3.47,
+        3.21,
+        3.21
+      ]
+    },
+    "open_to_first_frame_ms": {
+      "max": 27.22,
+      "n": 20,
+      "p50": 19.43,
+      "p95": 26.73,
+      "p99": 27.22
+    },
+    "window_visible_at_end": true
+  },
+  "scroll": {
+    "fling": {
+      "frames": {
+        "display_fps": 60.0,
+        "draw_ms": {
+          "max": 6.96,
+          "n": 240,
+          "p50": 2.66,
+          "p95": 4.31,
+          "p99": 5.0
+        },
+        "flush_present_ms": {
+          "max": 0.39,
+          "n": 240,
+          "p50": 0.13,
+          "p95": 0.21,
+          "p99": 0.32
+        },
+        "fps": 59.98180177626374,
+        "frame_work_ms": {
+          "max": 8.15,
+          "n": 240,
+          "p50": 3.41,
+          "p95": 5.29,
+          "p99": 6.21
+        },
+        "frames_over_8_3ms_work": 0,
+        "interval_ms": {
+          "max": 19.89,
+          "n": 239,
+          "p50": 16.59,
+          "p95": 18.53,
+          "p99": 19.32
+        },
+        "late_intervals": 0,
+        "late_pct": 0.0,
+        "presented": 240,
+        "tick_to_before_rendering_ms": {
+          "max": 1.3,
+          "n": 240,
+          "p50": 0.58,
+          "p95": 0.92,
+          "p99": 1.05
+        }
+      },
+      "longest_stall": {
+        "max_ms": 8.18,
+        "over_16ms": 0,
+        "top_ms": [
+          8.18,
+          6.39,
+          6.24,
+          5.98,
+          5.9
+        ]
+      },
+      "px_per_frame": 200.0,
+      "view_sync_ms": {
+        "max": 0.7,
+        "n": 241,
+        "p50": 0.36,
+        "p95": 0.53,
+        "p99": 0.6
+      }
+    },
+    "steady": {
+      "frames": {
+        "display_fps": 60.0,
+        "draw_ms": {
+          "max": 3.06,
+          "n": 480,
+          "p50": 1.64,
+          "p95": 2.37,
+          "p99": 2.63
+        },
+        "flush_present_ms": {
+          "max": 0.33,
+          "n": 480,
+          "p50": 0.14,
+          "p95": 0.23,
+          "p99": 0.27
+        },
+        "fps": 60.00077626004286,
+        "frame_work_ms": {
+          "max": 3.96,
+          "n": 480,
+          "p50": 2.3,
+          "p95": 3.15,
+          "p99": 3.55
+        },
+        "frames_over_8_3ms_work": 0,
+        "interval_ms": {
+          "max": 18.35,
+          "n": 479,
+          "p50": 16.67,
+          "p95": 17.75,
+          "p99": 18.13
+        },
+        "late_intervals": 0,
+        "late_pct": 0.0,
+        "presented": 480,
+        "tick_to_before_rendering_ms": {
+          "max": 2.42,
+          "n": 480,
+          "p50": 0.47,
+          "p95": 0.68,
+          "p99": 0.86
+        }
+      },
+      "longest_stall": {
+        "max_ms": 4.0,
+        "over_16ms": 0,
+        "top_ms": [
+          4.0,
+          3.95,
+          3.73,
+          3.62,
+          3.61
+        ]
+      },
+      "px_per_frame": 30.0,
+      "view_sync_ms": {
+        "max": 0.57,
+        "n": 481,
+        "p50": 0.25,
+        "p95": 0.49,
+        "p99": 0.53
+      }
+    },
+    "window_visible_at_end": true
+  },
+  "typing": {
+    "genea_work_if_reparse_async_ms": {
+      "max": 4.98,
+      "n": 400,
+      "p50": 3.19,
+      "p95": 4.19,
+      "p99": 4.62
+    },
+    "genea_work_ms": {
+      "max": 12.84,
+      "n": 400,
+      "p50": 7.67,
+      "p95": 10.6,
+      "p99": 10.99
+    },
+    "input_to_present_ms": {
+      "max": 22.17,
+      "n": 400,
+      "p50": 7.68,
+      "p95": 10.62,
+      "p99": 11.01
+    },
+    "keys": 400,
+    "longest_stall": {
+      "max_ms": 13.07,
+      "over_16ms": 0,
+      "top_ms": [
+        13.07,
+        11.53,
+        11.36,
+        11.33,
+        11.28
+      ]
+    },
+    "rope_edit_ms": {
+      "max": 0.02,
+      "n": 400,
+      "p50": 0.01,
+      "p95": 0.02,
+      "p99": 0.02
+    },
+    "slint_draw_ms": {
+      "max": 2.93,
+      "n": 400,
+      "p50": 1.89,
+      "p95": 2.58,
+      "p99": 2.8
+    },
+    "slint_flush_present_ms": {
+      "max": 0.31,
+      "n": 400,
+      "p50": 0.17,
+      "p95": 0.23,
+      "p99": 0.28
+    },
+    "slint_frame_ms": {
+      "max": 4.31,
+      "n": 400,
+      "p50": 2.67,
+      "p95": 3.57,
+      "p99": 3.89
+    },
+    "slint_tick_to_before_rendering_ms": {
+      "max": 1.28,
+      "n": 400,
+      "p50": 0.59,
+      "p95": 0.88,
+      "p99": 1.03
+    },
+    "treesitter_reparse_ms": {
+      "max": 10.58,
+      "n": 400,
+      "p50": 4.55,
+      "p95": 7.13,
+      "p99": 7.82
+    },
+    "view_sync_ms": {
+      "max": 1.09,
+      "n": 400,
+      "p50": 0.43,
+      "p95": 0.58,
+      "p99": 0.98
+    },
+    "wait_for_frame_ms": {
+      "max": 14.51,
+      "n": 400,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0
+    },
+    "window_visible_at_end": true
+  },
+  "warm_start": {
+    "start_to_first_frame_ms": {
+      "max": 200.83,
+      "n": 20,
+      "p50": 189.63,
+      "p95": 197.98,
+      "p99": 200.83
+    }
+  }
+}
