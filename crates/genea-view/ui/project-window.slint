@@ -509,165 +509,175 @@ export component ProjectWindow inherits Window {
         content := Rectangle {
             vertical-stretch: 1;
 
-            // The pane's size, kept clear of the editor area's minimum.
-            property <length> pane-width: clamp(root.terminal-width, 160px, max(160px, self.width - 320px));
-            property <length> pane-height: clamp(root.terminal-height, 80px, max(80px, self.height - 120px));
+            // The pane's size. The placeholders below take part in the
+            // layout, so it must not depend on the area's own size (a
+            // binding loop): the splitter clamps it while dragging instead.
+            property <length> pane-width: root.terminal-width;
+            property <length> pane-height: root.terminal-height;
             property <bool> right-pane: root.terminal-visible && !root.terminal-bottom;
             property <bool> bottom-pane: root.terminal-visible && root.terminal-bottom;
 
-            HorizontalLayout {
-                x: 0px;
-                y: 0px;
-                width: content.right-pane ? content.width - content.pane-width - 5px : content.width;
-                height: content.bottom-pane ? content.height - content.pane-height - 5px : content.height;
+            // The editor area fills what the pane leaves: placeholders
+            // hold the pane's room on the right or at the bottom.
+            VerticalLayout {
+                HorizontalLayout {
+                    vertical-stretch: 1;
 
-                if root.left-column-visible: LeftColumn {
-                    width: 300px;
-                    view: root.left-view;
-                    problems: root.problems;
-                    files: root.files;
-                    search-query: root.search-query;
-                    search-regex: root.search-regex;
-                    search-case-sensitive: root.search-case-sensitive;
-                    search-whole-word: root.search-whole-word;
-                    search-rows: root.search-rows;
-                    search-status: root.search-status;
-                    search-status-error: root.search-status-error;
-                    show(view) => {
-                        root.show-view(view);
+                    if root.left-column-visible: LeftColumn {
+                        width: 300px;
+                        view: root.left-view;
+                        problems: root.problems;
+                        files: root.files;
+                        search-query: root.search-query;
+                        search-regex: root.search-regex;
+                        search-case-sensitive: root.search-case-sensitive;
+                        search-whole-word: root.search-whole-word;
+                        search-rows: root.search-rows;
+                        search-status: root.search-status;
+                        search-status-error: root.search-status-error;
+                        show(view) => {
+                            root.show-view(view);
+                        }
+                        problem-clicked(index) => {
+                            root.problem-clicked(index);
+                        }
+                        file-clicked(index) => {
+                            root.file-clicked(index);
+                        }
+                        search(text, regex, case-sensitive, whole-word) => {
+                            root.search(text, regex, case-sensitive, whole-word);
+                        }
+                        search-result-clicked(index) => {
+                            root.search-result-clicked(index);
+                        }
                     }
-                    problem-clicked(index) => {
-                        root.problem-clicked(index);
+
+                    if root.left-column-visible: Rectangle {
+                        width: 1px;
+                        background: Theme.chrome-border;
                     }
-                    file-clicked(index) => {
-                        root.file-clicked(index);
+
+                    left := EditorPane {
+                        horizontal-stretch: 1;
+                        tabs: root.left-tabs;
+                        focused: root.focused-pane == 0;
+                        has-editor: root.left-has-editor;
+                        can-split: root.can-split;
+                        geometry: root.left-geometry;
+                        hunk: root.left-hunk;
+                        rollback-hunk => {
+                            root.rollback-hunk();
+                        }
+                        hide-hunk => {
+                            root.hide-hunk();
+                        }
+                        conflict: root.left-conflict;
+                        conflict-resolved(reload) => {
+                            root.conflict-resolved(0, reload);
+                        }
+                        tab-clicked(index) => {
+                            root.tab-clicked(0, index);
+                        }
+                        tab-closed(index) => {
+                            root.tab-closed(0, index);
+                        }
+                        tab-moved(index) => {
+                            root.tab-moved(0, index);
+                        }
+                        split-right => {
+                            root.split-right();
+                        }
+                        scrolled(delta-y) => {
+                            root.scrolled(0, delta-y);
+                        }
+                        pressed(x, y, shift, alt) => {
+                            root.pressed(0, x, y, shift, alt);
+                        }
+                        dragged(x, y) => {
+                            root.dragged(0, x, y);
+                        }
+                        double-clicked(x, y) => {
+                            root.double-clicked(0, x, y);
+                        }
+                        key(text, shift, cmd, alt, ctrl) => {
+                            root.key(text, shift, cmd, alt, ctrl);
+                        }
+                        committed(text) => {
+                            root.committed(text);
+                        }
+                        preedit-changed(text) => {
+                            root.preedit-changed(text);
+                        }
                     }
-                    search(text, regex, case-sensitive, whole-word) => {
-                        root.search(text, regex, case-sensitive, whole-word);
+
+                    Rectangle {
+                        width: 1px;
+                        background: Theme.chrome-border;
+                        visible: root.split;
                     }
-                    search-result-clicked(index) => {
-                        root.search-result-clicked(index);
+
+                    right := EditorPane {
+                        horizontal-stretch: 1;
+                        visible: root.split;
+                        tabs: root.right-tabs;
+                        focused: root.focused-pane == 1;
+                        has-editor: root.right-has-editor;
+                        can-split: root.can-split;
+                        geometry: root.right-geometry;
+                        hunk: root.right-hunk;
+                        rollback-hunk => {
+                            root.rollback-hunk();
+                        }
+                        hide-hunk => {
+                            root.hide-hunk();
+                        }
+                        conflict: root.right-conflict;
+                        conflict-resolved(reload) => {
+                            root.conflict-resolved(1, reload);
+                        }
+                        tab-clicked(index) => {
+                            root.tab-clicked(1, index);
+                        }
+                        tab-closed(index) => {
+                            root.tab-closed(1, index);
+                        }
+                        tab-moved(index) => {
+                            root.tab-moved(1, index);
+                        }
+                        split-right => {
+                            root.split-right();
+                        }
+                        scrolled(delta-y) => {
+                            root.scrolled(1, delta-y);
+                        }
+                        pressed(x, y, shift, alt) => {
+                            root.pressed(1, x, y, shift, alt);
+                        }
+                        dragged(x, y) => {
+                            root.dragged(1, x, y);
+                        }
+                        double-clicked(x, y) => {
+                            root.double-clicked(1, x, y);
+                        }
+                        key(text, shift, cmd, alt, ctrl) => {
+                            root.key(text, shift, cmd, alt, ctrl);
+                        }
+                        committed(text) => {
+                            root.committed(text);
+                        }
+                        preedit-changed(text) => {
+                            root.preedit-changed(text);
+                        }
+                    }
+
+                    if content.right-pane: Rectangle {
+                        width: content.pane-width + 5px;
                     }
                 }
 
-                if root.left-column-visible: Rectangle {
-                    width: 1px;
-                    background: Theme.chrome-border;
+                if content.bottom-pane: Rectangle {
+                    height: content.pane-height + 5px;
                 }
-
-                left := EditorPane {
-                    horizontal-stretch: 1;
-                    tabs: root.left-tabs;
-                    focused: root.focused-pane == 0;
-                    has-editor: root.left-has-editor;
-                    can-split: root.can-split;
-                    geometry: root.left-geometry;
-                    hunk: root.left-hunk;
-                    rollback-hunk => {
-                        root.rollback-hunk();
-                    }
-                    hide-hunk => {
-                        root.hide-hunk();
-                    }
-                    conflict: root.left-conflict;
-                    conflict-resolved(reload) => {
-                        root.conflict-resolved(0, reload);
-                    }
-                    tab-clicked(index) => {
-                        root.tab-clicked(0, index);
-                    }
-                    tab-closed(index) => {
-                        root.tab-closed(0, index);
-                    }
-                    tab-moved(index) => {
-                        root.tab-moved(0, index);
-                    }
-                    split-right => {
-                        root.split-right();
-                    }
-                    scrolled(delta-y) => {
-                        root.scrolled(0, delta-y);
-                    }
-                    pressed(x, y, shift, alt) => {
-                        root.pressed(0, x, y, shift, alt);
-                    }
-                    dragged(x, y) => {
-                        root.dragged(0, x, y);
-                    }
-                    double-clicked(x, y) => {
-                        root.double-clicked(0, x, y);
-                    }
-                    key(text, shift, cmd, alt, ctrl) => {
-                        root.key(text, shift, cmd, alt, ctrl);
-                    }
-                    committed(text) => {
-                        root.committed(text);
-                    }
-                    preedit-changed(text) => {
-                        root.preedit-changed(text);
-                    }
-                }
-
-                Rectangle {
-                    width: 1px;
-                    background: Theme.chrome-border;
-                    visible: root.split;
-                }
-
-                right := EditorPane {
-                    horizontal-stretch: 1;
-                    visible: root.split;
-                    tabs: root.right-tabs;
-                    focused: root.focused-pane == 1;
-                    has-editor: root.right-has-editor;
-                    can-split: root.can-split;
-                    geometry: root.right-geometry;
-                    hunk: root.right-hunk;
-                    rollback-hunk => {
-                        root.rollback-hunk();
-                    }
-                    hide-hunk => {
-                        root.hide-hunk();
-                    }
-                    conflict: root.right-conflict;
-                    conflict-resolved(reload) => {
-                        root.conflict-resolved(1, reload);
-                    }
-                    tab-clicked(index) => {
-                        root.tab-clicked(1, index);
-                    }
-                    tab-closed(index) => {
-                        root.tab-closed(1, index);
-                    }
-                    tab-moved(index) => {
-                        root.tab-moved(1, index);
-                    }
-                    split-right => {
-                        root.split-right();
-                    }
-                    scrolled(delta-y) => {
-                        root.scrolled(1, delta-y);
-                    }
-                    pressed(x, y, shift, alt) => {
-                        root.pressed(1, x, y, shift, alt);
-                    }
-                    dragged(x, y) => {
-                        root.dragged(1, x, y);
-                    }
-                    double-clicked(x, y) => {
-                        root.double-clicked(1, x, y);
-                    }
-                    key(text, shift, cmd, alt, ctrl) => {
-                        root.key(text, shift, cmd, alt, ctrl);
-                    }
-                    committed(text) => {
-                        root.committed(text);
-                    }
-                    preedit-changed(text) => {
-                        root.preedit-changed(text);
-                    }
-                }
-
             }
 
             // The splitter: drag it to share the window between the editor
