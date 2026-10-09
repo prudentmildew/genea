@@ -19,6 +19,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc::{self, Receiver},
     },
 };
 
@@ -66,12 +67,14 @@ pub(crate) struct Search {
     error: Option<String>,
 }
 
-/// Results the walk has found that the main thread hasn't taken yet.
-#[derive(Default)]
+/// Results the walk has found that the main thread hasn't taken yet. The
+/// walk's threads send each file and post an Apply to take them unless one
+/// is on its way; the Apply clears `posted` before taking, so no file is
+/// left behind.
 struct Pending {
-    files: Vec<SearchFile>,
-    /// A batch is on its way to the main thread.
-    posted: bool,
+    files: Mutex<Receiver<SearchFile>>,
+    /// An Apply to take them is on its way to the main thread.
+    posted: AtomicBool,
 }
 
 impl Search {
@@ -128,16 +131,17 @@ impl Search {
         self.searching = true;
         let walk = Walk { root: self.root.clone(), exclude: exclude_matcher(&self.root, exclude), matcher };
         let (id, generation, cancel) = (self.id, self.generation, self.cancel.clone());
-        let pending = Arc::new(Mutex::new(Pending::default()));
-        let sender = jobs.clone();
+        let (sender, files) = mpsc::channel();
+        let pending = Arc::new(Pending { files: Mutex::new(files), posted: AtomicBool::new(false) });
+        let jobs_for_walk = jobs.clone();
         jobs.spawn("search", move || {
             let pending_for_walk = pending.clone();
             let limited = walk.run(&cancel, &|file| {
-                let mut queue = pending_for_walk.lock().unwrap();
-                queue.files.push(file);
-                if !std::mem::replace(&mut queue.posted, true) {
+                // The receiver lives until the last Apply has run.
+                let _ = sender.send(file);
+                if !pending_for_walk.posted.swap(true, Ordering::AcqRel) {
                     let pending = pending_for_walk.clone();
-                    sender.busy().finish(Box::new(move |core| {
+                    jobs_for_walk.busy().finish(Box::new(move |core| {
                         let Some(project) = core.project_mut(id) else { return };
                         project.search.take(generation, &pending, None);
                     }));
@@ -152,12 +156,9 @@ impl Search {
 
     /// Takes the walk's latest results (main thread). `done` is set by the
     /// walk's last batch: whether it stopped at the match limit.
-    fn take(&mut self, generation: u64, pending: &Mutex<Pending>, done: Option<bool>) {
-        let files = {
-            let mut queue = pending.lock().unwrap();
-            queue.posted = false;
-            std::mem::take(&mut queue.files)
-        };
+    fn take(&mut self, generation: u64, pending: &Pending, done: Option<bool>) {
+        pending.posted.store(false, Ordering::Release);
+        let files: Vec<SearchFile> = pending.files.lock().unwrap().try_iter().collect();
         if generation != self.generation {
             return;
         }
@@ -251,6 +252,8 @@ impl Walk {
                 let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
                 relative.as_os_str().is_empty() || !exclude.matched(relative, is_dir).is_ignore()
             })
+            // Leave a core for the main thread, which takes the results.
+            .threads(std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1)).clamp(1, 8))
             .build_parallel();
         let remaining = AtomicUsize::new(MAX_SEARCH_MATCHES);
         let (root, matcher, remaining) = (&self.root, &self.matcher, &remaining);
