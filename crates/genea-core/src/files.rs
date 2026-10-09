@@ -94,6 +94,17 @@ impl FileIndex {
         self.rows.clone()
     }
 
+    /// Expands a folder, or collapses it if it is expanded.
+    pub(crate) fn toggle(&mut self, folder: &Path) {
+        if !self.folders.contains_key(folder) {
+            return;
+        }
+        if !self.expanded.remove(folder) {
+            self.expanded.insert(folder.to_owned());
+        }
+        self.rebuild_rows();
+    }
+
     /// Starts the next read of the disk, if one is due and none is running.
     fn read_next(&mut self, jobs: &Jobs) {
         if self.reading {

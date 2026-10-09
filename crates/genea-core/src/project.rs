@@ -271,6 +271,7 @@ impl Project {
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
+            Command::ToggleFolder(path) => self.files.toggle(&path),
             Command::SelectTab { .. }
             | Command::FocusPane(_)
             | Command::CloseTab { .. }
