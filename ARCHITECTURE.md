@@ -63,6 +63,26 @@ use, and nothing else:
   `std::process`, an HTTP client or `std::time` directly. The filesystem is
   used directly.
 
+### Syntax
+
+`src/syntax/` (ticket #24) holds an open file's tree-sitter tree and its
+highlight spans. Every buffer edit goes through `Editor::splice`, which
+applies it to the main thread's tree (`Tree::edit`, positions only) and
+shifts the spans, so a keystroke never waits on a parse. One background
+parse runs at a time (`Project::reparse`): it reparses incrementally and
+recomputes the highlights, edits made meanwhile are replayed onto its result,
+and the next parse starts if the text moved on. Files over 5 MB get no syntax.
+
+- View state: `VisibleLine::highlights`, a list of `HighlightSpan`
+  (display columns + `genea_core::Highlight`). The view colours each
+  `Highlight` from the light or dark palette in `ui/theme.slint`
+  (`highlight_index` in `src/surface.rs` maps them; keep the two in step).
+- Languages, grammars and queries: `syntax/language.rs`. Embedded languages
+  (HTML `<script>`/`<style>`, Markdown inline and fenced code) come from the
+  grammars' injection queries. `.env` has no grammar: `syntax/dotenv.rs`.
+- Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
+  tokens over `Syntax::spans()` in `Editor::grid_line`.
+
 ## The host boundary
 
 `genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
