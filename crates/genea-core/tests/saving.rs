@@ -55,3 +55,49 @@ fn an_edit_made_while_saving_stays_unsaved() {
     assert_eq!(fixture.read("main.ts"), "1a\n");
     assert!(modified(&workbench, project));
 }
+
+#[test]
+fn a_crlf_file_keeps_its_line_endings() {
+    let (fixture, mut workbench, project) = open("main.ts", "a\r\nb\r\n");
+
+    run(&mut workbench, project, [Command::MoveCaret(LineEnd), Command::NewLine, Command::InsertText("x".into())]);
+    run(&mut workbench, project, [Command::InsertText("\ny\r\nz".into()), Command::Save]);
+    workbench.settle().unwrap();
+
+    assert_eq!(fixture.read("main.ts"), "a\r\nx\r\ny\r\nz\r\nb\r\n");
+}
+
+#[test]
+fn an_lf_file_keeps_its_line_endings() {
+    let (fixture, mut workbench, project) = open("main.ts", "a\nb\n");
+
+    run(&mut workbench, project, [Command::MoveCaret(LineEnd), Command::NewLine, Command::InsertText("x".into())]);
+    run(&mut workbench, project, [Command::InsertText("\ny\r\nz".into()), Command::Save]);
+    workbench.settle().unwrap();
+
+    assert_eq!(fixture.read("main.ts"), "a\nx\ny\nz\nb\n");
+}
+
+#[test]
+fn a_file_without_line_breaks_gets_lf() {
+    let (fixture, mut workbench, project) = open("main.ts", "a");
+
+    run(&mut workbench, project, [Command::MoveCaret(LineEnd), Command::NewLine, Command::Save]);
+    workbench.settle().unwrap();
+
+    assert_eq!(fixture.read("main.ts"), "a\n");
+}
+
+#[test]
+fn a_failed_save_shows_a_notice_and_keeps_the_edits_unsaved() {
+    let (fixture, mut workbench, project) = open("src/main.ts", "a\n");
+    std::fs::remove_dir_all(fixture.path("src")).unwrap();
+
+    run(&mut workbench, project, [Command::InsertText("x".into()), Command::Save]);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert!(view.editor.unwrap().modified);
+    let notice = &view.notices.last().expect("a notice").message;
+    assert!(notice.starts_with("Couldn't save src/main.ts"), "{notice}");
+}
