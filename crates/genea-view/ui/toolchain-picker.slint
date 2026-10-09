@@ -1,0 +1,135 @@
+// The toolchain picker (ticket #37): "Set runtime…", "Set package manager…"
+// and "Update toolchain…". A filter field over a list of versions; picking
+// one writes it as an exact pin and starts its download, Esc or a click
+// outside closes it without changing anything. Rows, the title and the
+// message are set from Rust (src/window.rs) out of the core's
+// ProjectView::toolchain_picker; typing goes to the core, which filters.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct PickerRow {
+    // `Node 26.11.1`.
+    label: string,
+    // `in use`, `downloaded`, `runtime, now 24.18.0`, or empty.
+    detail: string,
+}
+
+export component ToolchainPicker inherits Rectangle {
+    in property <string> title;
+    in property <string> message;
+    in property <bool> loading;
+    in property <[PickerRow]> options;
+    // The row Return picks; ↑ and ↓ move it.
+    in-out property <int> selected: 0;
+
+    callback filter-edited(string);
+    callback picked(int);
+    callback cancelled();
+
+    public function focus-filter() {
+        filter.focus();
+    }
+
+    background: Theme.chrome-background;
+    border-color: Theme.chrome-border;
+    border-width: 1px;
+    border-radius: 6px;
+
+    // Swallows clicks so they don't reach the backdrop behind.
+    TouchArea { }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+
+        Text {
+            text: root.title;
+            color: Theme.chrome-foreground;
+            font-weight: 600;
+        }
+
+        Rectangle {
+            height: 26px;
+            background: Theme.editor-background;
+            border-color: Theme.chrome-border;
+            border-width: 1px;
+            border-radius: 4px;
+
+            filter := TextInput {
+                x: 6px;
+                width: parent.width - 12px;
+                height: parent.height;
+                vertical-alignment: center;
+                single-line: true;
+                color: Theme.editor-foreground;
+                selection-background-color: Theme.selection;
+
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        root.cancelled();
+                        return accept;
+                    }
+                    if (event.text == Key.UpArrow) {
+                        root.selected = max(0, root.selected - 1);
+                        return accept;
+                    }
+                    if (event.text == Key.DownArrow) {
+                        root.selected = min(root.options.length - 1, root.selected + 1);
+                        return accept;
+                    }
+                    reject
+                }
+                edited => {
+                    root.selected = 0;
+                    root.filter-edited(self.text);
+                }
+                accepted => {
+                    if (root.options.length > 0) {
+                        root.picked(root.selected);
+                    }
+                }
+            }
+        }
+
+        if root.loading || root.message != "": Text {
+            text: root.loading ? "Listing versions…" : root.message;
+            color: Theme.chrome-muted;
+            wrap: word-wrap;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+
+            for option[index] in root.options: Rectangle {
+                height: 24px;
+                background: index == root.selected || touch.has-hover ? Theme.chrome-highlight : transparent;
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 8px;
+
+                    Text {
+                        text: option.label;
+                        color: Theme.chrome-foreground;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: option.detail;
+                        color: Theme.chrome-muted;
+                        vertical-alignment: center;
+                    }
+                }
+
+                touch := TouchArea {
+                    clicked => {
+                        root.picked(index);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -113,7 +113,7 @@ impl Store {
         if installed.dir.is_dir() {
             return Ok(installed);
         }
-        let staging = self.staging_dir(tool, version);
+        let staging = self.scratch_dir("download", tool, version);
         let result = self.download_into(downloads, tool, version, &staging, progress);
         let result = result.and_then(|()| {
             fs::create_dir_all(installed.dir.parent().unwrap()).map_err(ToolchainError::Store)?;
@@ -128,15 +128,33 @@ impl Store {
         result.map(|()| installed)
     }
 
+    /// Deletes `tool` `version` from the store. The version folder is first
+    /// renamed out of the way, so a half-deleted version never looks
+    /// installed; an install of the same version waits for it. Removing a
+    /// version that isn't there does nothing.
+    pub fn remove(&self, tool: Tool, version: &Version) -> io::Result<()> {
+        let lock = self.installing.lock().unwrap().entry((tool, version.to_string())).or_default().clone();
+        let _removing = lock.lock().unwrap_or_else(|e| e.into_inner());
+
+        let installed = self.installed_at(tool, version);
+        let doomed = self.scratch_dir("remove", tool, version);
+        match fs::rename(&installed.dir, &doomed) {
+            Ok(()) => fs::remove_dir_all(&doomed),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     fn installed_at(&self, tool: Tool, version: &Version) -> Installed {
         let dir = self.root.join(tool.id()).join(version.to_string());
         Installed { tool, version: version.clone(), bin_dir: dir.join(sources::bin_subdir(tool)), dir }
     }
 
-    fn staging_dir(&self, tool: Tool, version: &Version) -> PathBuf {
+    /// A hidden folder beside the tool folders, unique to this call.
+    fn scratch_dir(&self, purpose: &str, tool: Tool, version: &Version) -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        self.root.join(format!(".download-{}-{version}-{}-{n}", tool.id(), std::process::id()))
+        self.root.join(format!(".{purpose}-{}-{version}-{}-{n}", tool.id(), std::process::id()))
     }
 
     /// Downloads and verifies each archive into `staging`, unpacks them

@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use crate::{
     problems::TextPosition,
-    view::{FinderMode, LeftColumnView},
+    templates::{PackageManagerPin, RuntimePin},
+    view::{FinderMode, LeftColumnView, ToolchainPickerKind},
 };
 
 /// Something the user does in a project's window.
@@ -42,6 +43,28 @@ pub enum Command {
     /// Writes Genea's default versions as exact pins to `package.json` for
     /// the roles the project doesn't pin (the unpinned notice's action).
     PinToolchainDefaults,
+    /// "Set runtime…", "Set package manager…" or "Update toolchain…":
+    /// opens the toolchain picker, which lists versions in the background
+    /// (`ProjectView::toolchain_picker`). Nothing is written until an
+    /// option's command is dispatched.
+    OpenToolchainPicker(ToolchainPickerKind),
+    /// Typing in the toolchain picker: shows only the options whose tool,
+    /// version or detail contain the text (ignoring case).
+    FilterToolchainPicker(String),
+    /// Closes the toolchain picker without changing anything.
+    CloseToolchainPicker,
+    /// Pins the runtime: writes `devEngines.runtime` to the root
+    /// `package.json` as an exact version, then downloads that version. A
+    /// toolchain picker option's command; closes the picker.
+    SetRuntime(RuntimePin),
+    /// Pins the package manager: writes `packageManager` to the root
+    /// `package.json` as an exact version, then downloads that version. A
+    /// toolchain picker option's command; closes the picker.
+    SetPackageManager(PackageManagerPin),
+    /// "Remove unused toolchains": deletes every version in the shared
+    /// toolchain store that no recently opened (or open) project uses. A
+    /// notice says what was removed.
+    RemoveUnusedToolchains,
     /// "Reload environment": runs the login shell again and gives processes
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
@@ -148,6 +171,41 @@ pub enum Command {
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
 
+    // Structural editing (ticket #25).
+    /// ⌘/: comments out the lines the carets and selections are on, or
+    /// uncomments them if every one that isn't blank is commented. Uses the
+    /// language's line comment (`//`, `#`), or wraps each line in its block
+    /// comment (`/* */` in CSS, `<!-- -->` in HTML and Markdown). A
+    /// selection that ends at the start of a line leaves that line out.
+    ToggleLineComment,
+    /// ⌥↑: grows each selection to the smallest syntax node around it (the
+    /// inside of a block comes before the block). An empty selection grows
+    /// to the node at its caret.
+    ExpandSelection,
+    /// ⌥↓: undoes the last `ExpandSelection`, step by step, as long as
+    /// nothing else changed the selection or the text in between.
+    ShrinkSelection,
+    /// A click on a fold marker in the gutter: collapses the fold region
+    /// that starts on `line` (0-based, in the file), or expands it if it is
+    /// collapsed. A collapsed region's lines are hidden, keeping its first
+    /// line and the line its closing bracket or tag starts.
+    ToggleFold { line: usize },
+    /// ⌥⌘−: collapses the region that starts on the primary caret's line,
+    /// or else the innermost expanded region around the caret. Carets in
+    /// the hidden lines move to the region's start.
+    CollapseFold,
+    /// ⌥⌘+: expands the collapsed regions on the primary caret's line.
+    ExpandFold,
+    /// Collapses every fold region in the file.
+    CollapseAllFolds,
+    /// Expands every collapsed region.
+    ExpandAllFolds,
+
+    /// Answers an open file's conflict bar (`EditorView::conflict`): its
+    /// file changed on disk while it had unsaved edits. The path is as in
+    /// `EditorView::path`.
+    ResolveConflict { path: PathBuf, choice: ConflictChoice },
+
     // The fuzzy finder (ticket #33): `ProjectView::finder`.
     /// Opens the finder in a mode with an empty query, replacing a finder
     /// that is open.
@@ -161,10 +219,21 @@ pub enum Command {
     MoveFinderSelection(isize),
     /// Selects a result by its index (the pointer over it).
     SelectFinderItem(usize),
-    /// Return, or a click: closes the finder and opens the selected file.
+    /// Return, or a click: closes the finder and opens the selected file
+    /// or runs the selected action.
     AcceptFinder,
     /// Esc: closes the finder.
     CloseFinder,
+}
+
+/// What to do when an open file with unsaved edits changed on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictChoice {
+    /// Replace the buffer with the file on disk, as one undo step, so Undo
+    /// brings the unsaved edits back.
+    Reload,
+    /// Keep the buffer as it is; the next save overwrites the file on disk.
+    KeepMyEdits,
 }
 
 /// What to do with unsaved edits in a closing tab.

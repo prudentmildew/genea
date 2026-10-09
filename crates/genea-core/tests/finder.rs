@@ -182,6 +182,10 @@ fn find_action_lists_every_action_with_its_shortcut() {
     assert_eq!(shortcut("Recent Files"), Some("⌘E".into()));
     assert_eq!(shortcut("Search Everywhere"), Some("⇧⇧".into()));
     assert_eq!(shortcut("Split Right"), None);
+    assert_eq!(shortcut("Comment with Line Comment"), Some("⌘/".into()));
+    assert_eq!(shortcut("Expand Selection"), Some("⌥↑".into()));
+    assert_eq!(shortcut("Collapse Fold"), Some("⌥⌘-".into()));
+    assert_eq!(shortcut("Set Runtime…"), None);
     assert!(items.iter().all(|item| matches!(item.kind, FinderItemKind::Action(_))));
 }
 

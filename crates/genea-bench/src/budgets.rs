@@ -114,6 +114,29 @@ pub const DEAD_KEYS_STALL: Budget = Budget {
     kind: Kind::Budget,
 };
 
+// Opening files (ticket #27).
+pub const OPEN_1MB: Budget = Budget {
+    id: "open.1mb",
+    title: "Opening a 1 MB file: request to first frame showing it (p95)",
+    limit: 50.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const OPEN_100MB: Budget = Budget {
+    id: "open.100mb",
+    title: "Opening a 100 MB file: request to first frame showing it (p95)",
+    limit: 1000.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const OPEN_100MB_STALL: Budget = Budget {
+    id: "open.100mb.stall",
+    title: "Opening a 100 MB file: longest main-thread stall",
+    limit: 16.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
     Pass,

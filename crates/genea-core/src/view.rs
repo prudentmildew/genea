@@ -48,6 +48,9 @@ pub struct ProjectView {
     pub problems: Vec<ProblemItem>,
     /// The view the left column shows, or `None` while it is collapsed.
     pub left_column: Option<LeftColumnView>,
+    /// The open toolchain picker ("Set runtime…", "Set package manager…",
+    /// "Update toolchain…"), if any.
+    pub toolchain_picker: Option<ToolchainPicker>,
     /// The Files view's tree: the rows it shows, top to bottom. Shared, so
     /// a snapshot doesn't copy a large tree, and unchanged trees compare
     /// equal at once.
@@ -206,16 +209,26 @@ pub struct EditorView {
     /// The tab title: the file name.
     pub title: String,
     pub read_only: bool,
+    /// Only the file's beginning is in: the rest is still being read
+    /// (ticket #27). Read-only until it is.
+    pub loading: bool,
     /// The buffer has edits that aren't on disk yet: the tab and window
     /// show it as unsaved.
     pub modified: bool,
+    /// The file changed on disk, outside Genea, while the buffer had
+    /// unsaved edits: the editor shows a bar offering Reload or Keep my
+    /// edits (`Command::ResolveConflict`). A buffer without unsaved edits
+    /// reloads instead, as one undo step.
+    pub conflict: bool,
     /// Lines in the file. A file ending in a newline has an empty last line.
     pub line_count: usize,
-    /// The first visible row, fractional while scrolling smoothly. The view
-    /// offsets the grid by `scroll_top - lines[0].index` rows.
+    /// The first visible row, fractional while scrolling smoothly. Rows
+    /// count the lines that aren't hidden in a collapsed fold (ticket #25),
+    /// so without folds a row is a line. The view offsets the grid by
+    /// `scroll_top - lines[0].row` rows.
     pub scroll_top: f64,
     /// The lines in the viewport, top to bottom, including a partly visible
-    /// last one.
+    /// last one. Lines hidden in a collapsed fold are left out.
     pub lines: Vec<VisibleLine>,
     /// Where the primary caret is in the file: the one the view scrolls to
     /// and the status bar reports. While composing, the view draws it after
@@ -230,6 +243,11 @@ pub struct EditorView {
     /// Problems in this file on the visible lines, from every source, top
     /// to bottom. A problem spanning lines has one entry per line.
     pub problems: Vec<InlineProblem>,
+    /// The bracket at the primary caret (the one after it, else the one
+    /// before it) and the bracket that matches it, top to bottom; empty
+    /// when the caret isn't at a bracket or it has no match. Brackets in
+    /// strings and comments don't count.
+    pub brackets: Vec<Caret>,
 }
 
 /// Marked text from the IME (a dead key waiting for the next key), shown
@@ -249,6 +267,12 @@ pub struct Preedit {
 pub struct VisibleLine {
     /// 0-based line index in the file (the gutter shows `index + 1`).
     pub index: usize,
+    /// The row it is drawn on: its index minus the lines hidden in folds
+    /// above it.
+    pub row: usize,
+    /// Whether a fold region starts on this line, for the gutter's marker:
+    /// a click on it is `Command::ToggleFold`.
+    pub fold: Option<Fold>,
     /// The text as laid out on the grid: no line ending, tabs expanded to
     /// spaces, cut off after [`crate::MAX_VISIBLE_COLUMNS`] columns.
     pub text: String,
@@ -259,6 +283,15 @@ pub struct VisibleLine {
     /// Highlighted stretches of `text`, left to right, not overlapping.
     /// Text outside them is plain.
     pub highlights: Vec<HighlightSpan>,
+}
+
+/// A fold region's state, on the line it starts on (ticket #25).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    /// Its lines are shown.
+    Expanded,
+    /// Its lines are hidden; the view marks the line as folded.
+    Collapsed,
 }
 
 /// A stretch of a visible line in one highlight.
@@ -298,6 +331,10 @@ pub struct StatusBar {
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,
+    /// Set while the open file is a large file (over
+    /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
+    /// language intelligence.
+    pub large_file: Option<String>,
 }
 
 /// A message for the user.
@@ -348,6 +385,49 @@ pub enum ToolState {
     Failed,
     /// A foreign tool (npm, Yarn, …): Genea never runs it.
     Off,
+}
+
+/// Which toolchain picker to open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ToolchainPickerKind {
+    /// "Set runtime…": every Node and Bun version.
+    Runtime,
+    /// "Set package manager…": every pnpm and Bun version.
+    PackageManager,
+    /// "Update toolchain…": the versions newer than the ones in use, per
+    /// role.
+    Update,
+}
+
+/// A toolchain picker: a filterable list of versions. Picking an option
+/// dispatches its command, which writes an exact pin and downloads it;
+/// nothing changes until then.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolchainPicker {
+    pub kind: ToolchainPickerKind,
+    /// "Set runtime", "Set package manager" or "Update toolchain".
+    pub title: String,
+    /// The filter text (`Command::FilterToolchainPicker`).
+    pub query: String,
+    /// The version lists are still being fetched.
+    pub loading: bool,
+    /// Said above the list: why a list is missing or empty.
+    pub message: Option<String>,
+    /// Newest first, grouped by tool, filtered by `query`.
+    pub options: Vec<ToolchainOption>,
+}
+
+/// One version in a toolchain picker.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolchainOption {
+    /// `Node`, `Bun` or `pnpm`.
+    pub tool: String,
+    pub version: String,
+    /// `in use`, `downloaded`, or (updates) the role and the version it
+    /// replaces, e.g. `runtime, now 24.18.0`; empty otherwise.
+    pub detail: String,
+    /// What picking it dispatches: `SetRuntime` or `SetPackageManager`.
+    pub command: Command,
 }
 
 /// The welcome, shown while no project is open: Open…, New Project… and the

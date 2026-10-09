@@ -70,11 +70,22 @@ use, and nothing else:
 - **Files changing on disk**: each project has one `notify` watcher
   (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
   batches at `Project::files_changed(FileChanges, jobs)`; react there (the
-  config and the file index do; open editors and review hook in beside them).
+  config, the file index and open editors do; review hooks in beside them).
   `settle` waits for the watcher by writing a cookie file into
   `<support>/watch-sync`, which the same FSEvents stream watches: once its
   event is back, every earlier change has been delivered. So a test writes a
   file with `fixture.write(..)`, calls `settle()`, and asserts.
+- **Open editors and external changes** (`src/disk.rs`,
+  `src/project/external.rs`, ticket #32): each `Editor` keeps the text it
+  believes is on disk (read at open, or set when a save *starts*). A changed
+  open file is read and compared in the background: the same text is no
+  change, which is how Genea's own saves are recognised. Different text
+  reloads a clean buffer as one undo step (kind `Other`, a single splice of
+  the changed stretch, so carets outside it keep their place) or, with
+  unsaved edits, sets `EditorView::conflict` until
+  `Command::ResolveConflict` (Reload or Keep my edits) or a save. A result
+  whose buffer or disk text moved on meanwhile is checked again. Review
+  (#53) should reuse the same "what Genea last wrote" comparison.
 - **The file index** (`src/files.rs`, ticket #30): every file and folder
   outside `node_modules` and `.git`, read once in the background at open and
   then kept up to date from the watcher's batches (a changed path re-lists
@@ -139,7 +150,8 @@ shifts the spans, so a keystroke never waits on a parse. Don't edit the
 rope anywhere else. One background parse per file runs at a time
 (`Project::reparse`, `spawn_parse`): it reparses incrementally and
 recomputes the highlights, edits made meanwhile are replayed onto its result,
-and the next parse starts if the text moved on. Files over 5 MB get no syntax.
+and the next parse starts if the text moved on. Large files get no syntax
+(below).
 
 - View state: `VisibleLine::highlights`, a list of `HighlightSpan`
   (display columns + `genea_core::Highlight`). The view colours each
@@ -150,6 +162,48 @@ and the next parse starts if the text moved on. Files over 5 MB get no syntax.
   grammars' injection queries. `.env` has no grammar: `syntax/dotenv.rs`.
 - Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
   tokens over `Syntax::spans()` in `Editor::grid_line`.
+
+### Structural editing
+
+Ticket #25. `syntax/structure.rs` answers questions about the tree with
+generic rules, not per-language queries: a node is a *block* when its first
+and last children are a bracket pair (`{}`, `[]`, `()`, `${}`) or an
+element's tags (HTML, JSX); comments, Markdown sections and code blocks, and
+YAML pairs fold too. `editor/structural.rs` turns the answers into edits,
+carets and view state:
+
+- Return (`Editor::new_line`) indents one `INDENT_UNIT` deeper inside a
+  block and splits a bracket pair. The tree may be a parse behind, so an
+  opening bracket at the end of the line (outside strings and comments)
+  counts too. #26 replaces `INDENT_UNIT` with the resolved indentation.
+- ⌘/ (`ToggleLineComment`) uses `Language::comment`; ⌥↑/⌥↓ walk nodes, with
+  the shrink history in the tab's `Cursor`; `EditorView::brackets` holds the
+  bracket at the caret and its match.
+- Folds (`Editor::folds`) are char positions that move with edits in
+  `splice`. Hidden lines take no *row*: `scroll_top`, Up/Down and
+  `VisibleLine::row` count rows, while commands and `VisibleLine::index`
+  stay in file lines (the view maps a clicked row to its line). A caret
+  that lands in hidden lines unfolds them (`reveal_caret`).
+- Edits that keep selections where they were (comments) go through
+  `edit_text`; edits that put each caret somewhere in its replacement go
+  through `replace_placing`.
+
+### Large files
+
+A file over `LARGE_FILE_BYTES` (5 MB, ticket #27) is a *large file*: it
+opens with no syntax tree, no highlighting and no language intelligence, and
+`StatusBar::large_file` says why. It is decided once, from the size read at
+open. **Anything that starts per-file language work (language servers,
+semantic tokens, …) checks `Editor::is_large` and skips large files.**
+
+Opening reads in the background (`src/reading.rs`), and the main thread only
+swaps the finished rope in. A file that may be large (over 5 MB, or of
+unknown size, like a pipe) opens as soon as its first screen of lines is
+read: `Editor::loading` shows those lines read-only (`EditorView::loading`),
+and `Editor::finish_loading` swaps the whole file in when it is read,
+keeping each tab's carets and scroll, which the first screen (a prefix of
+the whole text) leaves valid. The benchmark harness's `open-1mb` and
+`open-100mb` scenarios measure it.
 
 ## The host boundary
 
@@ -204,6 +258,19 @@ package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it 
 in a job when a project with a root `package.json` opens, starts one job per
 role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
 whose `NoticeAction` carries the `Command` a click dispatches.
+
+Pins change only through commands (ticket #37). `OpenToolchainPicker(kind)`
+lists versions in a job (`genea_toolchain::published` plus what the store
+has, so it works offline) into `ProjectView::toolchain_picker`; each
+`ToolchainOption` carries the `SetRuntime` / `SetPackageManager` command a
+pick dispatches, which writes the exact pin (`pins::write`) and restarts that
+role's download. `RemoveUnusedToolchains` is handled by the workbench (it
+needs the recent projects): it keeps what each recent or open project's
+`package.json` resolves to (exact pins, the newest stored match of a range,
+the defaults for an unpinned role) and `Store::remove`s the rest. The
+lockfile cross-check (root `pnpm-lock.yaml`, `bun.lock`, `bun.lockb` against
+the package-manager role) reports as `ProblemSource::Toolchain` and is
+re-run when the watcher sees a root lockfile change.
 
 ## The project environment
 
@@ -268,9 +335,10 @@ chrome, native menus via muda (Slint's `MenuBar`).
 - `src/window.rs`: `WindowController::sync`, the only place view state flows
   into Slint. `WindowController::focus` brings a window to the front.
   `src/welcome.rs`: the welcome window's sync.
-- `src/surface.rs`: the editor surface, a ring of line slots (line L in slot
-  L % slots) with a per-slot diff, plus base-line rebasing for `f32`
-  precision.
+- `src/surface.rs`: the editor surface, a ring of line slots (the line on
+  row R in slot R % slots; rows skip folded lines) with a per-slot diff,
+  plus base-row rebasing for `f32` precision. A press on a gutter fold
+  marker is `ToggleFold`.
 - `src/fonts.rs`: registers Apple Color Emoji and Hiragino Sans GB (CJK),
   memory-mapped, the first time visible text has an emoji or CJK character
   that Menlo and Apple Symbols lack. It is

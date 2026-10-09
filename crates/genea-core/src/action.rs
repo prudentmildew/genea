@@ -10,7 +10,7 @@
 
 use crate::{
     command::Command,
-    view::{FinderMode, LeftColumnView},
+    view::{FinderMode, LeftColumnView, ToolchainPickerKind},
 };
 
 /// Something the user can run from the finder.
@@ -20,6 +20,10 @@ pub enum Action {
     CloseTab,
     OpenConfig,
     ReloadEnvironment,
+    SetRuntime,
+    SetPackageManager,
+    UpdateToolchain,
+    RemoveUnusedToolchains,
     Undo,
     Redo,
     Cut,
@@ -31,6 +35,13 @@ pub enum Action {
     SelectAllOccurrences,
     CloneCaretAbove,
     CloneCaretBelow,
+    ToggleLineComment,
+    ExpandSelection,
+    ShrinkSelection,
+    ExpandFold,
+    CollapseFold,
+    ExpandAllFolds,
+    CollapseAllFolds,
     GoToFile,
     RecentFiles,
     FindAction,
@@ -47,11 +58,15 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 26] = [
+    pub const ALL: [Action; 37] = [
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
         Action::ReloadEnvironment,
+        Action::SetRuntime,
+        Action::SetPackageManager,
+        Action::UpdateToolchain,
+        Action::RemoveUnusedToolchains,
         Action::Undo,
         Action::Redo,
         Action::Cut,
@@ -63,6 +78,13 @@ impl Action {
         Action::SelectAllOccurrences,
         Action::CloneCaretAbove,
         Action::CloneCaretBelow,
+        Action::ToggleLineComment,
+        Action::ExpandSelection,
+        Action::ShrinkSelection,
+        Action::ExpandFold,
+        Action::CollapseFold,
+        Action::ExpandAllFolds,
+        Action::CollapseAllFolds,
         Action::GoToFile,
         Action::RecentFiles,
         Action::FindAction,
@@ -83,6 +105,10 @@ impl Action {
             Action::CloseTab => "Close Tab",
             Action::OpenConfig => "Open Config",
             Action::ReloadEnvironment => "Reload Environment",
+            Action::SetRuntime => "Set Runtime…",
+            Action::SetPackageManager => "Set Package Manager…",
+            Action::UpdateToolchain => "Update Toolchain…",
+            Action::RemoveUnusedToolchains => "Remove Unused Toolchains",
             Action::Undo => "Undo",
             Action::Redo => "Redo",
             Action::Cut => "Cut",
@@ -94,6 +120,13 @@ impl Action {
             Action::SelectAllOccurrences => "Select All Occurrences",
             Action::CloneCaretAbove => "Clone Caret Above",
             Action::CloneCaretBelow => "Clone Caret Below",
+            Action::ToggleLineComment => "Comment with Line Comment",
+            Action::ExpandSelection => "Expand Selection",
+            Action::ShrinkSelection => "Shrink Selection",
+            Action::ExpandFold => "Expand Fold",
+            Action::CollapseFold => "Collapse Fold",
+            Action::ExpandAllFolds => "Expand All Folds",
+            Action::CollapseAllFolds => "Collapse All Folds",
             Action::GoToFile => "Go to File…",
             Action::RecentFiles => "Recent Files",
             Action::FindAction => "Find Action…",
@@ -126,6 +159,11 @@ impl Action {
             // Press ⌥ twice and hold it, then the arrow.
             Action::CloneCaretAbove => "⌥⌥↑",
             Action::CloneCaretBelow => "⌥⌥↓",
+            Action::ToggleLineComment => "⌘/",
+            Action::ExpandSelection => "⌥↑",
+            Action::ShrinkSelection => "⌥↓",
+            Action::ExpandFold => "⌥⌘=",
+            Action::CollapseFold => "⌥⌘-",
             Action::GoToFile => "⇧⌘O",
             Action::RecentFiles => "⌘E",
             Action::FindAction => "⇧⌘A",
@@ -136,6 +174,12 @@ impl Action {
             Action::SelectPreviousTab => "⇧⌘[",
             Action::OpenConfig
             | Action::ReloadEnvironment
+            | Action::SetRuntime
+            | Action::SetPackageManager
+            | Action::UpdateToolchain
+            | Action::RemoveUnusedToolchains
+            | Action::ExpandAllFolds
+            | Action::CollapseAllFolds
             | Action::SplitRight
             | Action::MoveTabToOtherSide
             | Action::CloseSplit => return None,
@@ -149,6 +193,10 @@ impl Action {
             Action::Save => Command::Save,
             Action::OpenConfig => Command::OpenConfig,
             Action::ReloadEnvironment => Command::ReloadEnvironment,
+            Action::SetRuntime => Command::OpenToolchainPicker(ToolchainPickerKind::Runtime),
+            Action::SetPackageManager => Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager),
+            Action::UpdateToolchain => Command::OpenToolchainPicker(ToolchainPickerKind::Update),
+            Action::RemoveUnusedToolchains => Command::RemoveUnusedToolchains,
             Action::Undo => Command::Undo,
             Action::Redo => Command::Redo,
             Action::Cut => Command::Cut,
@@ -160,6 +208,13 @@ impl Action {
             Action::SelectAllOccurrences => Command::SelectAllOccurrences,
             Action::CloneCaretAbove => Command::CloneCaretAbove,
             Action::CloneCaretBelow => Command::CloneCaretBelow,
+            Action::ToggleLineComment => Command::ToggleLineComment,
+            Action::ExpandSelection => Command::ExpandSelection,
+            Action::ShrinkSelection => Command::ShrinkSelection,
+            Action::ExpandFold => Command::ExpandFold,
+            Action::CollapseFold => Command::CollapseFold,
+            Action::ExpandAllFolds => Command::ExpandAllFolds,
+            Action::CollapseAllFolds => Command::CollapseAllFolds,
             Action::GoToFile => Command::OpenFinder(FinderMode::Files),
             Action::RecentFiles => Command::OpenFinder(FinderMode::RecentFiles),
             Action::FindAction => Command::OpenFinder(FinderMode::Actions),

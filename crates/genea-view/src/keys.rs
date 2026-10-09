@@ -33,6 +33,9 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
             Command::SelectNextOccurrence
         });
     }
+    if let Some(command) = structural(text, m) {
+        return Some(command);
+    }
     if m.ctrl || m.cmd {
         return None;
     }
@@ -51,6 +54,25 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
     } else {
         None
     }
+}
+
+/// Structural editing keys (ticket #25) that aren't menu shortcuts: ⌥↑ and
+/// ⌥↓ (a menu would take them from the clone-caret gesture), and ⌥⌘+ for
+/// Expand on layouts where `+` has its own key (the menu has ⌥⌘=).
+fn structural(text: &str, m: Modifiers) -> Option<Command> {
+    let is = |key: Key| text == SharedString::from(key).as_str();
+    if m.alt && !(m.shift || m.cmd || m.ctrl) {
+        if is(Key::UpArrow) {
+            return Some(Command::ExpandSelection);
+        }
+        if is(Key::DownArrow) {
+            return Some(Command::ShrinkSelection);
+        }
+    }
+    if m.alt && m.cmd && !m.ctrl && matches!(text, "+" | "±") {
+        return Some(Command::ExpandFold);
+    }
+    None
 }
 
 /// The caret movement a key asks for, with or without ⇧.
@@ -72,6 +94,7 @@ fn movement(text: &str, m: Modifiers) -> Option<CaretMove> {
             return None;
         }
     } else if m.alt {
+        // ⌥↑ and ⌥↓ are expand and shrink selection (`structural`).
         if is(Key::LeftArrow) {
             CaretMove::WordLeft
         } else if is(Key::RightArrow) {

@@ -13,8 +13,8 @@ use std::{
 };
 
 use genea_core::{
-    CloseChoice, Command, FileRow, FileRowKind, FinderItem, FinderMode, FinderView, LeftColumnView, PaneView,
-    ProblemItem, ProjectId, Severity, Theme as ConfigTheme, Workbench,
+    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView, LeftColumnView,
+    PaneView, ProblemItem, ProjectId, Severity, Theme as ConfigTheme, ToolchainOption, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -22,7 +22,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    FileEntry, FinderRow, LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts,
+    FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs,
+    fonts,
     surface::Surface,
 };
 
@@ -54,9 +55,15 @@ pub struct WindowController {
     /// The Files view's rows as last pushed, likewise.
     files: Arc<[FileRow]>,
     file_rows: Rc<VecModel<FileEntry>>,
-    /// The button went down with ⌥ (adding a caret), so a drag doesn't
-    /// select.
+    /// The button went down with ⌥ (adding a caret) or on a fold marker,
+    /// so a drag doesn't select.
     option_press: bool,
+    /// The toolchain picker is showing.
+    picker_open: bool,
+    /// The picker's options as last pushed, so a click maps to the option
+    /// the user saw and an unchanged list isn't pushed again.
+    picker_options: Vec<ToolchainOption>,
+    picker_rows: Rc<VecModel<PickerRow>>,
     /// The finder's mode while it is open, and its results as last pushed.
     finder_mode: Option<FinderMode>,
     finder_items: Vec<FinderItem>,
@@ -73,6 +80,8 @@ impl WindowController {
         let surfaces = [Surface::new(&window, 0), Surface::new(&window, 1)];
         let problem_rows = Rc::new(VecModel::default());
         window.set_problems(ModelRc::from(problem_rows.clone()));
+        let picker_rows = Rc::new(VecModel::default());
+        window.set_picker_options(ModelRc::from(picker_rows.clone()));
         let file_rows = Rc::new(VecModel::default());
         window.set_files(ModelRc::from(file_rows.clone()));
         let finder_rows = Rc::new(VecModel::default());
@@ -93,6 +102,9 @@ impl WindowController {
             files: Arc::from([]),
             file_rows,
             option_press: false,
+            picker_open: false,
+            picker_options: Vec::new(),
+            picker_rows,
             finder_mode: None,
             finder_items: Vec::new(),
             finder_rows,
@@ -138,6 +150,11 @@ impl WindowController {
     /// (a third click) selects the line.
     pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool, alt: bool) {
         self.focus_pane(workbench, pane);
+        if let Some(line) = self.surfaces[pane].fold_marker_at(&self.window, x, y) {
+            self.option_press = true;
+            self.dispatch(workbench, Command::ToggleFold { line });
+            return;
+        }
         let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         let triple = self.last_double_click.take().is_some_and(|(at, clicked_line)| {
             clicked_line == line && at.elapsed() < TRIPLE_CLICK_INTERVAL
@@ -267,6 +284,30 @@ impl WindowController {
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
         window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
+        window.set_status_large_file(view.status.large_file.clone().unwrap_or_default().into());
+        window.set_status_loading(editor.is_some_and(|e| e.loading));
+
+        let picker = view.toolchain_picker.as_ref();
+        window.set_picker_visible(picker.is_some());
+        if let Some(picker) = picker {
+            window.set_picker_title(picker.title.as_str().into());
+            window.set_picker_message(picker.message.clone().unwrap_or_default().into());
+            window.set_picker_loading(picker.loading);
+        }
+        let options = picker.map(|p| p.options.clone()).unwrap_or_default();
+        if options != self.picker_options {
+            let rows: Vec<PickerRow> = options
+                .iter()
+                .map(|o| PickerRow { label: format!("{} {}", o.tool, o.version).into(), detail: o.detail.as_str().into() })
+                .collect();
+            self.picker_rows.set_vec(rows);
+            self.picker_options = options;
+        }
+        // The editor gets the keyboard back once the picker closes.
+        if self.picker_open && picker.is_none() {
+            window.invoke_refocus();
+        }
+        self.picker_open = picker.is_some();
 
         window.set_split(view.panes.len() > 1);
         window.set_can_split(view.can_split);
@@ -290,10 +331,13 @@ impl WindowController {
                 self.tabs[pane] = tabs;
             }
             let editor = shown.and_then(|p| p.editor.as_ref());
+            let conflict = editor.is_some_and(|e| e.conflict);
             if pane == 0 {
                 window.set_left_has_editor(editor.is_some());
+                window.set_left_conflict(conflict);
             } else {
                 window.set_right_has_editor(editor.is_some());
+                window.set_right_conflict(conflict);
             }
             // Before Slint shapes the text: registers fallback fonts it needs.
             let titles = shown.iter().flat_map(|p| &p.tabs).map(|tab| &tab.title);
@@ -304,6 +348,9 @@ impl WindowController {
             self.surfaces[pane].sync(window, editor);
         }
         crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
+        if let Some(editor) = editor.filter(|e| !e.lines.is_empty()) {
+            crate::journal::mark_shown(&editor.path);
+        }
         let finder_closed = self.sync_finder(view.finder.as_ref());
         if view.focused_pane != self.focused_pane || finder_closed {
             self.focused_pane = view.focused_pane;
@@ -371,6 +418,21 @@ impl WindowController {
     pub fn resolve_close(&mut self, workbench: &mut Workbench, choice: CloseChoice) {
         self.prompting = false;
         self.dispatch(workbench, Command::ResolveClose(choice));
+    }
+
+    /// A pane's conflict bar was answered: for the file that pane shows.
+    pub fn resolve_conflict(&mut self, workbench: &mut Workbench, pane: usize, choice: ConflictChoice) {
+        let Some(view) = workbench.project(self.project) else { return };
+        let Some(editor) = view.panes.get(pane).and_then(|p| p.editor.as_ref()) else { return };
+        let command = Command::ResolveConflict { path: editor.path.clone(), choice };
+        self.dispatch(workbench, command);
+    }
+
+    /// A toolchain picker option was picked: pin it.
+    pub fn pick_toolchain(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some(option) = self.picker_options.get(index) else { return };
+        let command = option.command.clone();
+        self.dispatch(workbench, command);
     }
 
     /// A Problems item was clicked: open its file at the problem.

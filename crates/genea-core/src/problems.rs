@@ -26,6 +26,9 @@ pub enum ProblemSource {
     /// `genea.jsonc`: syntax errors, bad values, unknown keys, nested
     /// configs.
     Config,
+    /// The toolchain checks: a root lockfile that doesn't match
+    /// `packageManager`, or both a pnpm and a Bun lockfile.
+    Toolchain,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

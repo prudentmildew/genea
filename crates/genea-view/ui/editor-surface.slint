@@ -1,6 +1,7 @@
 // Genea's editor surface (ADR 0004): a Rust-driven grid of Text items, not
 // Slint's TextEdit. Rust (src/surface.rs) owns the layout: it keeps a ring of
-// line slots (line L lives in slot L % slots), so scrolling only rewrites the
+// line slots (the line on row R lives in slot R % slots; rows skip folded
+// lines), so scrolling only rewrites the
 // slots of lines that come into view, and it pushes only what changed, so an
 // idle surface never repaints.
 //
@@ -48,6 +49,15 @@ export struct Line {
     // The x of each caret on this line other than the primary one, which
     // is drawn on its own (multi-caret, ticket #52).
     carets: [length],
+    // A fold region starts on this line (ticket #25): 0 none, 1 expanded,
+    // 2 collapsed. Its marker sits at the gutter's right edge; Rust turns a
+    // press on it into ToggleFold.
+    fold: int,
+    // The end of the line's text, where a collapsed fold's placeholder goes.
+    fold-x: length,
+    // The x of each highlighted bracket on this line: the one at the caret
+    // and its match.
+    brackets: [length],
 }
 
 export component EditorSurface inherits Rectangle {
@@ -113,9 +123,18 @@ export component EditorSurface inherits Rectangle {
                 background: Theme.selection;
             }
 
+            for bracket-x in line.brackets: Rectangle {
+                x: Theme.gutter-width + bracket-x;
+                width: root.char-width;
+                height: Theme.line-height;
+                background: Theme.bracket-match;
+                border-width: 1px;
+                border-color: Theme.bracket-match-border;
+            }
+
             Text {
                 x: 0px;
-                width: Theme.gutter-width - 12px;
+                width: Theme.gutter-width - 14px;
                 height: Theme.line-height;
                 horizontal-alignment: right;
                 vertical-alignment: center;
@@ -123,6 +142,38 @@ export component EditorSurface inherits Rectangle {
                 color: Theme.gutter-foreground;
                 font-family: Theme.editor-font;
                 font-size: Theme.editor-font-size;
+            }
+
+            // The fold marker: 14px wide, as FOLD_MARKER_WIDTH in
+            // src/surface.rs.
+            if line.fold != 0: Text {
+                x: Theme.gutter-width - 14px;
+                width: 12px;
+                height: Theme.line-height;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                text: line.fold == 2 ? "▸" : "▾";
+                color: Theme.gutter-foreground;
+                font-size: Theme.editor-font-size;
+            }
+
+            // A collapsed fold's placeholder after the line's text.
+            if line.fold == 2: Rectangle {
+                x: Theme.gutter-width + line.fold-x + root.char-width;
+                y: 2px;
+                width: root.char-width * 3;
+                height: Theme.line-height - 4px;
+                border-radius: 3px;
+                background: Theme.fold-placeholder;
+
+                Text {
+                    text: "…";
+                    color: Theme.gutter-foreground;
+                    font-family: Theme.editor-font;
+                    font-size: Theme.editor-font-size;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
 
             // Steady like the primary caret.

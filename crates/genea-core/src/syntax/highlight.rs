@@ -165,7 +165,7 @@ pub(crate) struct Span {
 /// A file's highlight spans: sorted, non-overlapping and non-empty.
 ///
 /// Offsets are `u32` to halve the memory of a big file's spans; files above
-/// [`super::MAX_SYNTAX_BYTES`] get no syntax at all.
+/// [`crate::editor::LARGE_FILE_BYTES`] get no syntax at all.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Spans(Vec<Span>);
 
