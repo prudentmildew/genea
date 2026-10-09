@@ -22,6 +22,7 @@ use crate::{
     history::EditKind,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
+    search::Search,
     syntax::ParseJob,
     text::Decoded,
     toolchain::{Toolchain, ToolchainContext},
@@ -62,6 +63,8 @@ pub(crate) struct Project {
     left_column: Option<LeftColumnView>,
     /// The project's files, for the Files view (ticket #30).
     pub(crate) files: FileIndex,
+    /// The Search view's query and results (ticket #34).
+    pub(crate) search: Search,
     /// The runtime and package manager (ticket #35); set by `start_toolchain`.
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
@@ -73,6 +76,7 @@ impl Project {
         Project {
             id,
             files: FileIndex::new(id, root.clone()),
+            search: Search::new(id, root.clone()),
             root,
             editor: None,
             panes: Panes::default(),
@@ -274,6 +278,7 @@ impl Project {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
             Command::ToggleFolder(path) => self.files.toggle(&path),
+            Command::Search(query) => self.search.start(query, &self.config.exclude, jobs),
             Command::SelectTab { .. }
             | Command::FocusPane(_)
             | Command::CloseTab { .. }
@@ -494,6 +499,7 @@ impl Project {
             problems: self.problems.items(),
             left_column: self.left_column,
             files: self.files.rows(),
+            search: self.search.view(),
         }
     }
 

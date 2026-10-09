@@ -31,6 +31,7 @@ mod jobs;
 mod problems;
 mod project;
 mod recent;
+mod search;
 mod syntax;
 mod templates;
 mod text;
@@ -40,7 +41,8 @@ mod view;
 mod watcher;
 mod workbench;
 
-pub use command::{CaretMove, Command};
+pub use command::{CaretMove, Command, SearchQuery};
+pub use search::MAX_SEARCH_MATCHES;
 pub use config::{Config, TerminalPosition, Theme};
 pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;
@@ -56,5 +58,5 @@ pub use view::{
     Caret, EditorView, HighlightSpan, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
     ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
 };
-pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
+pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};
