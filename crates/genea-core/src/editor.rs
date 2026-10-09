@@ -45,6 +45,9 @@ pub(crate) struct Editor {
     version: u64,
     /// The version last written to disk (or read from it).
     saved_version: u64,
+    /// Edits and saves are refused: the file isn't valid UTF-8, so writing
+    /// the buffer back would change bytes the user never touched.
+    read_only: bool,
 }
 
 /// The buffer as it was when a save started.
@@ -69,7 +72,18 @@ impl Editor {
             preedit: String::new(),
             version: 0,
             saved_version: 0,
+            read_only: false,
         }
+    }
+
+    /// The same editor, refusing edits and saves.
+    pub(crate) fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Moves the caret. With `extend`, the selection's anchor stays put, so
@@ -195,7 +209,7 @@ impl Editor {
     /// caret after it. Line breaks become the file's line ending.
     pub(crate) fn insert(&mut self, text: &str, viewport_rows: f64) {
         self.preedit.clear();
-        if text.is_empty() && self.anchor == self.caret {
+        if self.read_only || (text.is_empty() && self.anchor == self.caret) {
             return;
         }
         let text = self.line_ending.normalize(text);
@@ -209,11 +223,17 @@ impl Editor {
     }
 
     pub(crate) fn set_preedit(&mut self, text: String) {
+        if self.read_only {
+            return;
+        }
         self.preedit = text;
     }
 
     /// Deletes the selection, or the text the movement would pass over.
     pub(crate) fn delete(&mut self, movement: CaretMove, viewport_rows: f64) {
+        if self.read_only {
+            return;
+        }
         if self.anchor == self.caret {
             self.move_head(movement, viewport_rows);
         }
@@ -333,7 +353,7 @@ impl Editor {
         EditorView {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: self.path.clone(),
-            read_only: false,
+            read_only: self.read_only,
             modified: self.version != self.saved_version,
             line_count,
             scroll_top: self.scroll_top,

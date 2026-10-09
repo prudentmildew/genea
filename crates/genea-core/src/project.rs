@@ -2,7 +2,7 @@
 
 use std::{
     fs::File,
-    io::{BufReader, BufWriter, Write},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -13,6 +13,7 @@ use crate::{
     command::{CaretMove, Command},
     editor::Editor,
     jobs::Jobs,
+    text::Decoded,
     view::{Notice, ProjectView, StatusBar},
     workbench::ProjectId,
 };
@@ -158,7 +159,7 @@ impl Project {
     /// Writes the open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
     fn save(&mut self, jobs: &Jobs) {
-        let Some(editor) = &self.editor else { return };
+        let Some(editor) = self.editor.as_ref().filter(|e| !e.is_read_only()) else { return };
         let snapshot = editor.snapshot();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
@@ -193,14 +194,20 @@ impl Project {
         let generation = self.open_generation;
         let id = self.id;
         jobs.spawn("open file", move || {
-            let read = File::open(&absolute).and_then(|f| Rope::from_reader(BufReader::new(f)));
+            let read = std::fs::read(&absolute).map(Decoded::from_bytes);
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 if project.open_generation != generation {
                     return;
                 }
                 match read {
-                    Ok(text) => project.editor = Some(Editor::new(shown, text)),
+                    Ok(Decoded::Text(text)) => project.editor = Some(Editor::new(shown, Rope::from_str(&text))),
+                    Ok(Decoded::Invalid(text)) => {
+                        project.notices.push(Notice {
+                            message: format!("{} isn't valid UTF-8, so it's open read-only.", shown.display()),
+                        });
+                        project.editor = Some(Editor::new(shown, Rope::from_str(&text)).read_only());
+                    }
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()) }),
