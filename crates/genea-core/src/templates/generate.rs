@@ -15,7 +15,7 @@ use super::{NewProject, PackageManagerPin, RuntimePin, Template};
 /// Dependency versions, frozen per Genea release as caret ranges (#12).
 /// Refresh them with each release and run the slow lane
 /// (`tests/templates_slow.rs`).
-mod versions {
+pub(crate) mod versions {
     pub const HONO: &str = "^4.13.13";
     pub const HONO_NODE_SERVER: &str = "^2.1.4";
     pub const OXFMT: &str = "^0.72.0";

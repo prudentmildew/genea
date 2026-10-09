@@ -29,6 +29,7 @@ mod files;
 mod grid;
 mod history;
 mod jobs;
+mod lsp;
 mod problems;
 mod project;
 mod reading;
@@ -49,13 +50,14 @@ pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
 pub use problems::{ProblemSource, Severity, TextPosition};
 pub use syntax::Highlight;
 pub use environment::LOGIN_SHELL_TIMEOUT;
+pub use lsp::{MAX_RESTARTS, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT};
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
 pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, HighlightSpan, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
+    Caret, EditorView, HighlightSpan, InlineProblem, LanguageServerState, LanguageServerStatus, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
     ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
     ToolchainView, VisibleLine, WelcomeView,
 };

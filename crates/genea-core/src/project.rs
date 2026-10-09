@@ -1,6 +1,7 @@
 //! One open project: its folder and what its window shows.
 
 mod external;
+mod language;
 mod tabs;
 
 use std::{
@@ -29,6 +30,7 @@ use crate::{
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use language::Language;
 use tabs::Panes;
 
 /// The status-bar item for a large file.
@@ -69,6 +71,8 @@ pub(crate) struct Project {
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
+    /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
+    language: Language,
 }
 
 impl Project {
@@ -84,6 +88,7 @@ impl Project {
             open_generation: 0,
             toolchain: None,
             environment: None,
+            language: Language::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -119,6 +124,7 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
+        self.language_files_changed(&changes);
         self.check_open_files(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if let Some(toolchain) = &mut self.toolchain
@@ -302,6 +308,8 @@ impl Project {
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
+            Command::RestartLanguageServer => self.restart_language_server(),
+            Command::AddTypeScript => self.add_typescript(jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
@@ -482,6 +490,7 @@ impl Project {
         }
         self.reparse(jobs);
         self.refresh_views();
+        self.sync_language();
     }
 
     /// Starts a background parse of the focused file if its syntax tree is
@@ -527,10 +536,12 @@ impl Project {
             line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
+            language_servers: self.language_status(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
         notices.extend(self.environment.iter().flat_map(Environment::notices));
+        notices.extend(self.language_notices());
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

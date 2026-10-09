@@ -129,6 +129,7 @@ impl Workbench {
         project.start(&self.core.jobs, self.core.host.as_ref());
         project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
         project.start_environment(self.core.host.clone(), &self.core.jobs);
+        project.start_language(self.core.host.clone(), &self.core.jobs);
         Ok(id)
     }
 
@@ -284,6 +285,8 @@ impl Workbench {
         // A pane without the focus shows a kept view (ticket #31).
         for project in self.core.projects.values_mut() {
             project.refresh_views();
+            // Language servers follow the open editors (ticket #42).
+            project.sync_language();
         }
     }
 }

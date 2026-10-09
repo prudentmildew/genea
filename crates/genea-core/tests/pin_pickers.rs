@@ -5,7 +5,7 @@
 //! Every version list and download comes from the test host's local download
 //! fixture server, which publishes fake Node, Bun and pnpm releases.
 
-use genea_core::{Command, ProjectId, ToolState, ToolView, ToolchainPicker, ToolchainPickerKind, Workbench};
+use genea_core::{Command, Notice, ProjectId, ToolState, ToolView, ToolchainPicker, ToolchainPickerKind, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 fn project(package_json: &str) -> FixtureProject {
@@ -115,8 +115,15 @@ fn picking_a_runtime_writes_an_exact_pin_and_downloads_it() {
     assert_eq!(view.toolchain.runtime, ready("Node", "26.11.1"));
     assert_eq!(view.toolchain.package_manager, ready("pnpm", "12.10.1"));
     assert!(host.support_dir().join("toolchains/node/26.11.1/bin/node").is_file());
-    assert!(view.notices.is_empty(), "{:?}", view.notices);
+    assert!(notices(&view.notices).is_empty(), "{:?}", view.notices);
 }
+
+/// The project's notices without TypeScript 7's: these projects don't have
+/// it, and `tests/language_server.rs` covers that notice.
+fn notices(notices: &[Notice]) -> Vec<Notice> {
+    notices.iter().filter(|n| !n.message.starts_with("Language intelligence is off")).cloned().collect()
+}
+
 
 const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
 const BUN_RELEASES: &str = "https://api.github.com/repos/oven-sh/bun/releases?per_page=100";
@@ -171,7 +178,7 @@ fn picking_a_runtime_for_an_unpinned_project_pins_only_the_runtime() {
     );
     let view = workbench.project(project).unwrap();
     assert_eq!(view.toolchain.runtime, ready("Bun", "1.4.2"));
-    let messages: Vec<&str> = view.notices.iter().map(|n| n.message.as_str()).collect();
+    let messages: Vec<String> = notices(&view.notices).into_iter().map(|n| n.message).collect();
     assert_eq!(messages, ["This project doesn't pin its package manager, so Genea uses pnpm 12.10.1."]);
 }
 

@@ -997,6 +997,23 @@ impl Editor {
         self.version != self.saved_version
     }
 
+    /// The text (a cheap clone of the rope is a snapshot).
+    pub(crate) fn text(&self) -> &Rope {
+        &self.text
+    }
+
+    /// Identifies the text: every edit gives it a fresh one, and undo and
+    /// redo go back to the one the text had then. Language servers compare
+    /// it to see what changed (ticket #42).
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// The whole file is in, not only its first screen (ticket #27).
+    pub(crate) fn is_loaded(&self) -> bool {
+        self.loading.is_none()
+    }
+
     pub(crate) fn cursor(&self) -> Cursor {
         Cursor {
             carets: self.carets.clone(),
