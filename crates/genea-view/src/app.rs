@@ -115,6 +115,13 @@ impl App {
         self.welcome.sync(&self.workbench);
     }
 
+    /// The first project window and the workbench: what the benchmark
+    /// harness drives (`src/remote.rs`).
+    pub fn first_window(&mut self) -> Option<(&mut WindowController, &mut Workbench)> {
+        let controller = self.windows.first_mut()?;
+        Some((controller, &mut self.workbench))
+    }
+
     fn controller(&mut self, key: WindowKey) -> Option<&mut WindowController> {
         self.windows.iter_mut().find(|c| c.key == key)
     }

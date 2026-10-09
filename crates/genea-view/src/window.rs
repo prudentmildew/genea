@@ -57,6 +57,7 @@ const TRIPLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 impl WindowController {
     pub fn new(key: WindowKey, project: ProjectId) -> Result<Self, slint::PlatformError> {
         let window = ProjectWindow::new()?;
+        crate::journal::attach(window.window());
         let surfaces = [Surface::new(&window, 0), Surface::new(&window, 1)];
         let problem_rows = Rc::new(VecModel::default());
         window.set_problems(ModelRc::from(problem_rows.clone()));
@@ -261,6 +262,7 @@ impl WindowController {
             }
             self.surfaces[pane].sync(window, editor);
         }
+        crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
         if view.focused_pane != self.focused_pane {
             self.focused_pane = view.focused_pane;
             window.invoke_refocus();

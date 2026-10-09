@@ -13,8 +13,9 @@ crates/
   genea-testkit/  TestHost (manual clock, scripted processes/downloads) + FixtureProject
   genea-toolchain/ toolchain pins, version resolution, the shared store (ADR 0005)
   genea-view/     the thin Slint view layer and the `genea` binary
+  genea-bench/    the benchmark harness and the start-floor binary (bench/README.md)
 patches/          the one Slint patch (ADR 0004); see patches/README.md
-scripts/          reapply-slint-patch.sh
+scripts/          reapply-slint-patch.sh, bench.sh
 ```
 
 Dependencies point one way: `genea-view → genea-core → genea-host`.
@@ -271,6 +272,10 @@ chrome, native menus via muda (Slint's `MenuBar`).
   preedit go to the core as `InsertText` and `SetPreedit`. `src/blink.rs`
   stops that `TextInput`'s cursor-blink timer, which would otherwise repaint
   an idle window twice a second.
+- `src/journal.rs` and `src/remote.rs`: the benchmark harness's
+  instrumentation journal and control channel, off unless `GENEA_JOURNAL=1`.
+  `journal.rs` is the only user of Slint's `unstable-winit-030` and
+  `unstable-wgpu-30`.
 
 Rules: push to Slint only on change. Use no repeating timers (the caret is
 steady). Install no rendering notifier or run-loop observer unless the
@@ -285,6 +290,7 @@ The editor font is Menlo 13 pt with a line height of 1.2 (`Theme` in
 cargo build                  # first build downloads prebuilt Skia
 cargo test                   # core API tests + host adapter smoke tests
 cargo run --bin genea -- [FOLDER [FILE]]
+scripts/bench.sh             # the benchmark harness (bench/README.md)
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`.

@@ -1,0 +1,25 @@
+[package]
+name = "genea-bench"
+description = "The benchmark harness (spec #19): drives the real `genea` binary through its instrumentation journal and checks the Genea budgets. Also the start-floor binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "genea-bench"
+path = "src/main.rs"
+
+# The start floor (GLOSSARY.md): a bare winit window with nothing drawn. Not
+# under src/bin/, where a common global gitignore rule (`bin/`) hides it from
+# git.
+[[bin]]
+name = "genea-floor"
+path = "src/floor.rs"
+
+[dependencies]
+serde_json.workspace = true
+libc = "0.2.190"
+# The floor links the winit that Slint links (see Cargo.lock), so it goes
+# through the same window setup as Genea.
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
