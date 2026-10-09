@@ -6,7 +6,6 @@
 //! which publishes fake Node, Bun and pnpm releases.
 
 use std::{
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::mpsc,
     time::Duration,
@@ -49,8 +48,12 @@ fn installed(host: &TestHost) -> Vec<String> {
     found
 }
 
-fn is_executable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+/// Runs an installed (fake) tool from the store and returns what it prints:
+/// its version, if it was unpacked in a runnable layout.
+fn run(tool: &Path) -> String {
+    let output = std::process::Command::new(tool).output().unwrap_or_else(|e| panic!("run {}: {e}", tool.display()));
+    assert!(output.status.success(), "{} failed: {output:?}", tool.display());
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 fn ready(tool: &str, version: &str) -> Option<ToolView> {
@@ -74,9 +77,11 @@ fn opening_a_pinned_project_downloads_exactly_the_pinned_versions() {
     assert_eq!(toolchain.runtime, ready("Node", "24.18.0"));
     assert_eq!(toolchain.package_manager, ready("pnpm", "11.13.0"));
     assert_eq!(installed(&host), ["node/24.18.0", "pnpm/11.13.0"]);
-    assert!(is_executable(&store(&host).join("node/24.18.0/bin/node")));
-    // pnpm 11's binary ships without the executable bit; Genea sets it.
-    assert!(is_executable(&store(&host).join("pnpm/11.13.0/bin/pnpm")));
+    assert_eq!(run(&store(&host).join("node/24.18.0/bin/node")), "v24.18.0");
+    // pnpm 11's binary ships without the executable bit, and only runs from
+    // inside the unpacked @pnpm/exe package.
+    assert_eq!(run(&store(&host).join("pnpm/11.13.0/pnpm")), "11.13.0");
+    assert_eq!(run(&store(&host).join("pnpm/11.13.0/pn")), "11.13.0");
 }
 
 #[test]
@@ -94,7 +99,7 @@ fn a_bun_project_downloads_bun_once_for_both_roles() {
     assert_eq!(toolchain.runtime, ready("Bun", "1.4.2"));
     assert_eq!(toolchain.package_manager, ready("Bun", "1.4.2"));
     assert_eq!(installed(&host), ["bun/1.4.2"]);
-    assert!(is_executable(&store(&host).join("bun/1.4.2/bin/bun")));
+    assert_eq!(run(&store(&host).join("bun/1.4.2/bin/bun")), "1.4.2");
     assert_eq!(host.download_server().request_count(&bun), 1);
 }
 
@@ -139,6 +144,9 @@ fn a_second_project_with_the_same_pins_reuses_the_store() {
     }
     assert_eq!(host.download_server().request_count(&node), 1);
     assert_eq!(host.download_server().request_count(&pnpm), 1);
+    assert_eq!(run(&store(&host).join("pnpm/12.10.1/pnpm")), "12.10.1");
+    // From pnpm 12, every bin entry is the native binary.
+    assert_eq!(run(&store(&host).join("pnpm/12.10.1/pnpx")), "12.10.1");
 }
 
 #[test]

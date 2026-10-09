@@ -8,9 +8,15 @@
 //!   checked against the release's `SHASUMS256.txt`.
 //! - **pnpm**: npm's `@pnpm/exe`. Its darwin-arm64 platform package is named
 //!   in `@pnpm/exe@<V>`'s `optionalDependencies` (`@pnpm/exe.darwin-arm64`
-//!   from 12, `@pnpm/macos-arm64` before), and its tarball is checked against
-//!   that package's sha512 `dist.integrity`. pnpm's GitHub releases publish
-//!   no checksums.
+//!   from 12, `@pnpm/macos-arm64` before). Both tarballs are checked against
+//!   their sha512 `dist.integrity`. pnpm's GitHub releases publish no
+//!   checksums. The binary only works from inside the unpacked `@pnpm/exe`
+//!   package (pnpm 11 loads `dist/pnpm.mjs` from beside itself; pnpm 12 keeps
+//!   node-gyp there), so the version folder is that package with the binary
+//!   placed at its `pnpm` (and, from 12, at `pn`, `pnpx` and `pnx`), as
+//!   pnpm's own install script does.
+
+use std::{fs, io, os::unix::fs::PermissionsExt, path::Path};
 
 use base64::Engine;
 use genea_host::{DownloadError, Downloads};
@@ -25,16 +31,35 @@ const NPM_REGISTRY: &str = "https://registry.npmjs.org";
 /// pnpm's macOS arm64 package, by name, newest naming first.
 const PNPM_PLATFORM_PACKAGES: [&str; 2] = ["@pnpm/exe.darwin-arm64", "@pnpm/macos-arm64"];
 
-/// One downloadable archive and what it must hash to.
+/// What to download for one tool version: its archives, in order.
 pub(crate) struct Artifact {
+    pub archives: Vec<Archive>,
+}
+
+/// One downloadable archive and what it must hash to.
+pub(crate) struct Archive {
     pub url: String,
     pub checksum: Checksum,
     pub format: Format,
     /// Where the archive's contents go inside the version folder, after
-    /// their top-level folder is stripped: `""` (Node ships `bin/`) or
-    /// `"bin"` (Bun and pnpm ship the bare executable).
+    /// their top-level folder is stripped: `""` (Node ships `bin/`), `"bin"`
+    /// (Bun ships the bare executable), or a scratch folder [`finish`] uses.
     pub into: &'static str,
+    /// Whether this archive's download is the one progress reports on (the
+    /// big one).
+    pub reports_progress: bool,
 }
+
+/// Where a tool's executables are inside its version folder.
+pub(crate) fn bin_subdir(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Node | Tool::Bun => "bin",
+        Tool::Pnpm => "",
+    }
+}
+
+/// pnpm's platform package is unpacked here, then its binary is moved out.
+const PNPM_PLATFORM_DIR: &str = ".platform";
 
 pub(crate) enum Checksum {
     Sha256(Vec<u8>),
@@ -88,13 +113,17 @@ pub(crate) fn artifact(downloads: &dyn Downloads, tool: Tool, version: &Version)
             let base = format!("{NODE_DIST}/v{version}");
             let file = format!("node-v{version}-darwin-arm64.tar.xz");
             let checksum = sha256_from_shasums(downloads, tool, version, &format!("{base}/SHASUMS256.txt"), &file)?;
-            Ok(Artifact { url: format!("{base}/{file}"), checksum, format: Format::TarXz, into: "" })
+            let url = format!("{base}/{file}");
+            let archive = Archive { url, checksum, format: Format::TarXz, into: "", reports_progress: true };
+            Ok(Artifact { archives: vec![archive] })
         }
         Tool::Bun => {
             let base = format!("{BUN_DOWNLOADS}/bun-v{version}");
             let file = "bun-darwin-aarch64.zip";
             let checksum = sha256_from_shasums(downloads, tool, version, &format!("{base}/SHASUMS256.txt"), file)?;
-            Ok(Artifact { url: format!("{base}/{file}"), checksum, format: Format::Zip, into: "bin" })
+            let url = format!("{base}/{file}");
+            let archive = Archive { url, checksum, format: Format::Zip, into: "bin", reports_progress: true };
+            Ok(Artifact { archives: vec![archive] })
         }
         Tool::Pnpm => {
             let manifest_url = format!("{NPM_REGISTRY}/@pnpm%2fexe/{version}");
@@ -105,21 +134,74 @@ pub(crate) fn artifact(downloads: &dyn Downloads, tool: Tool, version: &Version)
                 .ok_or_else(|| bad_document(&manifest_url, "it has no macOS arm64 package"))?;
             let package_url = format!("{NPM_REGISTRY}/{}/{version}", platform.replace('/', "%2f"));
             let package = fetch_json(downloads, &package_url)?;
-            let tarball = package["dist"]["tarball"].as_str().ok_or_else(|| bad_document(&package_url, "no tarball"))?;
-            let integrity =
-                package["dist"]["integrity"].as_str().ok_or_else(|| bad_document(&package_url, "no integrity"))?;
-            let digest = integrity
-                .strip_prefix("sha512-")
-                .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
-                .ok_or_else(|| bad_document(&package_url, "its integrity isn't sha512"))?;
+            let (binary_url, binary_checksum) = npm_dist(&package, &package_url)?;
+            let (exe_url, exe_checksum) = npm_dist(&manifest, &manifest_url)?;
             Ok(Artifact {
-                url: tarball.to_owned(),
-                checksum: Checksum::Sha512(digest),
-                format: Format::TarGz,
-                into: "bin",
+                archives: vec![
+                    Archive {
+                        url: binary_url,
+                        checksum: binary_checksum,
+                        format: Format::TarGz,
+                        into: PNPM_PLATFORM_DIR,
+                        reports_progress: true,
+                    },
+                    Archive {
+                        url: exe_url,
+                        checksum: exe_checksum,
+                        format: Format::TarGz,
+                        into: "",
+                        reports_progress: false,
+                    },
+                ],
             })
         }
     }
+}
+
+/// Lays out the unpacked archives so the tool runs from the store: puts
+/// pnpm's binary into its package, and makes the executables executable
+/// (pnpm before 12 ships its binary without the bit).
+pub(crate) fn finish(tool: Tool, version: &Version, unpacked: &Path) -> io::Result<()> {
+    let bin = unpacked.join(bin_subdir(tool));
+    if tool == Tool::Pnpm {
+        let platform = unpacked.join(PNPM_PLATFORM_DIR);
+        let binary = platform.join("pnpm");
+        let names: &[&str] = if version.major() >= 12 { &["pnpm", "pn", "pnpx", "pnx"] } else { &["pnpm"] };
+        for name in names {
+            let target = bin.join(name);
+            if *name == "pnpm" || target.exists() {
+                let _ = fs::remove_file(&target);
+                fs::copy(&binary, &target)?;
+            }
+        }
+        fs::remove_dir_all(platform)?;
+    }
+    let executable = bin.join(tool.id());
+    let mode = fs::metadata(&executable)
+        .map_err(|_| io::Error::other(format!("it has no {}", tool.id())))?
+        .permissions()
+        .mode();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(mode | 0o755))?;
+    if tool == Tool::Pnpm && version.major() >= 12 {
+        for name in ["pn", "pnpx", "pnx"] {
+            if let Ok(metadata) = fs::metadata(bin.join(name)) {
+                fs::set_permissions(bin.join(name), fs::Permissions::from_mode(metadata.permissions().mode() | 0o755))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// An npm version document's `dist.tarball` and its sha512 `dist.integrity`.
+fn npm_dist(document: &Value, url: &str) -> Result<(String, Checksum), ToolchainError> {
+    let tarball = document["dist"]["tarball"].as_str().ok_or_else(|| bad_document(url, "no tarball"))?;
+    let integrity = document["dist"]["integrity"].as_str().ok_or_else(|| bad_document(url, "no integrity"))?;
+    let digest = integrity
+        .split_whitespace()
+        .find_map(|sri| sri.strip_prefix("sha512-"))
+        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
+        .ok_or_else(|| bad_document(url, "its integrity isn't sha512"))?;
+    Ok((tarball.to_owned(), Checksum::Sha512(digest)))
 }
 
 /// The SHA-256 listed for `file` in a `SHASUMS256.txt` (`<hex>  <file>`).

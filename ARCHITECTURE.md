@@ -11,6 +11,7 @@ crates/
   genea-core/     framework-free core; the Workbench is its single entry point
   genea-host/     the host boundary: processes, downloads, the clock; RealHost
   genea-testkit/  TestHost (manual clock, scripted processes/downloads) + FixtureProject
+  genea-toolchain/ toolchain pins, version resolution, the shared store (ADR 0005)
   genea-view/     the thin Slint view layer and the `genea` binary
 patches/          the one Slint patch (ADR 0004); see patches/README.md
 scripts/          reapply-slint-patch.sh
@@ -64,7 +65,11 @@ use, and nothing else:
 
 ## The host boundary
 
-`genea_host::Host` provides `clock()`, `processes()` and `downloads()`.
+`genea_host::Host` provides `clock()`, `processes()`, `downloads()` and
+`support_dir()` (Genea's application-support folder: real
+`~/Library/Application Support/Genea`, a temp dir in tests; used directly
+through the filesystem). `Downloads::fetch_with_length` also reports the
+response's `Content-Length`, for progress.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
   idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
@@ -74,11 +79,30 @@ use, and nothing else:
   thread with real pipes (unscripted programs fail with `NotFound`) and
   records every spawn; `ScriptedDownloads::serve/fail` answers URLs from a
   table (unknown URLs answer 404) and records every request.
+  Once started, `TestHost::download_server()` (the **local download fixture
+  server**, a real HTTP server on 127.0.0.1) answers every URL not in the
+  table, over real HTTP. Tests publish files under the real URLs
+  (`server.publish(url, bytes)`), `hold`/`release` a response halfway to
+  look at Genea mid-download, and `TestHost::tools()` publishes fake Node,
+  Bun and pnpm releases (indexes, checksums, archives; `*_with_bad_checksum`
+  for a mismatch).
 
 A new kind of effect (a PTY, say) gets a trait in `genea-host`, an accessor on
 `Host`, a real implementation in `genea-host/src/real.rs` and a scripted one
 in `genea-testkit/src/host.rs`. Keep the traits small and blocking: the core
 calls them from background threads.
+
+## The toolchain
+
+`genea-toolchain` (blocking, no threads) reads and writes the pins in
+`package.json` (`pins`), resolves a `Request` (newest match in the store,
+else newest published), and installs into the `Store` at
+`<support_dir>/toolchains/<tool>/<version>/`; `Installed::bin_dir` is the
+folder to put on PATH (`bin/` for Node and Bun, the unpacked `@pnpm/exe`
+package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it reads the pins
+in a job when a project with a root `package.json` opens, starts one job per
+role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
+whose `NoticeAction` carries the `Command` a click dispatches.
 
 ## Tests
 

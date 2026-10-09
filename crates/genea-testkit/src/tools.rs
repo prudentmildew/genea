@@ -5,13 +5,14 @@
 //!   `darwin-arm64.tar.xz` archive;
 //! - Bun: the GitHub releases list, `SHASUMS256.txt` and the
 //!   `bun-darwin-aarch64.zip` asset;
-//! - pnpm: npm's `@pnpm/exe` documents, its darwin-arm64 platform package
-//!   (`@pnpm/exe.darwin-arm64` from 12, `@pnpm/macos-arm64` before) with a
-//!   sha512 `integrity`, and the package tarball.
+//! - pnpm: npm's `@pnpm/exe` documents and tarball, and its darwin-arm64
+//!   platform package (`@pnpm/exe.darwin-arm64` from 12, `@pnpm/macos-arm64`
+//!   before), each with a sha512 `integrity`.
 //!
-//! Each tool is a small shell script that prints its version. The
-//! `*_with_bad_checksum` variants publish an archive that doesn't match its
-//! published checksum.
+//! Each tool is a small shell script that prints its version; the pnpm one
+//! (like the real binary) only runs from inside the unpacked `@pnpm/exe`
+//! package. The `*_with_bad_checksum` variants publish the main archive (the
+//! platform package, for pnpm) so that it doesn't match its checksum.
 
 use std::io::Write;
 
@@ -129,12 +130,15 @@ impl<'a> FakeTools<'a> {
         } else {
             ("@pnpm/macos-arm64", "macos-arm64", 0o644)
         };
+        // Like the real one, the binary only runs from inside the unpacked
+        // @pnpm/exe package: pnpm 11 loads `dist/pnpm.mjs` from beside it.
+        let binary = format!("#!/bin/sh\n[ -f \"$(dirname \"$0\")/dist/pnpm.mjs\" ] || exit 1\necho {version}\n");
         let tgz = gzip(&tar_of(&[
-            ("package/pnpm".into(), script(version), mode),
+            ("package/pnpm".into(), binary.into_bytes(), mode),
             ("package/package.json".into(), format!("{{\"name\":\"{package}\"}}").into_bytes(), 0o644),
         ]));
-        let integrity = format!("sha512-{}", base64::engine::general_purpose::STANDARD.encode(Sha512::digest(&tgz)));
         let tarball = format!("https://registry.npmjs.org/{package}/-/{file}-{version}.tgz");
+        let integrity = sri_sha512(&tgz);
         self.server.publish(&tarball, tampered(tgz, bad));
         let escaped = package.replace('/', "%2f");
         self.server.publish(
@@ -147,11 +151,33 @@ impl<'a> FakeTools<'a> {
             .unwrap(),
         );
 
+        // @pnpm/exe itself: placeholders that installing replaces with the
+        // platform binary (`pnpm`; from 12 also `pn`, `pnpx`, `pnx`, before
+        // that those are shell scripts that run the `pnpm` beside them), and
+        // the `dist/` the binary needs.
+        let placeholder = b"# replaced by the native binary on install\n".to_vec();
+        let mut exe_files = vec![
+            ("package/pnpm".to_owned(), placeholder.clone(), 0o755),
+            ("package/dist/pnpm.mjs".into(), b"// pnpm\n".to_vec(), 0o644),
+            ("package/package.json".into(), b"{\"name\":\"@pnpm/exe\"}".to_vec(), 0o644),
+        ];
+        for name in ["pn", "pnpx", "pnx"] {
+            let file = if major >= 12 {
+                placeholder.clone()
+            } else {
+                b"#!/bin/sh\nexec \"$(dirname \"$0\")/pnpm\" \"$@\"\n".to_vec()
+            };
+            exe_files.push((format!("package/{name}"), file, 0o755));
+        }
+        let exe = gzip(&tar_of(&exe_files));
+        let exe_tarball = format!("https://registry.npmjs.org/@pnpm/exe/-/exe-{version}.tgz");
         let manifest = json!({
             "name": "@pnpm/exe",
             "version": version,
             "optionalDependencies": { package: version, "@pnpm/linux-x64": version },
+            "dist": { "tarball": exe_tarball, "integrity": sri_sha512(&exe), "shasum": "0000" },
         });
+        self.server.publish(&exe_tarball, exe);
         self.server.publish(format!("{PNPM_PACKUMENT}/{version}"), serde_json::to_vec(&manifest).unwrap());
         let mut packument = self
             .server
@@ -171,6 +197,11 @@ impl<'a> FakeTools<'a> {
 /// A tool stand-in: a shell script that prints `version`.
 fn script(version: &str) -> Vec<u8> {
     format!("#!/bin/sh\necho {version}\n").into_bytes()
+}
+
+/// An npm `dist.integrity` value.
+fn sri_sha512(bytes: &[u8]) -> String {
+    format!("sha512-{}", base64::engine::general_purpose::STANDARD.encode(Sha512::digest(bytes)))
 }
 
 /// The archive with one byte changed, if `bad`.

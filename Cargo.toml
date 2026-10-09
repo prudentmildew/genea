@@ -26,8 +26,11 @@ ropey = "1.6.1"
 unicode-width = "0.2.2"
 
 # Host boundary (genea-host's RealHost). The system TLS stack, so no C crypto
-# library is built.
-ureq = { version = "3.4.2", default-features = false, features = ["native-tls-no-default", "gzip"] }
+# library is built. It must be `native-tls`: in ureq 3.4.2,
+# `native-tls-no-default` alone leaves the backend out and every https
+# request panics. RealHost still uses the system trust store
+# (RootCerts::PlatformVerifier), not the bundled webpki roots.
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls", "gzip"] }
 
 # Test support.
 tempfile = "3.27.0"

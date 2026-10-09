@@ -3,7 +3,9 @@
 //! A version folder exists only once its download has been verified and
 //! unpacked: installs unpack into a hidden `.download-…` folder next to the
 //! tool folders and rename it into place, and a failed install removes it.
-//! Every tool's executables end up in the version folder's `bin/`.
+//! [`Installed::bin_dir`] says where a tool's executables are: `bin/` for
+//! Node and Bun, the version folder itself for pnpm (its `@pnpm/exe`
+//! package).
 
 use std::{
     cell::Cell,
@@ -11,7 +13,6 @@ use std::{
     fmt,
     fs::{self, File},
     io::{self, BufWriter, Write},
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -24,7 +25,7 @@ use sha2::{Digest, Sha256, Sha512};
 
 use crate::{
     Request, Tool, Version, archive,
-    sources::{self, Checksum},
+    sources::{self, Archive, Checksum},
 };
 
 /// The store. Share one per process (it serialises installs of the same
@@ -41,7 +42,8 @@ pub struct Installed {
     pub version: Version,
     /// `<store>/<tool>/<version>`.
     pub dir: PathBuf,
-    /// The folder to put on PATH: `<dir>/bin`, holding the tool's executable.
+    /// The folder to put on PATH, holding the tool's executable (`node`,
+    /// `bun`, `pnpm`).
     pub bin_dir: PathBuf,
 }
 
@@ -128,7 +130,7 @@ impl Store {
 
     fn installed_at(&self, tool: Tool, version: &Version) -> Installed {
         let dir = self.root.join(tool.id()).join(version.to_string());
-        Installed { tool, version: version.clone(), bin_dir: dir.join("bin"), dir }
+        Installed { tool, version: version.clone(), bin_dir: dir.join(sources::bin_subdir(tool)), dir }
     }
 
     fn staging_dir(&self, tool: Tool, version: &Version) -> PathBuf {
@@ -137,8 +139,8 @@ impl Store {
         self.root.join(format!(".download-{}-{version}-{}-{n}", tool.id(), std::process::id()))
     }
 
-    /// Downloads and verifies the archive into `staging/archive`, then
-    /// unpacks it into `staging/unpacked`.
+    /// Downloads and verifies each archive into `staging`, unpacks them
+    /// into `staging/unpacked` and lays the result out to run.
     fn download_into(
         &self,
         downloads: &dyn Downloads,
@@ -149,45 +151,51 @@ impl Store {
     ) -> Result<(), ToolchainError> {
         let artifact = sources::artifact(downloads, tool, version)?;
         fs::create_dir_all(staging).map_err(ToolchainError::Store)?;
-        let archive_path = staging.join("archive");
-        let file = File::create(&archive_path).map_err(ToolchainError::Store)?;
-
-        let total = Cell::new(None);
-        let mut sink = HashingSink {
-            file: BufWriter::new(file),
-            sha256: Sha256::new(),
-            sha512: Sha512::new(),
-            received: 0,
-            total: &total,
-            report: progress,
-        };
-        (sink.report)(Progress { received: 0, total: None });
-        downloads
-            .fetch_with_length(&artifact.url, &mut sink, &mut |length| total.set(Some(length)))
-            .map_err(|error| ToolchainError::Download { url: artifact.url.clone(), error })?;
-        sink.file.flush().map_err(ToolchainError::Store)?;
-
-        let matches = match &artifact.checksum {
-            Checksum::Sha256(expected) => sink.sha256.finalize().as_slice() == expected.as_slice(),
-            Checksum::Sha512(expected) => sink.sha512.finalize().as_slice() == expected.as_slice(),
-        };
-        if !matches {
-            return Err(ToolchainError::Checksum { url: artifact.url });
-        }
-
         let unpacked = staging.join("unpacked");
-        archive::unpack(artifact.format, &archive_path, &unpacked.join(artifact.into))
-            .map_err(|error| ToolchainError::Archive { url: artifact.url.clone(), error })?;
-        // pnpm before 12 ships its binary without the executable bit.
-        let executable = unpacked.join("bin").join(tool.id());
-        let metadata = fs::metadata(&executable).map_err(|_| ToolchainError::Archive {
-            url: artifact.url.clone(),
-            error: io::Error::other(format!("it has no {}", tool.id())),
-        })?;
-        let mode = metadata.permissions().mode() | 0o755;
-        fs::set_permissions(&executable, fs::Permissions::from_mode(mode)).map_err(ToolchainError::Store)?;
-        Ok(())
+        for (i, archive) in artifact.archives.iter().enumerate() {
+            let archive_path = staging.join(format!("archive-{i}"));
+            let mut silent = |_: Progress| {};
+            let report: &mut dyn FnMut(Progress) = if archive.reports_progress { &mut *progress } else { &mut silent };
+            download_verified(downloads, archive, &archive_path, report)?;
+            archive::unpack(archive.format, &archive_path, &unpacked.join(archive.into))
+                .map_err(|error| ToolchainError::Archive { url: archive.url.clone(), error })?;
+        }
+        sources::finish(tool, version, &unpacked).map_err(|error| ToolchainError::Archive {
+            url: artifact.archives.first().map(|a| a.url.clone()).unwrap_or_default(),
+            error,
+        })
     }
+}
+
+/// Downloads `archive` to `path`, hashing it on the way, and fails unless it
+/// matches its published checksum.
+fn download_verified(
+    downloads: &dyn Downloads,
+    archive: &Archive,
+    path: &Path,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<(), ToolchainError> {
+    let file = File::create(path).map_err(ToolchainError::Store)?;
+    let total = Cell::new(None);
+    let mut sink = HashingSink {
+        file: BufWriter::new(file),
+        sha256: Sha256::new(),
+        sha512: Sha512::new(),
+        received: 0,
+        total: &total,
+        report: progress,
+    };
+    (sink.report)(Progress { received: 0, total: None });
+    downloads
+        .fetch_with_length(&archive.url, &mut sink, &mut |length| total.set(Some(length)))
+        .map_err(|error| ToolchainError::Download { url: archive.url.clone(), error })?;
+    sink.file.flush().map_err(ToolchainError::Store)?;
+
+    let matches = match &archive.checksum {
+        Checksum::Sha256(expected) => sink.sha256.finalize().as_slice() == expected.as_slice(),
+        Checksum::Sha512(expected) => sink.sha512.finalize().as_slice() == expected.as_slice(),
+    };
+    if matches { Ok(()) } else { Err(ToolchainError::Checksum { url: archive.url.clone() }) }
 }
 
 /// Writes the download to disk while hashing it and reporting progress.

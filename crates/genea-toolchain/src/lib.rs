@@ -5,6 +5,7 @@
 //! `package.json`. Genea downloads those versions itself into one shared
 //! store, `<support dir>/toolchains/<tool>/<version>/`, and verifies each
 //! download against its publisher's checksum before anything lands there.
+//! [`Installed::bin_dir`] is the folder that holds the tool's executable.
 //!
 //! - [`pins`]: reading pins from `package.json`, and writing exact ones.
 //! - [`Store`]: resolving a [`Request`] to a version (newest match in the
