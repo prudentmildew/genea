@@ -92,6 +92,21 @@ impl Project {
                     editor.add_caret(line, column, self.viewport_rows);
                 }
             }
+            Command::SelectNextOccurrence => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_next_occurrence(self.viewport_rows);
+                }
+            }
+            Command::UnselectLastOccurrence => {
+                if let Some(editor) = &mut self.editor {
+                    editor.unselect_last_occurrence(self.viewport_rows);
+                }
+            }
+            Command::SelectAllOccurrences => {
+                if let Some(editor) = &mut self.editor {
+                    editor.select_all_occurrences(self.viewport_rows);
+                }
+            }
             Command::SelectWord { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.select_word(line, column, self.viewport_rows);

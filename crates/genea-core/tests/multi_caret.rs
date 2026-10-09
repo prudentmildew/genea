@@ -198,3 +198,64 @@ fn copying_at_several_carets_copies_each_selection_on_its_own_line() {
     editing.run([Command::MoveCaret(LineStart), Command::Paste]);
     assert_eq!(editing.lines(), ["ba", "dc", "fe", ""]);
 }
+
+#[test]
+fn control_g_selects_the_word_then_adds_its_next_whole_word_occurrences() {
+    let mut editing = open("foo food\nfoo\nx.foo\n");
+    editing.run([Command::PlaceCaret { line: 1, column: 1 }]);
+
+    editing.run([Command::SelectNextOccurrence]);
+    assert_eq!(editing.selections(), [vec![], vec![0..3], vec![], vec![]]);
+    assert_eq!(editing.primary(), (1, 3));
+
+    editing.run([Command::SelectNextOccurrence]);
+    assert_eq!(editing.selections(), [vec![], vec![0..3], vec![2..5], vec![]]);
+    assert_eq!(editing.primary(), (2, 5));
+
+    // Wraps around to the top, skipping "food".
+    editing.run([Command::SelectNextOccurrence]);
+    assert_eq!(editing.selections(), [vec![0..3], vec![0..3], vec![2..5], vec![]]);
+    assert_eq!(editing.primary(), (0, 3));
+
+    // Every occurrence is selected: nothing more to add.
+    editing.run([Command::SelectNextOccurrence]);
+    assert_eq!(editing.carets(), [(0, 3), (1, 3), (2, 5)]);
+
+    editing.type_text("bar");
+    assert_eq!(editing.lines(), ["bar food", "bar", "x.bar", ""]);
+}
+
+#[test]
+fn control_g_on_a_selection_matches_it_anywhere() {
+    let mut editing = open("foo food\n");
+    editing.run([Command::Select(Right), Command::Select(Right)]);
+
+    editing.run([Command::SelectNextOccurrence]);
+
+    assert_eq!(editing.selections(), [vec![0..2, 4..6], vec![]]);
+}
+
+#[test]
+fn control_shift_g_removes_the_last_occurrence_added() {
+    let mut editing = open("a a a\n");
+    editing.run([Command::SelectNextOccurrence, Command::SelectNextOccurrence, Command::SelectNextOccurrence]);
+    assert_eq!(editing.selections(), [vec![0..1, 2..3, 4..5], vec![]]);
+
+    editing.run([Command::UnselectLastOccurrence]);
+    assert_eq!(editing.selections(), [vec![0..1, 2..3], vec![]]);
+    assert_eq!(editing.primary(), (0, 3));
+
+    editing.run([Command::UnselectLastOccurrence, Command::UnselectLastOccurrence]);
+    assert_eq!(editing.selections(), [vec![0..1], vec![]]);
+}
+
+#[test]
+fn control_command_g_selects_every_occurrence() {
+    let mut editing = open("let a = b(a);\nlet abc = a;\n");
+    editing.run([Command::PlaceCaret { line: 0, column: 4 }]);
+
+    editing.run([Command::SelectAllOccurrences]);
+
+    assert_eq!(editing.selections(), [vec![4..5, 10..11], vec![10..11], vec![]]);
+    assert_eq!(editing.primary(), (0, 5));
+}

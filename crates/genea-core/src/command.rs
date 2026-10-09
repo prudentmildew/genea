@@ -40,6 +40,16 @@ pub enum Command {
     /// caret that is already there, removes it instead, unless it is the
     /// only one. Typing, deleting and pasting then apply at every caret.
     AddCaret { line: usize, column: usize },
+    /// ⌃G: with nothing selected, selects the word at the caret; then adds
+    /// a caret selecting the next occurrence of the selection (wrapping
+    /// around to the top), as the primary. A word selected by ⌃G only
+    /// matches whole words.
+    SelectNextOccurrence,
+    /// ⌃⇧G: removes the caret added last, making the one before it primary.
+    UnselectLastOccurrence,
+    /// ⌃⌘G: selects every occurrence of the selection, or of the word at
+    /// the caret (whole words), with a caret at each.
+    SelectAllOccurrences,
     /// Double-click: selects the word (or punctuation or space run) at a
     /// grid cell.
     SelectWord { line: usize, column: usize },

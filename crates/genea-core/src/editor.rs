@@ -90,6 +90,10 @@ pub(crate) struct Editor {
     /// The version last written to disk (or read from it).
     saved_version: u64,
     history: History,
+    /// Set when ⌃G or ⌃⌘G selects the word at the caret: the version and
+    /// carets it left. While both still hold, occurrences match whole words
+    /// only; any other caret change or edit ends that.
+    whole_words: Option<(u64, Vec<Cursor>)>,
 }
 
 /// The buffer as it was when a save started.
@@ -114,6 +118,7 @@ impl Editor {
             last_version: 0,
             saved_version: 0,
             history: History::default(),
+            whole_words: None,
         }
     }
 
@@ -219,6 +224,117 @@ impl Editor {
         }
         self.merge_cursors();
         self.reveal_caret(viewport_rows);
+    }
+
+    /// ⌃G: with nothing selected, selects the word at the primary caret;
+    /// otherwise adds a caret selecting the next occurrence of the primary
+    /// selection after it (wrapping around), as the new primary. A word
+    /// selected this way only matches whole words.
+    pub(crate) fn select_next_occurrence(&mut self, viewport_rows: f64) {
+        if self.primary().is_empty() {
+            self.select_word_at_primary();
+        } else {
+            let whole_words = self.word_search_on();
+            let from = self.primary().range().end;
+            let matches = self.occurrences(whole_words);
+            let selected =
+                |m: &&Range<usize>| self.cursors.iter().any(|c| c.range().start < m.end && m.start < c.range().end);
+            let next = matches.iter().filter(|m| m.start >= from).chain(&matches).find(|m| !selected(m)).cloned();
+            if let Some(next) = next {
+                self.cursors.push(Cursor::selecting(next.start, next.end));
+                self.merge_cursors();
+            }
+            self.keep_word_search(whole_words);
+        }
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// ⌃⇧G: removes the primary caret (the last one added), making the one
+    /// before it primary. Does nothing with a single caret.
+    pub(crate) fn unselect_last_occurrence(&mut self, viewport_rows: f64) {
+        if self.cursors.len() > 1 {
+            let whole_words = self.word_search_on();
+            self.cursors.pop();
+            self.keep_word_search(whole_words);
+        }
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// ⌃⌘G: selects every occurrence of the primary selection (or of the
+    /// word at the primary caret, as whole words), with a caret at each.
+    /// The primary stays where it was.
+    pub(crate) fn select_all_occurrences(&mut self, viewport_rows: f64) {
+        if self.primary().is_empty() {
+            self.select_word_at_primary();
+        }
+        let primary = self.primary();
+        if !primary.is_empty() {
+            let whole_words = self.word_search_on();
+            let own = primary.range();
+            self.cursors = self
+                .occurrences(whole_words)
+                .into_iter()
+                .filter(|m| m.end <= own.start || m.start >= own.end)
+                .map(|m| Cursor::selecting(m.start, m.end))
+                .chain([primary])
+                .collect();
+            self.merge_cursors();
+            self.keep_word_search(whole_words);
+        }
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Selects the word touching the primary caret, if any, and starts a
+    /// whole-word occurrence search.
+    fn select_word_at_primary(&mut self) {
+        let caret = self.primary().caret;
+        let is_word = |i: usize| text::CharClass::of(self.text.char(i)) == text::CharClass::Word;
+        let mut start = caret;
+        while start > 0 && is_word(start - 1) {
+            start -= 1;
+        }
+        let mut end = caret;
+        while end < self.text.len_chars() && is_word(end) {
+            end += 1;
+        }
+        if start < end {
+            *self.cursors.last_mut().expect("an editor always has a caret") = Cursor::selecting(start, end);
+            self.keep_word_search(true);
+        }
+    }
+
+    /// Whether the carets are still those a whole-word occurrence search
+    /// left, with the text unchanged.
+    fn word_search_on(&self) -> bool {
+        self.whole_words.as_ref().is_some_and(|(version, cursors)| *version == self.version && *cursors == self.cursors)
+    }
+
+    /// Remembers the carets an occurrence command left, so the next one
+    /// knows whether a whole-word search is still going.
+    fn keep_word_search(&mut self, whole_words: bool) {
+        self.whole_words = whole_words.then(|| (self.version, self.cursors.clone()));
+    }
+
+    /// Every occurrence of the primary selection's text, in order.
+    fn occurrences(&self, whole_words: bool) -> Vec<Range<usize>> {
+        let needle = self.text.slice(self.primary().range()).to_string();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let len = needle.chars().count();
+        let is_word = |i: usize| text::CharClass::of(self.text.char(i)) == text::CharClass::Word;
+        let bounded = |m: &Range<usize>| {
+            (m.start == 0 || !is_word(m.start - 1)) && (m.end == self.text.len_chars() || !is_word(m.end))
+        };
+        self.text
+            .to_string()
+            .match_indices(&needle)
+            .map(|(byte, _)| {
+                let start = self.text.byte_to_char(byte);
+                start..start + len
+            })
+            .filter(|m| !whole_words || bounded(m))
+            .collect()
     }
 
     /// The text position at or before a grid cell, clamped to the text.
