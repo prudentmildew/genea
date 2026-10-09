@@ -457,3 +457,100 @@ fn a_program_can_copy_to_the_clipboard() {
 
     assert_eq!(host.clipboard().text().as_deref(), Some("copied"));
 }
+
+fn shown(workbench: &Workbench, project: ProjectId) -> (bool, bool) {
+    let view = terminal(workbench, project);
+    (view.visible, view.focused)
+}
+
+#[test]
+fn option_f12_shows_and_focuses_the_pane_then_collapses_it() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    // Shown next to the editor, which has the focus.
+    assert_eq!(shown(&workbench, project), (true, false));
+
+    workbench.dispatch(project, Command::ToggleTerminal);
+    assert_eq!(shown(&workbench, project), (true, true));
+    workbench.dispatch(project, Command::ToggleTerminal);
+    assert_eq!(shown(&workbench, project), (false, false));
+    workbench.dispatch(project, Command::ToggleTerminal);
+    assert_eq!(shown(&workbench, project), (true, true));
+
+    // A click in the editor, then in the terminal.
+    workbench.dispatch(project, Command::FocusPane(0));
+    assert_eq!(shown(&workbench, project), (true, false));
+    workbench.dispatch(project, Command::FocusTerminal);
+    assert_eq!(shown(&workbench, project), (true, true));
+
+    // The shell kept running all along.
+    assert_eq!(host.ptys().spawned().len(), 1);
+    assert!(!pty.hung_up());
+}
+
+#[test]
+fn a_program_that_asks_hears_when_the_terminal_gains_and_loses_the_focus() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    pty.output("\x1b[?1004h");
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::FocusTerminal);
+    workbench.dispatch(project, Command::FocusPane(0));
+
+    assert_eq!(pty.wait_for_input("\x1b[O"), "\x1b[I\x1b[O");
+}
+
+#[test]
+fn when_the_shell_exits_return_starts_a_new_one() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+
+    pty.output("bye");
+    pty.exit(0);
+    workbench.settle().unwrap();
+
+    let view = terminal(&workbench, project);
+    assert_eq!(view.status, TerminalStatus::Exited { code: Some(0) });
+    assert_eq!(screen(&workbench, project), ["bye"]);
+    assert_eq!(view.cursor, None);
+
+    workbench.dispatch(project, Command::TerminalKey(TerminalKey::Enter, Modifiers::default()));
+    workbench.settle().unwrap();
+
+    let second = host.ptys().wait_for_spawn(2);
+    assert_eq!(terminal(&workbench, project).status, TerminalStatus::Running);
+    assert_eq!(screen(&workbench, project), Vec::<String>::new());
+    second.output("again");
+    workbench.settle().unwrap();
+    assert_eq!(screen(&workbench, project), ["again"]);
+}
+
+#[test]
+fn closing_the_project_hangs_up_the_shell() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+
+    workbench.close_project(project);
+
+    pty.wait_for_hang_up();
+}
+
+#[test]
+fn a_shell_that_cant_start_says_why() {
+    let host = TestHost::new();
+    host.ptys().fail(std::io::ErrorKind::NotFound);
+    let fixture = fixture();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    assert_eq!(
+        terminal(&workbench, project).status,
+        TerminalStatus::Failed("Couldn't start your shell (/bin/zsh): can't start /bin/zsh".into())
+    );
+}

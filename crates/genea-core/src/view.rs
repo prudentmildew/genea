@@ -289,6 +289,10 @@ pub struct RecentProject {
 /// grid like the editor.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalView {
+    /// The pane is showing; ⌥F12 collapses it.
+    pub visible: bool,
+    /// Keys and text go to the terminal, not the editor.
+    pub focused: bool,
     pub status: TerminalStatus,
     /// The title the program set (OSC 0 or 2), else the shell's name.
     pub title: String,

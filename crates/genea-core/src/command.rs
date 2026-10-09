@@ -142,6 +142,13 @@ pub enum Command {
     ScrollPane { pane: usize, rows: f64 },
 
     // The terminal pane (ticket #38).
+    /// ⌥F12: shows the terminal pane and focuses it; if it is showing and
+    /// focused, collapses it and gives the editor the focus back. The
+    /// shell keeps running while the pane is collapsed.
+    ToggleTerminal,
+    /// Gives the terminal the keyboard focus (a click in it). The editor
+    /// gets it back with `FocusPane` or `SelectTab`.
+    FocusTerminal,
     /// Tells the core how many rows and columns of cells fit in the
     /// terminal pane. The shell is told too (SIGWINCH), and the grid
     /// reflows.
@@ -149,7 +156,8 @@ pub enum Command {
     /// Types text into the terminal: a key press or an IME commit.
     TerminalText(String),
     /// A key that isn't plain text, or one with ⌃ or ⌥ held: sent to the
-    /// program the way xterm sends it.
+    /// program the way xterm sends it. Return after the shell has exited
+    /// (or failed to start) starts a new one.
     TerminalKey(TerminalKey, Modifiers),
     /// The scroll wheel over the terminal, in rows (negative is up, towards
     /// older output), over the cell at `line` and `column`. It scrolls the

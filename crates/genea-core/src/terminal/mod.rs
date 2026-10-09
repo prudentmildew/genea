@@ -72,6 +72,10 @@ pub(crate) struct Terminal {
     shell_name: String,
     /// The title the program set.
     title: Option<String>,
+    /// The pane is showing.
+    visible: bool,
+    /// The pane has the keyboard focus.
+    focused: bool,
 }
 
 enum Shell {
@@ -225,6 +229,8 @@ impl Terminal {
             screen,
             shell_name: String::new(),
             title: None,
+            visible: true,
+            focused: false,
         }
     }
 
@@ -347,6 +353,22 @@ impl Terminal {
     /// A terminal command from the user.
     pub(crate) fn command(&mut self, command: Command, host: &dyn Host) {
         match command {
+            Command::ToggleTerminal => {
+                if self.visible && self.focused {
+                    self.visible = false;
+                    self.unfocus();
+                } else {
+                    self.visible = true;
+                    self.focus();
+                }
+            }
+            Command::FocusTerminal => {
+                self.visible = true;
+                self.focus();
+            }
+            Command::TerminalKey(TerminalKey::Enter, _) if matches!(self.shell, Shell::Exited(_) | Shell::Failed(_)) => {
+                self.restart()
+            }
             Command::TerminalPaste => {
                 if let (Some(text), Some(mode)) = (host.clipboard().read_text(), self.mode()) {
                     self.send(input::paste(&text, mode));
@@ -369,6 +391,34 @@ impl Terminal {
             }
             _ => {}
         }
+    }
+
+    /// The editor takes the keyboard focus.
+    pub(crate) fn unfocus(&mut self) {
+        if std::mem::replace(&mut self.focused, false) {
+            self.report_focus(b"\x1b[O");
+        }
+    }
+
+    fn focus(&mut self) {
+        if !std::mem::replace(&mut self.focused, true) {
+            self.report_focus(b"\x1b[I");
+        }
+    }
+
+    /// Tells a program that asked (focus reporting) about a focus change.
+    fn report_focus(&mut self, report: &[u8]) {
+        if self.mode().is_some_and(|mode| mode.contains(TermMode::FOCUS_IN_OUT)) {
+            self.send(report.to_vec());
+        }
+    }
+
+    /// Clears the pane and waits to start a new shell.
+    fn restart(&mut self) {
+        self.shell = Shell::Waiting;
+        self.screen.lines = blank_lines(self.size);
+        self.screen.cursor = None;
+        self.title = None;
     }
 
     /// The modes the running program has set.
@@ -434,6 +484,8 @@ impl Terminal {
         };
         let screen = &self.screen;
         TerminalView {
+            visible: self.visible,
+            focused: self.focused,
             status,
             title: self.title.clone().unwrap_or_else(|| self.shell_name.clone()),
             rows: self.size.rows,

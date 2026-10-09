@@ -281,21 +281,31 @@ impl Project {
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
         let now = host.clock().now();
         match command {
-            Command::OpenFile(path) => self.open_file(path, None, jobs),
-            Command::OpenFileAt { path, at } => self.open_file(path, Some(at), jobs),
             Command::OpenConfig => self.open_config(jobs),
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
-            Command::SelectTab { .. }
-            | Command::FocusPane(_)
-            | Command::CloseTab { .. }
+            Command::SelectTab { .. } | Command::FocusPane(_) => {
+                self.terminal.unfocus();
+                self.tab_command(command, jobs)
+            }
+            Command::OpenFile(path) => {
+                self.terminal.unfocus();
+                self.open_file(path, None, jobs)
+            }
+            Command::OpenFileAt { path, at } => {
+                self.terminal.unfocus();
+                self.open_file(path, Some(at), jobs)
+            }
+            Command::CloseTab { .. }
             | Command::ResolveClose(_)
             | Command::SplitRight
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
-            Command::SetTerminalSize { .. }
+            Command::ToggleTerminal
+            | Command::FocusTerminal
+            | Command::SetTerminalSize { .. }
             | Command::TerminalText(_)
             | Command::TerminalKey(..)
             | Command::ScrollTerminal { .. }
