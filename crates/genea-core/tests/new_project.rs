@@ -284,6 +284,25 @@ fn the_chosen_template_and_pins_are_what_is_created_and_installed() {
 }
 
 #[test]
+fn closing_the_dialog_while_creating_still_opens_the_project() {
+    let host = host();
+    let parent = FixtureProject::new().build();
+    let mut workbench = Workbench::new(host.shared());
+    open_dialog(&mut workbench);
+    workbench.dispatch_new_project(NewProjectCommand::SetName("my-app".into()));
+    workbench.dispatch_new_project(NewProjectCommand::SetParent(parent.root().to_owned()));
+    workbench.dispatch_new_project(NewProjectCommand::Create);
+    assert!(workbench.new_project_dialog().unwrap().creating);
+
+    workbench.dispatch_new_project(NewProjectCommand::Cancel);
+    assert_eq!(workbench.new_project_dialog(), None);
+    workbench.settle().unwrap();
+
+    let project = workbench.project(only_project(&workbench)).unwrap();
+    assert_eq!(project.root, parent.root().canonicalize().unwrap().join("my-app"));
+}
+
+#[test]
 fn new_project_opens_the_dialog_from_a_project_window() {
     let fixture = FixtureProject::new().build();
     let mut workbench = Workbench::new(host().shared());

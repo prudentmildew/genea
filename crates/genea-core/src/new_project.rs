@@ -235,14 +235,18 @@ pub(crate) fn dispatch(core: &mut Core, command: NewProjectCommand) {
         }
         return;
     }
+    if command == NewProjectCommand::Cancel {
+        // A project being generated still opens when it is ready.
+        flow.dialog = None;
+        return;
+    }
     let Some(dialog) = &mut flow.dialog else { return };
     // Nothing changes while the project is being generated.
     if dialog.creating.is_some() {
         return;
     }
     match command {
-        NewProjectCommand::Open => {}
-        NewProjectCommand::Cancel => flow.dialog = None,
+        NewProjectCommand::Open | NewProjectCommand::Cancel => {}
         NewProjectCommand::SetTemplate(template) => dialog.template = template,
         NewProjectCommand::SetName(name) => dialog.name = name,
         NewProjectCommand::SetParent(parent) => dialog.parent = Some(parent),
