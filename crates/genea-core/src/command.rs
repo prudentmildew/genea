@@ -252,6 +252,12 @@ pub enum Command {
     /// program that asked for the mouse, in the encoding it chose;
     /// otherwise nothing happens.
     TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
+
+    /// The Search view's query changed (⌘⇧F, ticket #34): cancels the
+    /// search in flight and searches the project in the background, results
+    /// streaming into `ProjectView::search`. An empty query clears the
+    /// results. A click on a result opens it with `OpenFileAt`.
+    Search(SearchQuery),
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.
@@ -313,6 +319,19 @@ pub enum ConflictChoice {
     Reload,
     /// Keep the buffer as it is; the next save overwrites the file on disk.
     KeepMyEdits,
+}
+
+/// What the Search view searches the project for.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchQuery {
+    pub text: String,
+    /// `text` is a regular expression (Rust `regex` syntax); otherwise it
+    /// is matched literally.
+    pub regex: bool,
+    /// Match case; otherwise upper and lower case match each other.
+    pub case_sensitive: bool,
+    /// Only matches with no word character just before or after them.
+    pub whole_word: bool,
 }
 
 /// What to do with unsaved edits in a closing tab.

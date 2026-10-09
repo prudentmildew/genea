@@ -12,6 +12,7 @@ import { ProblemRow } from "problems-view.slint";
 import { TerminalPane, TermRow, TermCursor } from "terminal-pane.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
+import { SearchRow } from "search-view.slint";
 
 // The Code menu's items (ticket #25).
 export enum StructuralAction {
@@ -37,6 +38,14 @@ export component ProjectWindow inherits Window {
     in property <LeftView> left-view;
     in property <[ProblemRow]> problems;
     in property <[FileEntry]> files;
+    // The Search view: the core's query and options, and its results.
+    in property <string> search-query;
+    in property <bool> search-regex;
+    in property <bool> search-case-sensitive;
+    in property <bool> search-whole-word;
+    in property <[SearchRow]> search-rows;
+    in property <string> search-status;
+    in property <bool> search-status-error;
     in property <string> status-encoding;
     in property <string> status-line-ending;
     in property <string> status-notice-action;
@@ -123,6 +132,10 @@ export component ProjectWindow inherits Window {
     callback problem-clicked(int);
     // A Files view row: open the file, or expand or collapse the folder.
     callback file-clicked(int);
+    // The Search view's query or options changed.
+    callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
+    // A Search view row: open the file, at the match for a match row.
+    callback search-result-clicked(int);
     callback close-tab();
     callback split-right();
     callback move-tab();
@@ -396,6 +409,14 @@ export component ProjectWindow inherits Window {
             }
 
             MenuItem {
+                title: "Search";
+                shortcut: @keys(Control + Shift + F);
+                activated => {
+                    root.toggle-view(LeftView.search);
+                }
+            }
+
+            MenuItem {
                 title: "Problems";
                 shortcut: @keys(Control + "6");
                 activated => {
@@ -477,6 +498,13 @@ export component ProjectWindow inherits Window {
                 view: root.left-view;
                 problems: root.problems;
                 files: root.files;
+                search-query: root.search-query;
+                search-regex: root.search-regex;
+                search-case-sensitive: root.search-case-sensitive;
+                search-whole-word: root.search-whole-word;
+                search-rows: root.search-rows;
+                search-status: root.search-status;
+                search-status-error: root.search-status-error;
                 show(view) => {
                     root.show-view(view);
                 }
@@ -485,6 +513,12 @@ export component ProjectWindow inherits Window {
                 }
                 file-clicked(index) => {
                     root.file-clicked(index);
+                }
+                search(text, regex, case-sensitive, whole-word) => {
+                    root.search(text, regex, case-sensitive, whole-word);
+                }
+                search-result-clicked(index) => {
+                    root.search-result-clicked(index);
                 }
             }
 
