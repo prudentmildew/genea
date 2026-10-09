@@ -22,8 +22,9 @@ warm and ~185 ms cold and breaks the start budgets. The patch changes
 
 The fonts are hard-coded in the patch rather than passed through
 `SLINT_DEFAULT_FONT` / `SLINT_FONT_PATH`, because env vars would leak into
-every child process Genea starts. Apple Color Emoji (192 MB) is not
-registered here: Genea registers it lazily (spec #19, Editing core).
+every child process Genea starts. Apple Color Emoji (192 MB) and Hiragino
+Sans GB (23 MB, for CJK) are not registered here: Genea registers them
+lazily (spec #19, Editing core; `crates/genea-view/src/fonts.rs`).
 
 ## Re-applying it on a Slint pin bump
 

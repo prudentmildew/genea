@@ -15,10 +15,13 @@ genea-core.workspace = true
 genea-host.workspace = true
 # raw-window-handle-06: to reach a window's NSWindow and bring it to the
 # front (Slint's `show` does nothing for a window that is already shown).
-slint = { workspace = true, features = ["raw-window-handle-06"] }
+slint = { workspace = true, features = ["raw-window-handle-06", "unstable-fontique-011"] }
 raw-window-handle = "0.6.2"
 # Grid columns per char, to place highlight runs (the same widths the core uses).
 unicode-width.workspace = true
+# unstable-fontique-011 (above) and memmap2: Apple Color Emoji is registered
+# lazily from a memory map (src/fonts.rs). fontique already links memmap2.
+memmap2 = "0.9.11"
 
 # Native Open panels and alerts. The same objc2 stack Slint's winit backend already
 # links, so these add features, not crates.

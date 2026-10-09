@@ -10,7 +10,7 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::{EditorView, Highlight, HighlightSpan};
+use genea_core::{EditorView, Highlight, HighlightSpan, grid_pieces};
 use slint::{Model, ModelRc, VecModel};
 use unicode_width::UnicodeWidthChar;
 
@@ -162,44 +162,41 @@ fn set_geometry(window: &ProjectWindow, pane: usize, geometry: SurfaceGeometry) 
     }
 }
 
-/// Splits a line's grid text into runs: one per highlight, and one for each
-/// character a fallback font may draw (wide, CJK, emoji, symbols), so its
-/// advance can't push what follows off the grid. Each run is placed at its
-/// own column; blank runs are left out.
+/// Splits a line's grid text into runs: one per highlight (and per plain
+/// stretch between them), each split further by `grid_pieces` so that every
+/// wide character (CJK, emoji), whose fallback font's advance isn't two
+/// Menlo cells, sits at its own column and the rest of the line stays on the
+/// grid. Blank runs are left out.
 fn runs(text: &str, highlights: &[HighlightSpan], char_width: f32) -> Vec<Run> {
     let mut runs = Vec::new();
-    let mut current = String::new();
-    let mut current_column = 0;
-    let mut current_highlight = 0;
-    let mut current_on_grid = true;
-    let mut spans = highlights.iter().peekable();
-    let mut column = 0;
-    let mut flush = |text: &mut String, column: usize, highlight: i32| {
-        if !text.trim().is_empty() {
-            runs.push(Run { x: column as f32 * char_width, text: text.as_str().into(), highlight });
+    let mut push = |segment: &str, column: usize, highlight: i32| {
+        for piece in grid_pieces(segment) {
+            if !piece.text.trim().is_empty() {
+                let x = (column + piece.column) as f32 * char_width;
+                runs.push(Run { x, text: piece.text.into(), highlight });
+            }
         }
-        text.clear();
     };
-    for c in text.chars() {
+    let mut spans = highlights.iter().peekable();
+    let (mut start, mut start_column, mut highlight) = (0, 0, 0);
+    let mut column = 0;
+    for (index, c) in text.char_indices() {
         let width = c.width().unwrap_or(0);
-        // A combining mark stays with the character before it.
-        if width == 0 && !current.is_empty() {
-            current.push(c);
-            continue;
+        // A zero-width character stays with the one before it.
+        if width > 0 {
+            while spans.next_if(|s| s.columns.end <= column).is_some() {}
+            let here = spans.peek().filter(|s| s.columns.start <= column).map_or(0, |s| highlight_index(s.highlight));
+            if index > start && here != highlight {
+                push(&text[start..index], start_column, highlight);
+                (start, start_column) = (index, column);
+            }
+            if index == start {
+                highlight = here;
+            }
         }
-        while spans.next_if(|s| s.columns.end <= column).is_some() {}
-        let highlight = spans.peek().filter(|s| s.columns.start <= column).map_or(0, |s| highlight_index(s.highlight));
-        let on_grid = width == 1 && c <= '\u{024f}';
-        if current.is_empty() || highlight != current_highlight || !on_grid || !current_on_grid {
-            flush(&mut current, current_column, current_highlight);
-            current_column = column;
-            current_highlight = highlight;
-            current_on_grid = on_grid;
-        }
-        current.push(c);
         column += width;
     }
-    flush(&mut current, current_column, current_highlight);
+    push(&text[start..], start_column, highlight);
     runs
 }
 

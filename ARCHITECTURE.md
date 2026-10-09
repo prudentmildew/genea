@@ -187,6 +187,12 @@ chrome, native menus via muda (Slint's `MenuBar`).
 - `src/surface.rs`: the editor surface, a ring of line slots (line L in slot
   L % slots) with a per-slot diff, plus base-line rebasing for `f32`
   precision.
+- `src/fonts.rs`: registers Apple Color Emoji and Hiragino Sans GB (CJK),
+  memory-mapped, the first time visible text has an emoji or CJK character
+  that Menlo and Apple Symbols lack. It is
+  the only user of Slint's `unstable-fontique-011`. Wide characters are
+  drawn one per run at their grid column (`genea_core::grid_pieces`), since
+  fallback glyphs aren't two Menlo cells wide.
 - `src/keys.rs`: the keymap (WebStorm macOS). `src/dialogs.rs`: native
   NSOpenPanels.
 - Keys and text reach the surface through a hidden, focused `TextInput`
