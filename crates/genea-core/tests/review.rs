@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use genea_core::{ChangeItem, ChangeKind, Command, ProjectId, Workbench};
+use genea_core::{ChangeItem, ChangeKind, Command, LARGE_FILE_BYTES, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 /// Opens a project with these files and waits for the first snapshot.
@@ -348,6 +348,36 @@ fn a_changed_gitignore_changes_what_is_reviewed() {
         ],
         "files that come into review have no baseline yet"
     );
+}
+
+#[test]
+fn binary_and_large_files_are_listed_without_a_diff_and_revert_still_restores_them() {
+    let large = "let a = 1;\n".repeat(LARGE_FILE_BYTES / 10);
+    let (fixture, mut workbench, project) = open(&[("text.ts", "a\n"), ("big.ts", &large)]);
+    let image = [0x89, b'P', b'N', b'G', 0, 0, 0, 1];
+    fixture.write("image.png", image);
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::KeepAllChanges);
+    workbench.settle().unwrap();
+
+    fixture.write("image.png", [0x89, b'P', b'N', b'G', 0, 0, 0, 2]);
+    fixture.write("big.ts", format!("{large}// more\n"));
+    fixture.write("text.ts", "b\n");
+    workbench.settle().unwrap();
+
+    let item = |path: &str, diffable: bool| ChangeItem {
+        path: path.into(),
+        kind: ChangeKind::Modified,
+        diffable,
+        can_revert: true,
+    };
+    assert_eq!(items(&workbench, project), [item("big.ts", false), item("image.png", false), item("text.ts", true)]);
+
+    workbench.dispatch(project, Command::RevertAllChanges);
+    workbench.settle().unwrap();
+    assert_eq!(changes(&workbench, project), []);
+    assert_eq!(std::fs::read(fixture.path("image.png")).unwrap(), image);
+    assert_eq!(fixture.read("big.ts"), large);
 }
 
 fn editor_text(workbench: &Workbench, project: ProjectId) -> Vec<String> {
