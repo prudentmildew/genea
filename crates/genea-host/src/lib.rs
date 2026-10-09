@@ -1,7 +1,7 @@
 //! The host boundary (spec #19, Architecture).
 //!
 //! Every effect outside Genea's process and the project folder goes through a
-//! [`Host`]: spawning child processes, HTTP downloads, the clock and the
+//! [`Host`]: spawning child processes and terminal shells, HTTP downloads, the clock and the
 //! clipboard. The core
 //! receives one as a [`SharedHost`] and never reaches past it.
 //!
@@ -25,6 +25,7 @@ mod clipboard;
 mod clock;
 mod downloads;
 mod processes;
+mod pty;
 pub mod real;
 
 use std::{
@@ -37,6 +38,7 @@ pub use clipboard::Clipboard;
 pub use clock::{Clock, TimerCallback};
 pub use downloads::{DownloadError, Downloads};
 pub use processes::{Child, Exit, ProcessControl, ProcessSpec, Processes};
+pub use pty::{Pty, PtyControl, PtySize, Ptys};
 pub use real::RealHost;
 
 /// Everything the core may do outside its process and the project folder.
@@ -47,6 +49,8 @@ pub trait Host: Send + Sync + 'static {
     /// Child processes: language servers, the project check, the login-shell
     /// environment capture, scripts.
     fn processes(&self) -> &dyn Processes;
+    /// Programs on pseudo-terminals: the terminal's shells.
+    fn ptys(&self) -> &dyn Ptys;
     /// HTTP downloads: toolchain archives and the release-update check.
     fn downloads(&self) -> &dyn Downloads;
     /// The system clipboard, for Cut, Copy and Paste.
