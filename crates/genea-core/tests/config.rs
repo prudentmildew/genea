@@ -1,7 +1,7 @@
 //! The root `genea.jsonc` config: its keys, defaults and error handling
 //! (ticket #29, the schema from #13).
 
-use genea_core::{Config, ProblemSource, ProjectId, Severity, TerminalPosition, Theme, Workbench};
+use genea_core::{CaretMove, Command, Config, ProblemSource, ProjectId, Severity, TerminalPosition, Theme, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 fn open(fixture: FixtureBuilder) -> (FixtureProject, Workbench, ProjectId) {
@@ -179,4 +179,51 @@ fn a_config_below_the_root_is_ignored_with_a_warning() {
             "Only the config at the project root applies. This genea.jsonc is ignored.".into()
         )]
     );
+}
+
+#[test]
+fn a_config_changed_on_disk_applies_at_once() {
+    let (fixture, mut workbench, project) = open(FixtureProject::new().file("src/main.ts", ""));
+
+    fixture.write("genea.jsonc", r#"{ "theme": "dark" }"#);
+    workbench.settle().unwrap();
+    assert_eq!(config(&workbench, project).theme, Theme::Dark);
+
+    fixture.write("genea.jsonc", r#"{ "theme": "light", "codeLens": 1 }"#);
+    workbench.settle().unwrap();
+    assert_eq!(config(&workbench, project).theme, Theme::Light);
+    assert_eq!(problems(&workbench, project).len(), 1);
+
+    fixture.remove("genea.jsonc");
+    workbench.settle().unwrap();
+    assert_eq!(config(&workbench, project), Config::default());
+    assert_eq!(problems(&workbench, project), []);
+}
+
+#[test]
+fn a_nested_config_created_or_removed_on_disk_updates_its_warning() {
+    let (fixture, mut workbench, project) = open(FixtureProject::new().dir("packages/api"));
+
+    fixture.write("packages/api/genea.jsonc", "{}");
+    workbench.settle().unwrap();
+    assert_eq!(problems(&workbench, project).len(), 1);
+
+    fixture.remove("packages/api/genea.jsonc");
+    workbench.settle().unwrap();
+    assert_eq!(problems(&workbench, project), []);
+}
+
+#[test]
+fn a_config_saved_in_genea_applies_at_once() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("genea.jsonc", "{}\n"));
+    workbench.dispatch(project, Command::OpenFile("genea.jsonc".into()));
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::MoveCaret(CaretMove::Right));
+    workbench.dispatch(project, Command::InsertText(r#" "theme": "dark" "#.into()));
+    assert_eq!(config(&workbench, project).theme, Theme::System, "unsaved edits don't apply");
+
+    workbench.dispatch(project, Command::Save);
+    workbench.settle().unwrap();
+    assert_eq!(config(&workbench, project).theme, Theme::Dark);
 }
