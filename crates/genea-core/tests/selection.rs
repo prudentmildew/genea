@@ -102,6 +102,45 @@ fn selecting_to_line_and_document_ends() {
 }
 
 #[test]
+fn option_right_moves_to_the_end_of_each_word_and_punctuation_run() {
+    let (_fixture, mut workbench, project) = open("let fooBar = baz(1);\nnext\n");
+    let mut stops = Vec::new();
+    for _ in 0..8 {
+        run(&mut workbench, project, [Command::MoveCaret(WordRight)]);
+        stops.push(status_caret(&workbench, project));
+    }
+
+    assert_eq!(stops, ["1:4", "1:11", "1:13", "1:17", "1:18", "1:19", "1:21", "2:1"]);
+}
+
+#[test]
+fn option_left_moves_to_the_start_of_each_word_and_punctuation_run() {
+    let (_fixture, mut workbench, project) = open("first\nlet fooBar = baz(1);\n");
+    run(&mut workbench, project, [Command::MoveCaret(Down), Command::MoveCaret(LineEnd)]);
+    let mut stops = Vec::new();
+    for _ in 0..8 {
+        run(&mut workbench, project, [Command::MoveCaret(WordLeft)]);
+        stops.push(status_caret(&workbench, project));
+    }
+
+    assert_eq!(stops, ["2:19", "2:18", "2:17", "2:14", "2:12", "2:5", "2:1", "1:6"]);
+}
+
+#[test]
+fn option_shift_arrows_select_words_and_option_backspace_deletes_one() {
+    let (_fixture, mut workbench, project) = open("let fooBar = 1;\n");
+
+    run(&mut workbench, project, [Command::MoveCaret(WordRight), Command::Select(WordRight)]);
+    assert_eq!(highlighted(&workbench, project), [vec![3..10], vec![]]);
+
+    run(&mut workbench, project, [Command::MoveCaret(Right), Command::Delete(WordLeft)]);
+    assert_eq!(lines(&workbench, project), ["let  = 1;", ""]);
+
+    run(&mut workbench, project, [Command::Delete(WordRight)]);
+    assert_eq!(lines(&workbench, project), ["let  1;", ""]);
+}
+
+#[test]
 fn select_all_selects_the_whole_file() {
     let (_fixture, mut workbench, project) = open("one\ntwo");
 

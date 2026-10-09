@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     command::CaretMove,
-    text::LineEnding,
+    text::{self, LineEnding},
     view::{Caret, EditorView, VisibleLine},
 };
 
@@ -91,6 +91,12 @@ impl Editor {
             CaretMove::Right if column < self.line_len(line) => self.set_caret(line, column + 1),
             CaretMove::Right if line < last_line => self.set_caret(line + 1, 0),
             CaretMove::Right => {}
+            CaretMove::WordLeft if column > 0 => self.set_caret(line, text::word_start(&self.line_chars(line), column)),
+            CaretMove::WordRight if column < self.line_len(line) => {
+                self.set_caret(line, text::word_end(&self.line_chars(line), column))
+            }
+            CaretMove::WordLeft => self.move_head(CaretMove::Left, viewport_rows),
+            CaretMove::WordRight => self.move_head(CaretMove::Right, viewport_rows),
             CaretMove::Up => self.move_vertically(line.saturating_sub(1)),
             CaretMove::Down => self.move_vertically((line + 1).min(last_line)),
             CaretMove::PageUp => {
@@ -208,6 +214,11 @@ impl Editor {
     fn caret_display_column(&self) -> usize {
         let (line, column) = self.caret_line_column();
         display_columns(self.text.line(line).chars().take(column))
+    }
+
+    /// A line's chars, without its line ending.
+    fn line_chars(&self, line: usize) -> Vec<char> {
+        self.text.line(line).chars().take(self.line_len(line)).collect()
     }
 
     /// Chars in a line, without its line ending.

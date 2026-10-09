@@ -51,6 +51,10 @@ pub enum Command {
 pub enum CaretMove {
     Left,
     Right,
+    /// ⌥←: to the start of the word (or punctuation run) before the caret.
+    WordLeft,
+    /// ⌥→: to the end of the word (or punctuation run) after the caret.
+    WordRight,
     Up,
     Down,
     PageUp,
