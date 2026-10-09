@@ -3,6 +3,8 @@
 //! WebStorm's macOS keymap (spec #19). Menu shortcuts (⌘S, ⌘X, ⌘C, ⌘V, ⌘A)
 //! never get here: the native menu takes them first.
 
+use std::time::{Duration, Instant};
+
 use genea_core::{CaretMove, Command};
 use slint::{SharedString, platform::Key};
 
@@ -20,8 +22,22 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
         return Some(if m.shift { Command::Select(movement) } else { Command::MoveCaret(movement) });
     }
     let is = |key: Key| text == SharedString::from(key).as_str();
+    // Multi-caret (ticket #52): ⌃G, ⌃⇧G, ⌃⌘G. With ⌃ held, the key's text
+    // may be the letter or its control character.
+    if m.ctrl && (text.eq_ignore_ascii_case("g") || text == "\u{7}") {
+        return Some(if m.cmd {
+            Command::SelectAllOccurrences
+        } else if m.shift {
+            Command::UnselectLastOccurrence
+        } else {
+            Command::SelectNextOccurrence
+        });
+    }
     if m.ctrl || m.cmd {
         return None;
+    }
+    if is(Key::Escape) {
+        return Some(Command::CollapseCarets);
     }
     if is(Key::Backspace) {
         Some(Command::Delete(if m.alt { CaretMove::WordLeft } else { CaretMove::Left }))
@@ -90,4 +106,40 @@ fn movement(text: &str, m: Modifiers) -> Option<CaretMove> {
 /// function and navigation keys.
 fn is_typed_text(text: &str) -> bool {
     !text.is_empty() && text.chars().all(|c| !c.is_control() && !('\u{E000}'..='\u{F8FF}').contains(&c))
+}
+
+/// Two ⌥ presses at most this far apart start the clone-caret gesture.
+const DOUBLE_PRESS: Duration = Duration::from_millis(400);
+
+/// WebStorm's Clone Caret Above and Below: press ⌥ twice and keep it held,
+/// then ↑ or ↓ (each press adds a caret). Watches every key press, since it
+/// needs the ⌥ presses themselves.
+#[derive(Default)]
+pub struct CloneCaretGesture {
+    last_option: Option<Instant>,
+    armed: bool,
+}
+
+impl CloneCaretGesture {
+    /// The clone command for this key press, if the gesture is on.
+    pub fn command_for(&mut self, text: &str, m: Modifiers) -> Option<Command> {
+        let is = |key: Key| text == SharedString::from(key).as_str();
+        if is(Key::Alt) || is(Key::AltGr) {
+            let now = Instant::now();
+            self.armed = self.last_option.is_some_and(|at| now.duration_since(at) < DOUBLE_PRESS);
+            self.last_option = Some(now);
+            return None;
+        }
+        if self.armed && m.alt && !(m.shift || m.cmd || m.ctrl) {
+            if is(Key::UpArrow) {
+                return Some(Command::CloneCaretAbove);
+            }
+            if is(Key::DownArrow) {
+                return Some(Command::CloneCaretBelow);
+            }
+        }
+        self.armed = false;
+        self.last_option = None;
+        None
+    }
 }
