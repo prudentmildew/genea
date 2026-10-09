@@ -62,3 +62,64 @@ fn a_literal_search_lists_every_match_grouped_by_file() {
     assert!(!view.searching);
     assert_eq!(view.match_count, 4);
 }
+
+#[test]
+fn a_literal_search_matches_regex_characters_as_they_are() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "f(x);\nfx;\nf(y);\n"));
+
+    search(&mut workbench, project, literal("f(x)"));
+
+    assert_eq!(results(&workbench, project), ["a.ts", "  1:1 [f(x)];"]);
+}
+
+#[test]
+fn a_regex_search_matches_the_pattern() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "let a1 = 1;\nlet b = 22;\nlet c = x;\n"));
+
+    search(&mut workbench, project, SearchQuery { regex: true, ..literal(r"= \d+") });
+
+    assert_eq!(results(&workbench, project), ["a.ts", "  1:8 let a1 [= 1];", "  2:7 let b [= 22];"]);
+}
+
+#[test]
+fn an_invalid_regex_shows_an_error_and_no_results() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "f(x);\n"));
+
+    search(&mut workbench, project, SearchQuery { regex: true, ..literal("f(") });
+
+    let view = workbench.project(project).unwrap().search;
+    assert!(view.error.is_some_and(|error| error.contains("unclosed group")));
+    assert!(view.files.is_empty());
+    assert!(!view.searching);
+}
+
+#[test]
+fn a_case_sensitive_search_tells_upper_and_lower_case_apart() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "type Total = number;\nconst total: Total = 0;\n"));
+
+    search(&mut workbench, project, SearchQuery { case_sensitive: true, ..literal("Total") });
+
+    assert_eq!(results(&workbench, project), ["a.ts", "  1:6 type [Total] = number;", "  2:14 const total: [Total] = 0;"]);
+}
+
+#[test]
+fn a_whole_word_search_skips_matches_inside_words() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "const id = getId(id);\nconst identity = id_2;\n"));
+
+    search(&mut workbench, project, SearchQuery { whole_word: true, ..literal("id") });
+
+    assert_eq!(results(&workbench, project), ["a.ts", "  1:7 const [id] = getId(id);", "  1:18 const id = getId([id]);"]);
+}
+
+#[test]
+fn whole_word_and_case_combine_with_a_regex() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "fooBar foo_bar FOO foo\n"));
+
+    let query = SearchQuery { regex: true, case_sensitive: true, whole_word: true, ..literal("fo+") };
+    search(&mut workbench, project, query);
+
+    assert_eq!(results(&workbench, project), ["a.ts", "  1:20 fooBar foo_bar FOO [foo]"]);
+}
