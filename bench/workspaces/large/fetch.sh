@@ -32,7 +32,7 @@ for arg in "$@"; do
     *) out="$arg" ;;
   esac
 done
-out="${out:-$here/../out/large}"
+out="${out:-$(cd "$here/.." && pwd)/out/large}"
 
 if [[ -e "$out" && ! -d "$out/.git" ]]; then
   echo "$out exists and is not a git checkout; refusing to touch it" >&2

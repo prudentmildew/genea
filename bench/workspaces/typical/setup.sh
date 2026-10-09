@@ -22,8 +22,12 @@ for arg in "$@"; do
     *) out="$arg" ;;
   esac
 done
-out="${out:-$here/../out/typical}"
+out="${out:-$(cd "$here/.." && pwd)/out/typical}"
 
+if [[ -d "$out" && -n "$(ls -A "$out")" && ! -f "$out/packages/shared/package.json" ]]; then
+  echo "$out is not empty and doesn't look like a Typical workspace; refusing to replace it" >&2
+  exit 1
+fi
 rm -rf "$out"
 node "$here/generate.ts" "$out"
 
