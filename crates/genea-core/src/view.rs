@@ -173,6 +173,33 @@ pub struct EditorView {
     /// Problems in this file on the visible lines, from every source, top
     /// to bottom. A problem spanning lines has one entry per line.
     pub problems: Vec<InlineProblem>,
+    /// Git gutter markers on the visible lines, top to bottom: how the
+    /// buffer differs from the file at HEAD (ticket #56). Empty outside a
+    /// git repository and for files that aren't in HEAD. Worked out in the
+    /// background as you type, so they can be a moment behind the text.
+    pub gutter: Vec<GutterMark>,
+}
+
+/// A git gutter marker on one line. Clicking it shows the change with
+/// `Command::ShowHunk { line }`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GutterMark {
+    /// 0-based line index in the file.
+    pub line: usize,
+    pub change: LineChange,
+}
+
+/// How a line differs from HEAD.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineChange {
+    /// The line isn't in HEAD.
+    Added,
+    /// The line replaces lines that are in HEAD.
+    Modified,
+    /// Lines that are in HEAD were deleted just above this line. (A file
+    /// ending in a newline has an empty last line, so there is always a
+    /// line below a deletion.)
+    Deleted,
 }
 
 /// Marked text from the IME (a dead key waiting for the next key), shown

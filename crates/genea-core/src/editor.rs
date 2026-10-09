@@ -817,6 +817,7 @@ impl Editor {
             carets,
             preedit,
             problems: Vec::new(),
+            gutter: Vec::new(),
         }
     }
 
@@ -914,6 +915,12 @@ impl Editor {
     /// The file, relative to the project root when it is inside it.
     pub(crate) fn path(&self) -> &std::path::Path {
         &self.path
+    }
+
+    /// Identifies the text: every edit gives it a fresh one, and undo and
+    /// redo restore the one the text had then.
+    pub(crate) fn version(&self) -> u64 {
+        self.version
     }
 
     /// The buffer has edits that aren't on disk yet.

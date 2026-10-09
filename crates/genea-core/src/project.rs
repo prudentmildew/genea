@@ -108,7 +108,7 @@ impl Project {
         self.load_config(jobs);
         self.find_nested_configs(jobs);
         self.files.start(jobs);
-        self.git.reload(jobs);
+        self.git.reload(Vec::new(), jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -122,7 +122,7 @@ impl Project {
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
         if self.git.head_may_have_moved(&changes) {
-            self.git.reload(jobs);
+            self.git.reload(self.open_paths(), jobs);
         }
         let root_config = self.root.join(CONFIG_FILE);
         if changes.rescan {
@@ -438,7 +438,29 @@ impl Project {
             }
         }
         self.reparse(jobs);
+        if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
+            self.diff_file(&path, jobs);
+        }
         self.refresh_views();
+    }
+
+    /// Starts a background diff of an open file with its text at HEAD, if
+    /// its gutter markers are behind and none is running (ticket #56).
+    pub(crate) fn diff_file(&mut self, path: &Path, jobs: &Jobs) {
+        let Some(editor) = self.open_editor(path) else { return };
+        let (version, text) = (editor.version(), editor.snapshot().text);
+        if let Some(job) = self.git.start_diff(path, version, text) {
+            let (id, path) = (self.id, path.to_owned());
+            jobs.spawn("diff with git HEAD", move || {
+                let diffed = job.run();
+                Box::new(move |core| {
+                    let jobs = core.jobs.clone();
+                    let Some(project) = core.project_mut(id) else { return };
+                    project.git.diffed(&path, diffed);
+                    project.diff_file(&path, &jobs);
+                })
+            });
+        }
     }
 
     /// Starts a background parse of the focused file if its syntax tree is
@@ -463,6 +485,7 @@ impl Project {
         let editor = self.editor.as_ref().map(|e| {
             let mut view = e.view(self.viewport_rows);
             view.problems = self.inline_problems(e, &view.lines);
+            view.gutter = self.gutter(e, &view.lines);
             view
         });
         let mut tabs = self.tabs_view(editor.as_ref());
@@ -472,6 +495,7 @@ impl Project {
                 && let Some(e) = self.open_editor(&view.path)
             {
                 view.problems = self.inline_problems(e, &view.lines);
+                view.gutter = self.gutter(e, &view.lines);
             }
         }
         let (errors, warnings) = self.problems.counts();
@@ -504,6 +528,12 @@ impl Project {
             left_column: self.left_column,
             files: self.files.rows(),
         }
+    }
+
+    /// The open file's git gutter markers on the visible lines.
+    fn gutter(&self, editor: &Editor, lines: &[crate::view::VisibleLine]) -> Vec<crate::view::GutterMark> {
+        let (Some(first), Some(last)) = (lines.first(), lines.last()) else { return Vec::new() };
+        self.git.gutter(editor.path(), first.index..last.index + 1)
     }
 
     /// The open file's problems on the visible lines, in grid columns.
@@ -646,6 +676,7 @@ impl Project {
                     Ok(Decoded::Text(text)) => {
                         project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)));
                         project.reparse_file(&shown, &jobs);
+                        project.git.load_base(&shown, &jobs);
                         if let Some(at) = at {
                             project.go_to(at);
                         }
@@ -657,6 +688,7 @@ impl Project {
                         });
                         project.open_tab(Editor::new(shown.clone(), Rope::from_str(&text)).read_only());
                         project.reparse_file(&shown, &jobs);
+                        project.git.load_base(&shown, &jobs);
                         if let Some(at) = at {
                             project.go_to(at);
                         }
