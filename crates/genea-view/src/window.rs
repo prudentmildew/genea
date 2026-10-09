@@ -1,19 +1,25 @@
 //! One project window: binds a `ProjectWindow` to a project's view state.
-//! Each open project has exactly one window (ticket #58).
+//! Each open project has exactly one window (ticket #58). Its editor area
+//! has a pane of tabs, or two after a split (ticket #31).
 //!
 //! `sync` is the only place view state flows into Slint. It reads the
 //! core's `ProjectView` and sets properties; Slint skips equal values and the
 //! surface diffs its slots, so a sync with nothing new repaints nothing.
 
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use genea_core::{Command, ProjectId, Workbench};
+use genea_core::{
+    CloseChoice, Command, LeftColumnView, PaneView, ProblemItem, ProjectId, Severity, Theme as ConfigTheme, Workbench,
+};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::{ProjectWindow, surface::Surface};
+use crate::{LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts, surface::Surface};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -22,11 +28,27 @@ pub struct WindowController {
     pub key: WindowKey,
     pub window: ProjectWindow,
     pub project: ProjectId,
-    surface: Surface,
+    /// The left pane's surface and the right one's.
+    surfaces: [Surface; 2],
+    /// The tab strips last pushed to Slint, to skip unchanged ones.
+    tabs: [Vec<TabEntry>; 2],
+    /// The pane last given the keyboard focus.
+    focused_pane: usize,
+    /// The close prompt's sheet is showing.
+    prompting: bool,
     /// A window-level message, e.g. why a folder couldn't be opened.
     pub notice: Option<String>,
+    /// The command behind the shown notice's button, if it has one.
+    pub notice_action: Option<Command>,
     /// When and on which line the last double-click was, to spot a third.
     last_double_click: Option<(Instant, usize)>,
+    /// The Problems items as last pushed, so a click maps to the item the
+    /// user saw and an unchanged list isn't pushed again.
+    problems: Vec<ProblemItem>,
+    problem_rows: Rc<VecModel<ProblemRow>>,
+    /// The button went down with ⌥ (adding a caret), so a drag doesn't
+    /// select.
+    option_press: bool,
 }
 
 /// A press this soon after a double-click on the same line is a triple-click.
@@ -36,8 +58,24 @@ impl WindowController {
     pub fn new(key: WindowKey, project: ProjectId) -> Result<Self, slint::PlatformError> {
         let window = ProjectWindow::new()?;
         crate::journal::attach(window.window());
-        let surface = Surface::new(&window);
-        Ok(WindowController { key, window, project, surface, notice: None, last_double_click: None })
+        let surfaces = [Surface::new(&window, 0), Surface::new(&window, 1)];
+        let problem_rows = Rc::new(VecModel::default());
+        window.set_problems(ModelRc::from(problem_rows.clone()));
+        Ok(WindowController {
+            key,
+            window,
+            project,
+            surfaces,
+            tabs: Default::default(),
+            focused_pane: 0,
+            prompting: false,
+            notice: None,
+            notice_action: None,
+            last_double_click: None,
+            problems: Vec::new(),
+            problem_rows,
+            option_press: false,
+        })
     }
 
     pub fn show(&self) {
@@ -75,15 +113,19 @@ impl WindowController {
     }
 
     /// Converts a press on the surface into a caret placement: ⇧ extends
-    /// the selection, and a press soon after a double-click (a third click)
-    /// selects the line.
-    pub fn press(&mut self, workbench: &mut Workbench, x: f32, y: f32, shift: bool) {
-        let (line, column) = self.surface.cell_at(&self.window, x, y);
+    /// the selection, ⌥ adds a caret, and a press soon after a double-click
+    /// (a third click) selects the line.
+    pub fn press(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32, shift: bool, alt: bool) {
+        self.focus_pane(workbench, pane);
+        let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         let triple = self.last_double_click.take().is_some_and(|(at, clicked_line)| {
             clicked_line == line && at.elapsed() < TRIPLE_CLICK_INTERVAL
         });
+        self.option_press = alt && !triple;
         let command = if triple {
             Command::SelectLine { line }
+        } else if alt {
+            Command::AddCaret { line, column }
         } else if shift {
             Command::ExtendSelection { line, column }
         } else {
@@ -93,15 +135,35 @@ impl WindowController {
     }
 
     /// A drag with the button down extends the selection.
-    pub fn drag(&mut self, workbench: &mut Workbench, x: f32, y: f32) {
-        let (line, column) = self.surface.cell_at(&self.window, x, y);
+    pub fn drag(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32) {
+        if self.option_press {
+            return;
+        }
+        self.focus_pane(workbench, pane);
+        let (line, column) = self.surfaces[pane].cell_at(&self.window, x, y);
         self.dispatch(workbench, Command::ExtendSelection { line, column });
     }
 
-    pub fn double_click(&mut self, workbench: &mut Workbench, x: f32, y: f32) {
-        let (line, column) = self.surface.cell_under(&self.window, x, y);
+    pub fn double_click(&mut self, workbench: &mut Workbench, pane: usize, x: f32, y: f32) {
+        self.focus_pane(workbench, pane);
+        let (line, column) = self.surfaces[pane].cell_under(&self.window, x, y);
         self.last_double_click = Some((Instant::now(), line));
         self.dispatch(workbench, Command::SelectWord { line, column });
+    }
+
+    /// A press in a pane without the focus focuses it first.
+    fn focus_pane(&mut self, workbench: &mut Workbench, pane: usize) {
+        if pane != self.focused_pane {
+            workbench.dispatch(self.project, Command::FocusPane(pane));
+        }
+    }
+
+    /// The focused pane and its tabs, for menu items that act on the active
+    /// tab.
+    pub fn focused_pane(&self, workbench: &Workbench) -> Option<(usize, PaneView)> {
+        let view = workbench.project(self.project)?;
+        let pane = view.focused_pane;
+        Some((pane, view.panes.into_iter().nth(pane)?))
     }
 
     pub fn dispatch(&mut self, workbench: &mut Workbench, command: Command) {
@@ -111,9 +173,14 @@ impl WindowController {
 
     pub fn sync(&mut self, workbench: &mut Workbench) {
         let window = &self.window;
-        if let Some(rows) = self.surface.take_viewport_change(window) {
+        // Both panes have the same height; the core has one viewport.
+        let viewport_change = self.surfaces[0].take_viewport_change(window);
+        self.surfaces[1].take_viewport_change(window);
+        if let Some(rows) = viewport_change {
             workbench.dispatch(self.project, Command::SetViewport { rows });
         }
+        let update = workbench.update_notice().map(|notice| notice.message).unwrap_or_default();
+        window.set_status_update(update.into());
         // The project closes with its window, so this is always there.
         let Some(view) = workbench.project(self.project) else { return };
 
@@ -126,11 +193,120 @@ impl WindowController {
         let notice = view.notices.last().map(|n| n.message.clone()).or_else(|| self.notice.clone());
         window.set_window_title(title.into());
         window.set_has_editor(editor.is_some());
-        window.set_tab_title(editor.map(|e| e.title.clone()).unwrap_or_default().into());
-        window.set_tab_modified(editor.is_some_and(|e| e.modified));
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
-        self.surface.sync(window, editor);
+        window.set_status_config_notice(view.status.config_notice.clone().unwrap_or_default().into());
+        window.set_status_problems(problem_counts(view.status.errors, view.status.warnings).into());
+        window.set_status_has_errors(view.status.errors > 0);
+
+        let theme = window.global::<Theme>();
+        theme.set_follow_system(view.config.theme == ConfigTheme::System);
+        theme.set_pinned_dark(view.config.theme == ConfigTheme::Dark);
+
+        window.set_left_column_visible(view.left_column.is_some());
+        if let Some(LeftColumnView::Problems) = view.left_column {
+            window.set_left_view(LeftView::Problems);
+        }
+        if view.problems != self.problems {
+            let rows: Vec<ProblemRow> = view
+                .problems
+                .iter()
+                .map(|p| ProblemRow {
+                    error: p.severity == Severity::Error,
+                    message: p.message.as_str().into(),
+                    location: format!("{}:{}", p.path.display(), p.location).into(),
+                })
+                .collect();
+            self.problem_rows.set_vec(rows);
+            self.problems = view.problems.clone();
+        }
+        window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
+        window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
+        let action = view.notices.last().and_then(|n| n.action.clone());
+        window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
+        self.notice_action = action.map(|a| a.command);
+        window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
+
+        window.set_split(view.panes.len() > 1);
+        window.set_can_split(view.can_split);
+        window.set_focused_pane(view.focused_pane as i32);
+        for pane in 0..2 {
+            let shown = view.panes.get(pane);
+            let tabs: Vec<TabEntry> = shown.map_or_else(Vec::new, |p| {
+                p.tabs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tab)| TabEntry {
+                        title: tab.title.as_str().into(),
+                        modified: tab.modified,
+                        active: p.active == Some(i),
+                    })
+                    .collect()
+            });
+            if tabs != self.tabs[pane] {
+                let model = ModelRc::new(VecModel::from(tabs.clone()));
+                if pane == 0 { window.set_left_tabs(model) } else { window.set_right_tabs(model) }
+                self.tabs[pane] = tabs;
+            }
+            let editor = shown.and_then(|p| p.editor.as_ref());
+            if pane == 0 {
+                window.set_left_has_editor(editor.is_some());
+            } else {
+                window.set_right_has_editor(editor.is_some());
+            }
+            // Before Slint shapes the text: registers fallback fonts it needs.
+            let titles = shown.iter().flat_map(|p| &p.tabs).map(|tab| &tab.title);
+            let lines = editor.iter().flat_map(|e| &e.lines).map(|line| &line.text);
+            for text in titles.chain(lines) {
+                fonts::prepare(text);
+            }
+            self.surfaces[pane].sync(window, editor);
+        }
         crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
+        if view.focused_pane != self.focused_pane {
+            self.focused_pane = view.focused_pane;
+            window.invoke_refocus();
+        }
+
+        if let Some(prompt) = &view.close_prompt
+            && !self.prompting
+        {
+            self.prompting = true;
+            let key = self.key;
+            dialogs::ask_to_save(&self.window, &prompt.title, move |choice| {
+                with_app(move |app| app.resolve_close(key, choice))
+            });
+        }
     }
+
+    /// The close prompt was answered.
+    pub fn resolve_close(&mut self, workbench: &mut Workbench, choice: CloseChoice) {
+        self.prompting = false;
+        self.dispatch(workbench, Command::ResolveClose(choice));
+    }
+
+    /// A Problems item was clicked: open its file at the problem.
+    pub fn open_problem(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some(item) = self.problems.get(index) else { return };
+        let command = Command::OpenFileAt { path: item.path.clone(), at: item.position };
+        self.dispatch(workbench, command);
+    }
+
+    /// Shows a left-column view, leaving it showing if it already is.
+    pub fn show_view(&mut self, workbench: &mut Workbench, view: LeftColumnView) {
+        if workbench.project(self.project).is_some_and(|p| p.left_column != Some(view)) {
+            self.dispatch(workbench, Command::ToggleLeftColumn(view));
+        }
+    }
+}
+
+/// The status bar's problem counts, e.g. "1 error  2 warnings"; empty with
+/// none.
+fn problem_counts(errors: usize, warnings: usize) -> String {
+    let count = |n: usize, what: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {what}")),
+        n => Some(format!("{n} {what}s")),
+    };
+    [count(errors, "error"), count(warnings, "warning")].into_iter().flatten().collect::<Vec<_>>().join("  ")
 }

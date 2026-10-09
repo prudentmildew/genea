@@ -9,8 +9,19 @@ publish.workspace = true
 # No Slint (or any GUI crate) here, ever: tests/no_gui_dependency.rs enforces it.
 [dependencies]
 genea-host.workspace = true
+genea-toolchain.workspace = true
 ropey.workspace = true
 unicode-width.workspace = true
+jsonc-parser.workspace = true
+ignore.workspace = true
+notify.workspace = true
+# Templates: `git init` (ticket #60).
+gix = { workspace = true, features = ["sha1"] }
+# Templates write package.json with its keys in the conventional order; the
+# update check (ticket #64) reads GitHub's release JSON.
+serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]
 genea-testkit.workspace = true
+# A support folder for the environment's slow lane, which runs on RealHost.
+tempfile.workspace = true

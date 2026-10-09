@@ -3,11 +3,12 @@
 use std::{
     collections::BinaryHeap,
     cmp::Reverse,
+    ffi::OsString,
     io::{self, Write},
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Condvar, Mutex, OnceLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::{
@@ -76,6 +77,15 @@ impl Host for RealHost {
 
     fn clipboard(&self) -> &dyn Clipboard {
         self.clipboard.0.as_ref()
+    }
+
+    fn launch_environment(&self) -> Vec<(OsString, OsString)> {
+        let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        // launchd sets SHELL for apps; without it, assume macOS's default.
+        if !vars.iter().any(|(key, _)| key == "SHELL") {
+            vars.push(("SHELL".into(), "/bin/zsh".into()));
+        }
+        vars
     }
 }
 
@@ -148,6 +158,10 @@ impl Clock for SystemClock {
         queue.heap.push(Reverse((Instant::now() + delay, id)));
         queue.callbacks.insert(id, fire);
         timers.changed.notify_one();
+    }
+
+    fn system_time(&self) -> SystemTime {
+        SystemTime::now()
     }
 }
 
@@ -253,10 +267,22 @@ impl HttpDownloads {
 
 impl Downloads for HttpDownloads {
     fn fetch(&self, url: &str, sink: &mut dyn Write) -> Result<u64, DownloadError> {
+        self.fetch_with_length(url, sink, &mut |_| {})
+    }
+
+    fn fetch_with_length(
+        &self,
+        url: &str,
+        sink: &mut dyn Write,
+        length: &mut dyn FnMut(u64),
+    ) -> Result<u64, DownloadError> {
         let response = self.agent().get(url).call().map_err(|e| DownloadError::Transport(e.to_string()))?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(DownloadError::Status(status));
+        }
+        if let Some(len) = response.body().content_length() {
+            length(len);
         }
         let mut body = response.into_body().into_reader();
         Ok(io::copy(&mut body, sink)?)
@@ -279,6 +305,14 @@ mod tests {
         child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
         assert_eq!(out, "hello\n");
         assert!(child.control.wait().unwrap().success());
+    }
+
+    #[test]
+    fn the_launch_environment_is_the_processs_own_and_names_a_shell() {
+        let vars = RealHost::new().launch_environment();
+        let path = vars.iter().find(|(key, _)| key == "PATH").map(|(_, value)| value.clone());
+        assert_eq!(path, std::env::var_os("PATH"));
+        assert!(vars.iter().any(|(key, value)| key == "SHELL" && !value.is_empty()));
     }
 
     #[test]

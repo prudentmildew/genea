@@ -8,6 +8,12 @@
 
 use std::{ops::Range, path::PathBuf};
 
+use crate::{
+    command::Command,
+    config::Config,
+    problems::{ProblemSource, Severity, TextPosition},
+};
+
 /// One open project, as its window shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectView {
@@ -15,11 +21,96 @@ pub struct ProjectView {
     pub root: PathBuf,
     /// The folder's name, for the window title.
     pub name: String,
-    /// The open file, if any.
+    /// The focused tab's file, if any: what typing, ⌘S and the status bar
+    /// act on. The same as the focused pane's `editor`.
     pub editor: Option<EditorView>,
     pub status: StatusBar,
     /// Messages for the user, oldest first.
     pub notices: Vec<Notice>,
+    /// The project's runtime and package manager (ADR 0005).
+    pub toolchain: ToolchainView,
+    /// The editor area's sides, left to right: one, or two after a split.
+    /// There is always at least one, possibly without tabs.
+    pub panes: Vec<PaneView>,
+    /// Index into `panes` of the side that has the focus.
+    pub focused_pane: usize,
+    /// Whether Split Right is available: one side, with a tab open.
+    pub can_split: bool,
+    /// A tab with unsaved edits is closing and asks Save, Don't Save or
+    /// Cancel. Answer with `Command::ResolveClose`.
+    pub close_prompt: Option<ClosePrompt>,
+    /// The effective config: `genea.jsonc` over the defaults.
+    pub config: Config,
+    /// The Problems view's items, from every source: by file, then by
+    /// place in the file.
+    pub problems: Vec<ProblemItem>,
+    /// The view the left column shows, or `None` while it is collapsed.
+    pub left_column: Option<LeftColumnView>,
+}
+
+/// One side of the editor area: a tab strip and the active tab's editor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaneView {
+    pub tabs: Vec<EditorTab>,
+    /// Index into `tabs` of the tab shown; `None` without tabs.
+    pub active: Option<usize>,
+    /// The active tab's file, scrolled and with the caret where this side
+    /// left it.
+    pub editor: Option<EditorView>,
+}
+
+/// A tab in a pane's tab strip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorTab {
+    /// The file, relative to the project root when it is inside it.
+    pub path: PathBuf,
+    /// The file name.
+    pub title: String,
+    /// The file has unsaved edits.
+    pub modified: bool,
+}
+
+/// Asks what to do with a closing tab's unsaved edits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClosePrompt {
+    pub path: PathBuf,
+    /// The file name.
+    pub title: String,
+}
+
+/// A view the left column can show. Each has a shortcut that shows it, or
+/// collapses the column when it is already showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LeftColumnView {
+    /// ⌘6.
+    Problems,
+}
+
+/// An item in the Problems view. Clicking it opens the file at the problem
+/// with `Command::OpenFileAt`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProblemItem {
+    pub source: ProblemSource,
+    pub severity: Severity,
+    /// The file, relative to the project root.
+    pub path: PathBuf,
+    /// Where the problem starts (0-based line, char column).
+    pub position: TextPosition,
+    /// `position` as the user reads it: `line:column`, 1-based.
+    pub location: String,
+    pub message: String,
+}
+
+/// A problem underlined in the editor, on one visible line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlineProblem {
+    /// 0-based line index in the file.
+    pub line: usize,
+    /// The display columns to underline. A problem at a single place, or
+    /// past the end of the line, takes one column.
+    pub columns: Range<usize>,
+    pub severity: Severity,
+    pub message: String,
 }
 
 /// The editor surface: a grid of visible lines plus the caret.
@@ -41,12 +132,19 @@ pub struct EditorView {
     /// The lines in the viewport, top to bottom, including a partly visible
     /// last one.
     pub lines: Vec<VisibleLine>,
-    /// Where the caret is in the file. While composing, the view draws it
-    /// after the preedit.
+    /// Where the primary caret is in the file: the one the view scrolls to
+    /// and the status bar reports. While composing, the view draws it after
+    /// the preedit.
     pub caret: Caret,
+    /// Every caret on the visible lines, primary included, top to bottom.
+    /// One entry unless there are several carets (⌥-click, ⌃G, …).
+    pub carets: Vec<Caret>,
     /// The IME composition being typed, if any. Its text is already spliced
     /// into the caret's line in `lines`; the view underlines it.
     pub preedit: Option<Preedit>,
+    /// Problems in this file on the visible lines, from every source, top
+    /// to bottom. A problem spanning lines has one entry per line.
+    pub problems: Vec<InlineProblem>,
 }
 
 /// Marked text from the IME (a dead key waiting for the next key), shown
@@ -89,12 +187,71 @@ pub struct Caret {
 pub struct StatusBar {
     /// The caret position as `line:column`, 1-based, or `None` with no editor.
     pub caret: Option<String>,
+    /// Errors and warnings in Problems, from every source.
+    pub errors: usize,
+    pub warnings: usize,
+    /// Set while `genea.jsonc` has errors or warnings, e.g. "genea.jsonc
+    /// has 1 error"; clicking it shows Problems.
+    pub config_notice: Option<String>,
+    /// The open file's encoding (`UTF-8`, the only one Genea reads), or
+    /// `None` with no editor.
+    pub encoding: Option<String>,
+    /// The open file's line ending, `LF` or `CRLF`, or `None` with no
+    /// editor.
+    pub line_ending: Option<String>,
+    /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
+    /// while a download runs.
+    pub toolchain: Option<String>,
 }
 
 /// A message for the user.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Notice {
     pub message: String,
+    /// A button on the notice, if it offers one.
+    pub action: Option<NoticeAction>,
+}
+
+/// A notice's button: its label and the command a click dispatches.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoticeAction {
+    pub label: String,
+    pub command: Command,
+}
+
+/// The toolchain roles of a project with a root `package.json`. Both are
+/// `None` for a folder without one, which has no toolchain.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolchainView {
+    /// Node or Bun.
+    pub runtime: Option<ToolView>,
+    /// pnpm or Bun.
+    pub package_manager: Option<ToolView>,
+}
+
+/// One toolchain role's tool.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolView {
+    /// `Node`, `Bun`, `pnpm`, or the foreign tool's name (`npm`, …).
+    pub tool: String,
+    /// The version in use once resolved, else the pin as written (`^24`).
+    pub version: String,
+    pub state: ToolState,
+}
+
+/// Where a role's tool is. Every state but `Ready` means the role is off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolState {
+    /// Working out which version a range pin means.
+    Resolving,
+    /// Downloading; `percent` is known once the server sends a length.
+    Downloading { percent: Option<u8> },
+    /// In the store, ready to run.
+    Ready,
+    /// The download or the pin failed; a notice says why.
+    Failed,
+    /// A foreign tool (npm, Yarn, …): Genea never runs it.
+    Off,
 }
 
 /// The welcome, shown while no project is open: Open…, New Project… and the

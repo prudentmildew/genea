@@ -7,7 +7,7 @@
 
 use std::process::Command;
 
-const CORE_CRATES: &[&str] = &["genea-core", "genea-host", "genea-testkit"];
+const CORE_CRATES: &[&str] = &["genea-core", "genea-host", "genea-testkit", "genea-toolchain"];
 
 /// Crate names (or prefixes ending in `-`) that mark a GUI dependency.
 const FORBIDDEN: &[&str] = &["slint", "i-slint-", "winit", "muda", "skia-", "wgpu", "objc2-app-kit", "femtovg"];

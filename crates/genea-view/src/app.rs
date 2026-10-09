@@ -20,12 +20,12 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{Command, ProjectId, Workbench};
+use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, Workbench};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, dialogs,
+    AboutWindow, LeftView, about, dialogs, links,
     keys::{self, Modifiers},
     pasteboard::Pasteboard,
     welcome::WelcomeController,
@@ -88,6 +88,8 @@ pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint
             app.dispatch(key, Command::OpenFile(file));
         }
         app.sync_welcome();
+        // The core waits a little and checks in the background (#64).
+        app.workbench.start_update_checks(env!("CARGO_PKG_VERSION"));
     });
     Ok(())
 }
@@ -212,6 +214,7 @@ impl App {
             match AboutWindow::new() {
                 Ok(about) => {
                     about.set_version(env!("CARGO_PKG_VERSION").into());
+                    about.set_licences(about::licence_lines());
                     self.about = Some(about);
                 }
                 Err(error) => {
@@ -224,6 +227,28 @@ impl App {
             && let Err(error) = about.show()
         {
             eprintln!("genea: couldn't show the About window: {error}");
+        }
+    }
+
+    /// The close prompt in window `key` was answered.
+    pub fn resolve_close(&mut self, key: WindowKey, choice: CloseChoice) {
+        let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
+        controller.resolve_close(&mut self.workbench, choice);
+    }
+
+    /// A command for the focused pane's active tab (menu items), from the
+    /// pane and tab index.
+    fn dispatch_for_active_tab(&mut self, key: WindowKey, command: impl FnOnce(usize, usize, usize) -> Command) {
+        let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
+        let Some((pane, view)) = controller.focused_pane(&self.workbench) else { return };
+        let Some(active) = view.active else { return };
+        controller.dispatch(&mut self.workbench, command(pane, active, view.tabs.len()));
+    }
+
+    /// Opens the update notice's release page in the browser.
+    fn open_update(&mut self) {
+        if let Some(notice) = self.workbench.update_notice() {
+            links::open_url(&notice.url);
         }
     }
 
@@ -248,33 +273,71 @@ fn wire(controller: &WindowController) {
     });
     window.on_open_file(move || with_app(move |app| app.pick_file(key)));
     window.on_show_about(|| with_app(App::show_about));
+    window.on_notice_action(move || {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            if let Some(command) = controller.notice_action.clone() {
+                controller.dispatch(&mut app.workbench, command);
+            }
+        });
+    });
+    window.on_open_update(|| with_app(App::open_update));
 
-    window.on_scrolled(move |delta_y| {
+    // Panes and tabs arrive as Slint ints; they are never negative.
+    let index = |i: i32| usize::try_from(i).unwrap_or(0);
+    window.on_scrolled(move |pane, delta_y| {
         let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;
-        with_app(move |app| app.dispatch(key, Command::ScrollBy { rows }));
+        with_app(move |app| app.dispatch(key, Command::ScrollPane { pane: index(pane), rows }));
     });
-    window.on_pressed(move |x, y, shift| {
+    window.on_pressed(move |pane, x, y, shift, alt| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.press(&mut app.workbench, x, y, shift);
+            controller.press(&mut app.workbench, index(pane), x, y, shift, alt);
         });
     });
-    window.on_dragged(move |x, y| {
+    window.on_dragged(move |pane, x, y| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.drag(&mut app.workbench, x, y);
+            controller.drag(&mut app.workbench, index(pane), x, y);
         });
     });
-    window.on_double_clicked(move |x, y| {
+    window.on_double_clicked(move |pane, x, y| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.double_click(&mut app.workbench, x, y);
+            controller.double_click(&mut app.workbench, index(pane), x, y);
+        });
+    });
+    // Tabs and the split (ticket #31).
+    window.on_tab_clicked(move |pane, tab| {
+        with_app(move |app| app.dispatch(key, Command::SelectTab { pane: index(pane), tab: index(tab) }));
+    });
+    window.on_tab_closed(move |pane, tab| {
+        with_app(move |app| app.dispatch(key, Command::CloseTab { pane: index(pane), tab: index(tab) }));
+    });
+    window.on_tab_moved(move |pane, tab| {
+        with_app(move |app| app.dispatch(key, Command::MoveTabToOtherSide { pane: index(pane), tab: index(tab) }));
+    });
+    window.on_close_tab(move || {
+        with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::CloseTab { pane, tab }));
+    });
+    window.on_move_tab(move || {
+        with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::MoveTabToOtherSide { pane, tab }));
+    });
+    window.on_next_tab(move |forward| {
+        with_app(move |app| {
+            app.dispatch_for_active_tab(key, |pane, tab, count| {
+                let tab = if forward { (tab + 1) % count } else { (tab + count - 1) % count };
+                Command::SelectTab { pane, tab }
+            })
         });
     });
     // Edits apply synchronously, in order: with_app only defers a key if
     // the app is busy, and then to the very next event-loop turn.
+    let clone_caret = std::cell::RefCell::new(keys::CloneCaretGesture::default());
     window.on_key(move |text, shift, cmd, alt, ctrl| {
-        if let Some(command) = keys::command_for(&text, Modifiers { shift, cmd, alt, ctrl }) {
+        let modifiers = Modifiers { shift, cmd, alt, ctrl };
+        let clone = clone_caret.borrow_mut().command_for(&text, modifiers);
+        if let Some(command) = clone.or_else(|| keys::command_for(&text, modifiers)) {
             with_app(move |app| app.dispatch(key, command));
         }
     });
@@ -294,15 +357,46 @@ fn wire(controller: &WindowController) {
         }
     };
     window.on_save(menu(Command::Save));
+    window.on_undo(menu(Command::Undo));
+    window.on_redo(menu(Command::Redo));
     window.on_cut(menu(Command::Cut));
     window.on_copy(menu(Command::Copy));
     window.on_paste(menu(Command::Paste));
     window.on_select_all(menu(Command::SelectAll));
+    window.on_open_config(menu(Command::OpenConfig));
+    window.on_toggle_view(move |view| {
+        let view = left_column_view(view);
+        with_app(move |app| app.dispatch(key, Command::ToggleLeftColumn(view)));
+    });
+    window.on_show_view(move |view| {
+        let view = left_column_view(view);
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.show_view(&mut app.workbench, view);
+        });
+    });
+    window.on_problem_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.open_problem(&mut app.workbench, index);
+        });
+    });
+    window.on_split_right(menu(Command::SplitRight));
+    window.on_close_split(menu(Command::CloseSplit));
+    window.on_reload_environment(menu(Command::ReloadEnvironment));
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));
         CloseRequestResponse::HideWindow
     });
+}
+
+/// The core's name for a left-column view.
+fn left_column_view(view: LeftView) -> LeftColumnView {
+    match view {
+        LeftView::Problems => LeftColumnView::Problems,
+    }
 }
 
 /// Connects the welcome window's callbacks to the app.
@@ -320,6 +414,7 @@ fn wire_welcome(welcome: &WelcomeController) {
         with_app(move |app| app.open_recent(index));
     });
     window.on_show_about(|| with_app(App::show_about));
+    window.on_open_update(|| with_app(App::open_update));
     window.window().on_close_requested(|| {
         with_app(App::welcome_closed);
         CloseRequestResponse::HideWindow

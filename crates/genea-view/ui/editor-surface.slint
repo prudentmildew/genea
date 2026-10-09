@@ -13,11 +13,20 @@
 
 import { Theme } from "theme.slint";
 
-// One highlight run of a line, placed on the monospace grid by Rust.
+// One highlight run of a line, placed on the monospace grid by Rust. A
+// transparent colour means the theme's editor foreground.
 export struct Run {
     x: length,
     text: string,
     color: color,
+}
+
+// A problem underlined on a line (ticket #29), placed by Rust.
+export struct Mark {
+    x: length,
+    width: length,
+    // An error; otherwise a warning.
+    error: bool,
 }
 
 // A highlighted stretch of a line (a selection), placed by Rust.
@@ -33,6 +42,10 @@ export struct Line {
     number: string,
     runs: [Run],
     selections: [Span],
+    problems: [Mark],
+    // The x of each caret on this line other than the primary one, which
+    // is drawn on its own (multi-caret, ticket #52).
+    carets: [length],
 }
 
 export component EditorSurface inherits Rectangle {
@@ -55,7 +68,7 @@ export component EditorSurface inherits Rectangle {
     // Positive delta: content moves down (scrolling up), as Slint reports it.
     callback scrolled(delta-y: length);
     // A press, a drag and a double-click at a point in surface coordinates.
-    callback pressed(x: length, y: length, shift: bool);
+    callback pressed(x: length, y: length, shift: bool, alt: bool);
     callback dragged(x: length, y: length);
     callback double-clicked(x: length, y: length);
     // Keys reach Rust as plain values; `cmd` is ⌘ on macOS.
@@ -110,14 +123,32 @@ export component EditorSurface inherits Rectangle {
                 font-size: Theme.editor-font-size;
             }
 
+            // Steady like the primary caret.
+            for caret-x in line.carets: Rectangle {
+                x: Theme.gutter-width + caret-x;
+                width: 2px;
+                height: Theme.line-height;
+                background: Theme.caret;
+                visible: root.caret-visible && ime.has-focus;
+            }
+
             for run in line.runs: Text {
                 x: Theme.gutter-width + run.x;
                 height: Theme.line-height;
                 vertical-alignment: center;
                 text: run.text;
-                color: run.color;
+                color: run.color == Colors.transparent ? Theme.editor-foreground : run.color;
                 font-family: Theme.editor-font;
                 font-size: Theme.editor-font-size;
+            }
+
+            // Problems: a 2px underline at the bottom of the line.
+            for mark in line.problems: Rectangle {
+                x: Theme.gutter-width + mark.x;
+                y: Theme.line-height - 2px;
+                width: mark.width;
+                height: 2px;
+                background: mark.error ? Theme.error : Theme.warning;
             }
         }
 
@@ -179,7 +210,7 @@ export component EditorSurface inherits Rectangle {
         pointer-event(event) => {
             if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
                 ime.focus();
-                root.pressed(self.mouse-x, self.mouse-y, event.modifiers.shift);
+                root.pressed(self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.alt);
             }
         }
         moved => {

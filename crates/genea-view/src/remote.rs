@@ -144,7 +144,7 @@ fn info() {
     });
 }
 
-/// Scrolls the first window by `px` per presented frame, through its
+/// Scrolls the first window's left pane by `px` per presented frame, through its
 /// `scrolled` callback (the trackpad's path), until `duration` is up. Each
 /// step runs right after the previous frame, so every display-link tick has
 /// something new to draw. At either end it turns around.
@@ -158,10 +158,10 @@ fn scroll(px: f32, duration: Duration) {
         move || {
             let Some(window) = window.upgrade() else { return };
             let before = scroll_top();
-            window.invoke_scrolled(-px * direction.get());
+            window.invoke_scrolled(0, -px * direction.get());
             if scroll_top() == before {
                 direction.set(-direction.get());
-                window.invoke_scrolled(-px * direction.get());
+                window.invoke_scrolled(0, -px * direction.get());
             }
             steps.set(steps.get() + 1);
         }
@@ -196,7 +196,7 @@ fn scroll_top() -> Option<f64> {
         out.set(
             app.first_window()
                 .and_then(|(c, w)| w.project(c.project))
-                .and_then(|p| p.editor)
+                .and_then(|p| p.panes.into_iter().next()?.editor)
                 .map(|e| e.scroll_top),
         )
     });

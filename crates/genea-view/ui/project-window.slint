@@ -1,48 +1,94 @@
-// A project window: the native menu bar (muda), a tab strip, the editor
-// surface and the status bar. Every property is set from Rust (src/window.rs)
+// A project window: the native menu bar (muda), the editor area (one pane
+// of tabs, or two side by side after a split) and the status bar. Every property is set from Rust (src/window.rs)
 // out of the core's ProjectView; every callback turns input into a command.
 
 import { Theme } from "theme.slint";
-import { EditorSurface, Line } from "editor-surface.slint";
+import { Line } from "editor-surface.slint";
+import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
+import { LeftColumn, LeftView } from "left-column.slint";
+import { ProblemRow } from "problems-view.slint";
 
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
+    // The focused tab has a file: the editing menu items work.
     in property <bool> has-editor;
-    in property <string> tab-title;
-    // The open file has unsaved edits.
-    in property <bool> tab-modified;
     in property <string> status-caret;
     in property <string> status-notice;
+    in property <string> status-config-notice;
+    in property <string> status-problems;
+    in property <bool> status-has-errors;
 
-    in property <[Line]> lines <=> surface.lines;
-    in property <length> offset-y <=> surface.offset-y;
-    in property <length> caret-x <=> surface.caret-x;
-    in property <length> caret-y <=> surface.caret-y;
-    in property <length> compose-x <=> surface.compose-x;
-    in property <length> preedit-width <=> surface.preedit-width;
-    out property <length> char-width: surface.char-width;
-    out property <length> viewport-height: surface.viewport-height;
-    out property <length> text-left: surface.text-left;
+    // The left column: shown while `left-column-visible`, with `left-view`.
+    in property <bool> left-column-visible;
+    in property <LeftView> left-view;
+    in property <[ProblemRow]> problems;
+    in property <string> status-encoding;
+    in property <string> status-line-ending;
+    in property <string> status-notice-action;
+    in property <string> status-toolchain;
+    in property <string> status-update;
+
+    // The editor area (ticket #31): the left pane, and the right one while
+    // split. `focused-pane` is 0 (left) or 1 (right).
+    in property <bool> split;
+    in property <int> focused-pane;
+    in property <bool> can-split;
+    in property <[TabEntry]> left-tabs;
+    in property <[TabEntry]> right-tabs;
+    in property <bool> left-has-editor;
+    in property <bool> right-has-editor;
+    in property <[Line]> left-lines <=> left.lines;
+    in property <[Line]> right-lines <=> right.lines;
+    in property <SurfaceGeometry> left-geometry;
+    in property <SurfaceGeometry> right-geometry;
+    // Both panes have the same font and height.
+    out property <length> char-width: left.char-width;
+    out property <length> viewport-height: left.viewport-height;
+    out property <length> text-left: left.text-left;
 
     // Menu commands.
     callback open-folder();
     callback open-file();
     callback save();
+    callback undo();
+    callback redo();
     callback cut();
     callback copy();
     callback paste();
     callback select-all();
+    callback reload-environment();
     callback show-about();
+    callback open-config();
+    // A left-column view's shortcut: show it, or collapse the column.
+    callback toggle-view(LeftView);
+    // Show a left-column view (a switcher tab, the status-bar notice).
+    callback show-view(LeftView);
+    callback problem-clicked(int);
+    callback close-tab();
+    callback split-right();
+    callback move-tab();
+    callback close-split();
+    callback next-tab(forward: bool);
+    // The status-bar notice's button.
+    callback notice-action();
+    // Opens the release page of the update notice.
+    callback open-update();
 
-    // Editor input.
-    callback scrolled <=> surface.scrolled;
-    callback pressed <=> surface.pressed;
-    callback dragged <=> surface.dragged;
-    callback double-clicked <=> surface.double-clicked;
-    callback key <=> surface.key;
-    callback committed <=> surface.committed;
-    callback preedit-changed <=> surface.preedit-changed;
+    // Tab strips; `pane` is 0 (left) or 1 (right).
+    callback tab-clicked(pane: int, index: int);
+    callback tab-closed(pane: int, index: int);
+    callback tab-moved(pane: int, index: int);
+
+    // Editor input. Keys, commits and the preedit come from the focused
+    // pane only, so they carry no pane.
+    callback scrolled(pane: int, delta-y: length);
+    callback pressed(pane: int, x: length, y: length, shift: bool, alt: bool);
+    callback dragged(pane: int, x: length, y: length);
+    callback double-clicked(pane: int, x: length, y: length);
+    callback key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
+    callback committed(text: string);
+    callback preedit-changed(text: string);
     callback viewport-changed();
 
     title: root.window-title;
@@ -50,16 +96,21 @@ export component ProjectWindow inherits Window {
     preferred-height: 800px;
     background: Theme.editor-background;
     default-font-size: Theme.chrome-font-size;
-    forward-focus: surface;
+    forward-focus: left;
 
     changed viewport-height => {
         root.viewport-changed();
     }
 
-    // Re-focuses the hidden TextInput once the native window exists, so the
-    // IME is enabled (ADR 0004).
+    // Re-focuses the focused pane's hidden TextInput: once the native
+    // window exists, so the IME is enabled (ADR 0004), and whenever the
+    // core moves the focus to the other pane.
     public function refocus() {
-        surface.refocus();
+        if root.focused-pane == 1 {
+            right.refocus();
+        } else {
+            left.refocus();
+        }
     }
 
     MenuBar {
@@ -82,6 +133,13 @@ export component ProjectWindow inherits Window {
             }
 
             MenuItem {
+                title: "Open Config";
+                activated => {
+                    root.open-config();
+                }
+            }
+
+            MenuItem {
                 title: "Save";
                 shortcut: @keys(Control + S);
                 enabled: root.has-editor;
@@ -89,10 +147,49 @@ export component ProjectWindow inherits Window {
                     root.save();
                 }
             }
+
+            MenuItem {
+                title: "Close Tab";
+                shortcut: @keys(Control + W);
+                enabled: root.has-editor;
+                activated => {
+                    root.close-tab();
+                }
+            }
+
+            MenuSeparator { }
+
+            // Re-runs the login shell for the project's environment (#36).
+            MenuItem {
+                title: "Reload Environment";
+                activated => {
+                    root.reload-environment();
+                }
+            }
         }
 
         Menu {
             title: "Edit";
+            MenuItem {
+                title: "Undo";
+                shortcut: @keys(Control + Z);
+                enabled: root.has-editor;
+                activated => {
+                    root.undo();
+                }
+            }
+
+            MenuItem {
+                title: "Redo";
+                shortcut: @keys(Control + Shift + Z);
+                enabled: root.has-editor;
+                activated => {
+                    root.redo();
+                }
+            }
+
+            MenuSeparator { }
+
             MenuItem {
                 title: "Cut";
                 shortcut: @keys(Control + X);
@@ -131,6 +228,62 @@ export component ProjectWindow inherits Window {
         }
 
         Menu {
+            title: "View";
+            MenuItem {
+                title: "Problems";
+                shortcut: @keys(Control + "6");
+                activated => {
+                    root.toggle-view(LeftView.problems);
+                }
+            }
+        }
+
+        Menu {
+            title: "Window";
+            MenuItem {
+                title: "Split Right";
+                enabled: root.can-split;
+                activated => {
+                    root.split-right();
+                }
+            }
+
+            MenuItem {
+                title: "Move Tab to Other Side";
+                enabled: root.has-editor;
+                activated => {
+                    root.move-tab();
+                }
+            }
+
+            MenuItem {
+                title: "Close Split";
+                enabled: root.split;
+                activated => {
+                    root.close-split();
+                }
+            }
+
+            MenuItem {
+                title: "Select Next Tab";
+                shortcut: @keys(Control + Shift + "]");
+                enabled: root.has-editor;
+                activated => {
+                    root.next-tab(true);
+                }
+            }
+
+            MenuItem {
+                title: "Select Previous Tab";
+                shortcut: @keys(Control + Shift + "[");
+                enabled: root.has-editor;
+                activated => {
+                    root.next-tab(false);
+                }
+            }
+        }
+
+        Menu {
             title: "Help";
             MenuItem {
                 title: "About Genea";
@@ -142,44 +295,138 @@ export component ProjectWindow inherits Window {
     }
 
     VerticalLayout {
-        tabs := Rectangle {
-            height: 28px;
-            background: Theme.chrome-background;
+        HorizontalLayout {
+            vertical-stretch: 1;
 
-            Rectangle {
-                y: parent.height - 1px;
-                height: 1px;
+            if root.left-column-visible: LeftColumn {
+                width: 300px;
+                view: root.left-view;
+                problems: root.problems;
+                show(view) => {
+                    root.show-view(view);
+                }
+                problem-clicked(index) => {
+                    root.problem-clicked(index);
+                }
+            }
+
+            if root.left-column-visible: Rectangle {
+                width: 1px;
                 background: Theme.chrome-border;
             }
 
-            Text {
-                x: 12px;
-                // A dot marks unsaved edits.
-                text: !root.has-editor ? "" : root.tab-modified ? root.tab-title + "  ●" : root.tab-title;
-                color: Theme.chrome-foreground;
-                vertical-alignment: center;
+            left := EditorPane {
+                horizontal-stretch: 1;
+                tabs: root.left-tabs;
+                focused: root.focused-pane == 0;
+                has-editor: root.left-has-editor;
+                can-split: root.can-split;
+                geometry: root.left-geometry;
+                tab-clicked(index) => {
+                    root.tab-clicked(0, index);
+                }
+                tab-closed(index) => {
+                    root.tab-closed(0, index);
+                }
+                tab-moved(index) => {
+                    root.tab-moved(0, index);
+                }
+                split-right => {
+                    root.split-right();
+                }
+                scrolled(delta-y) => {
+                    root.scrolled(0, delta-y);
+                }
+                pressed(x, y, shift, alt) => {
+                    root.pressed(0, x, y, shift, alt);
+                }
+                dragged(x, y) => {
+                    root.dragged(0, x, y);
+                }
+                double-clicked(x, y) => {
+                    root.double-clicked(0, x, y);
+                }
+                key(text, shift, cmd, alt, ctrl) => {
+                    root.key(text, shift, cmd, alt, ctrl);
+                }
+                committed(text) => {
+                    root.committed(text);
+                }
+                preedit-changed(text) => {
+                    root.preedit-changed(text);
+                }
             }
-        }
 
-        Rectangle {
-            vertical-stretch: 1;
-
-            surface := EditorSurface {
-                caret-visible: root.has-editor;
+            Rectangle {
+                width: 1px;
+                background: Theme.chrome-border;
+                visible: root.split;
             }
 
-            if !root.has-editor: Text {
-                text: "Open a file with File › Open File…";
-                color: Theme.chrome-muted;
-                font-size: 13px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            right := EditorPane {
+                horizontal-stretch: 1;
+                visible: root.split;
+                tabs: root.right-tabs;
+                focused: root.focused-pane == 1;
+                has-editor: root.right-has-editor;
+                can-split: root.can-split;
+                geometry: root.right-geometry;
+                tab-clicked(index) => {
+                    root.tab-clicked(1, index);
+                }
+                tab-closed(index) => {
+                    root.tab-closed(1, index);
+                }
+                tab-moved(index) => {
+                    root.tab-moved(1, index);
+                }
+                split-right => {
+                    root.split-right();
+                }
+                scrolled(delta-y) => {
+                    root.scrolled(1, delta-y);
+                }
+                pressed(x, y, shift, alt) => {
+                    root.pressed(1, x, y, shift, alt);
+                }
+                dragged(x, y) => {
+                    root.dragged(1, x, y);
+                }
+                double-clicked(x, y) => {
+                    root.double-clicked(1, x, y);
+                }
+                key(text, shift, cmd, alt, ctrl) => {
+                    root.key(text, shift, cmd, alt, ctrl);
+                }
+                committed(text) => {
+                    root.committed(text);
+                }
+                preedit-changed(text) => {
+                    root.preedit-changed(text);
+                }
             }
         }
 
         StatusBar {
             notice: root.status-notice;
+            config-notice: root.status-config-notice;
+            problems: root.status-problems;
+            has-errors: root.status-has-errors;
+            notice-action: root.status-notice-action;
+            notice-action-clicked => {
+                root.notice-action();
+            }
+            toolchain: root.status-toolchain;
             caret: root.status-caret;
+            encoding: root.status-encoding;
+            line-ending: root.status-line-ending;
+            update: root.status-update;
+            update-clicked => {
+                root.open-update();
+            }
+            show-problems => {
+                root.show-view(LeftView.problems);
+            }
         }
     }
 }

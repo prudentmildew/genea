@@ -9,20 +9,26 @@
 //!
 //! - `ui/*.slint`: the markup (one component per file; `app.slint` exports);
 //! - `app`: the workbench, the windows, callback wiring, the notifier;
+//! - `about`: the About window's third-party licences;
 //! - `window`: one project window's view-state → Slint sync;
 //! - `welcome`: the welcome window's sync;
 //! - `surface`: the editor surface's ring of line slots;
+//! - `fonts`: registers the emoji font the first time an emoji is shown;
 //! - `blink`: keeps the hidden TextInput from repainting on a timer;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
-//!   system clipboard behind the host's `Clipboard`.
+//!   system clipboard behind the host's `Clipboard`; `links`: opening web
+//!   links in the browser.
 //! - `journal` and `remote`: the benchmark harness's instrumentation journal
 //!   and control channel, both off unless `GENEA_JOURNAL=1`.
 
+mod about;
 mod app;
 mod blink;
 mod dialogs;
+mod fonts;
 mod journal;
 mod keys;
+mod links;
 mod pasteboard;
 mod remote;
 mod surface;

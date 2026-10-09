@@ -11,6 +11,7 @@ crates/
   genea-core/     framework-free core; the Workbench is its single entry point
   genea-host/     the host boundary: processes, downloads, the clock; RealHost
   genea-testkit/  TestHost (manual clock, scripted processes/downloads) + FixtureProject
+  genea-toolchain/ toolchain pins, version resolution, the shared store (ADR 0005)
   genea-view/     the thin Slint view layer and the `genea` binary
   genea-bench/    the benchmark harness and the start-floor binary (bench/README.md)
 patches/          the one Slint patch (ADR 0004); see patches/README.md
@@ -45,7 +46,10 @@ use, and nothing else:
 | Commands in | `dispatch(id, Command)` | `Command` (`src/command.rs`) is plain data, one variant per user action. Commands apply synchronously on the main thread. |
 | View state out | `project(id) -> Option<ProjectView>` | Plain snapshots (`src/view.rs`) of what the window shows: user-visible text, 1-based labels, display columns. |
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
-| Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending (tests). |
+| Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
+| Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
+| Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
+| Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
 
@@ -63,14 +67,53 @@ use, and nothing else:
 - **Effects outside the process** go through the host (`core.host`), never
   `std::process`, an HTTP client or `std::time` directly. The filesystem is
   used directly.
+- **Files changing on disk**: each project has one `notify` watcher
+  (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
+  batches at `Project::files_changed(FileChanges, jobs)`; react there (the
+  config does; the file index, open editors and review hook in beside it).
+  `settle` waits for the watcher by writing a cookie file into
+  `<support>/watch-sync`, which the same FSEvents stream watches: once its
+  event is back, every earlier change has been delivered. So a test writes a
+  file with `fixture.write(..)`, calls `settle()`, and asserts.
+- **Problems** (`src/problems.rs`): every source puts its errors and
+  warnings into the project's `Problems` store and owns them. A source that
+  reports for the whole project calls `replace(source, problems)`; one that
+  reports per file (tsgo, Oxlint) calls `replace_file(source, path,
+  problems)`. Add a `ProblemSource` variant for a new source. The Problems
+  view (`ProjectView::problems`), the status-bar counts and the editor's
+  underlines (`EditorView::problems`) all read from the store. Positions
+  are `TextPosition`s: 0-based line and char column.
+- **Config** (`src/config.rs`): `genea.jsonc` parses into `Config` (in
+  `ProjectView::config`), with defaults for anything missing or wrong. A
+  feature reads its key from the project's config; it applies live, so read
+  it when needed rather than copying it at open. A new key goes in
+  `Config`, its `Default`, and the `match` in `config::parse`.
+- **Tabs and the split** (`src/project/tabs.rs`): an open file has one
+  `Editor` however many tabs show it; each tab keeps its own `Cursor`
+  (caret, selection, scroll). `Project::editor` is always the *focused*
+  tab's editor, so commands that act on "the open file" keep using it. The
+  other open files are parked; reach any open file by path with
+  `Project::open_editor(_mut)`, e.g. in an Apply whose file may have lost
+  the focus meanwhile. `ProjectView::editor` is the focused file;
+  `ProjectView::panes` lists each side's tabs and editor.
+- **Carets** (`src/editor.rs`, ticket #52): an editor has one or more
+  carets, each with its own selection, in the order they were added; the
+  last is the primary (the one scrolled to and shown in the status bar).
+  Every edit goes through `Editor::replace`, which applies it at every caret
+  as one undo edit; a new edit command should too. A tab's `Cursor` holds
+  the whole caret list. `EditorView::caret` is the primary,
+  `EditorView::carets` every caret on the visible lines.
 
 ## The host boundary
 
 `genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
-`clipboard()` (below), and `support_dir()`, Genea's application-support
-folder, where the core keeps its own files (recent projects; session state,
-review baselines, …). The folder is used through the real filesystem; the
-host only says where it is, so tests never touch the user's.
+`clipboard()` (below), `launch_environment()` (the variables Genea was
+started with; `SHELL` names the login shell), and `support_dir()`, Genea's application-support
+folder, where the core keeps its own files (recent projects, the toolchain
+store; session state, review baselines, …). The folder is used through the
+real filesystem; the host only says where it is, so tests never touch the
+user's. `Downloads::fetch_with_length` also reports the response's
+`Content-Length`, for progress.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
   idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
@@ -82,15 +125,60 @@ host only says where it is, so tests never touch the user's.
 - `genea_testkit::TestHost`: `ManualClock::advance` fires due timers;
   `ScriptedProcesses::script("tsc", |spec, io| …)` plays a program on a
   thread with real pipes (unscripted programs fail with `NotFound`) and
-  records every spawn; `ScriptedDownloads::serve/fail` answers URLs from a
+  records every spawn; `ScriptedProcesses::script_shell("zsh", vars)` plays
+  a login shell with a real `/bin/sh` whose environment is exactly `vars`;
+  `TestHost::set_launch_environment` sets the launch environment (by default
+  only a `PATH`, with no `SHELL`, so no login shell runs);
+  `ScriptedDownloads::serve/fail` answers URLs from a
   table (unknown URLs answer 404) and records every request. Each test host
   has its own temp support folder; a second workbench on a clone of the same
   host is a restart.
+  Once started, `TestHost::download_server()` (the **local download fixture
+  server**, a real HTTP server on 127.0.0.1) answers every URL not in the
+  table, over real HTTP. Tests publish files under the real URLs
+  (`server.publish(url, bytes)`), `hold`/`release` a response halfway to
+  look at Genea mid-download, and `TestHost::tools()` publishes fake Node,
+  Bun and pnpm releases (indexes, checksums, archives; `*_with_bad_checksum`
+  for a mismatch).
 
 A new kind of effect (a PTY, say) gets a trait in `genea-host`, an accessor on
 `Host`, a real implementation in `genea-host/src/real.rs` and a scripted one
 in `genea-testkit/src/host.rs`. Keep the traits small and blocking: the core
 calls them from background threads.
+
+## The toolchain
+
+`genea-toolchain` (blocking, no threads) reads and writes the pins in
+`package.json` (`pins`), resolves a `Request` (newest match in the store,
+else newest published), and installs into the `Store` at
+`<support_dir>/toolchains/<tool>/<version>/`; `Installed::bin_dir` is the
+folder to put on PATH (`bin/` for Node and Bun, the unpacked `@pnpm/exe`
+package itself for pnpm). `genea-core/src/toolchain.rs` runs it per project: it reads the pins
+in a job when a project with a root `package.json` opens, starts one job per
+role, and exposes `ProjectView.toolchain`, `StatusBar.toolchain` and notices
+whose `NoticeAction` carries the `Command` a click dispatches.
+
+## The project environment
+
+Every process Genea starts for a project (terminal shells, scripts,
+language servers, the project check) gets the project environment
+(`genea-core/src/environment.rs`, ticket #36, ADR 0005): the variables of the
+user's login shell, captured once per open by running `$SHELL -l -i -c` in
+the project root, with each `Installed::bin_dir` of the toolchain first on
+PATH (worked out at spawn time, so a download that finishes later counts).
+If the shell fails or takes longer than `LOGIN_SHELL_TIMEOUT` (5 s, host
+clock), processes get the launch environment and a notice offers
+`Command::ReloadEnvironment`, which also sits in the File menu. A process
+started before the capture lands gets the launch environment.
+
+**Starting a process from the core**: never build a `ProcessSpec` for a
+project process without it. Take `Project::process_env()` (a `Send`
+snapshot, fine to move into a job) and pass the spec through
+`ProcessEnv::apply(spec)`, then spawn it through `host.processes()` (or a
+PTY). `apply` sets `clear_env`, puts the project's variables first (the
+spec's own `env` entries win, e.g. `TERM`), and defaults `cwd` to the root.
+The slow lane `tests/environment_slow.rs` (`-- --ignored`) runs the real
+login shell.
 
 ## Tests
 
@@ -136,22 +224,39 @@ chrome, native menus via muda (Slint's `MenuBar`).
 - `src/surface.rs`: the editor surface, a ring of line slots (line L in slot
   L % slots) with a per-slot diff, plus base-line rebasing for `f32`
   precision.
-- `src/keys.rs`: the keymap (WebStorm macOS). `src/dialogs.rs`: native
+- `src/fonts.rs`: registers Apple Color Emoji and Hiragino Sans GB (CJK),
+  memory-mapped, the first time visible text has an emoji or CJK character
+  that Menlo and Apple Symbols lack. It is
+  the only user of Slint's `unstable-fontique-011`. Wide characters are
+  drawn one per run at their grid column (`genea_core::grid_pieces`), since
+  fallback glyphs aren't two Menlo cells wide.
+- `src/keys.rs`: the keymap (WebStorm macOS), plus `CloneCaretGesture`
+  (press ⌥ twice and hold, then ↑/↓). Secondary carets ride in each line
+  slot (`Line.carets`), so they share its diff. `src/dialogs.rs`: native
   NSOpenPanels.
+- Themes: `ui/theme.slint`'s `Theme` global has light and dark colours,
+  chosen by `follow-system` (the system's appearance, through
+  `Palette.color-scheme`) or `pinned-dark`, which `WindowController::sync`
+  sets from the config's `theme`. Use `Theme` colours, never literals; a
+  `Run` with a transparent colour is drawn in `Theme.editor-foreground`.
+- The left column (`ui/left-column.slint`): a view switcher and the active
+  view, shown while the core's `left_column` is `Some`. A view's shortcut
+  is a menu item that dispatches `ToggleLeftColumn` (Problems is ⌘6). A new
+  view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
+  switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`
   (ADR 0004) whose `key-pressed` accepts every key; IME commits and the
   preedit go to the core as `InsertText` and `SetPreedit`. `src/blink.rs`
   stops that `TextInput`'s cursor-blink timer, which would otherwise repaint
   an idle window twice a second.
+- `src/journal.rs` and `src/remote.rs`: the benchmark harness's
+  instrumentation journal and control channel, off unless `GENEA_JOURNAL=1`.
+  `journal.rs` is the only user of Slint's `unstable-winit-030` and
+  `unstable-wgpu-30`.
 
 Rules: push to Slint only on change. Use no repeating timers (the caret is
 steady). Install no rendering notifier or run-loop observer unless the
 benchmark journal is on. Idle must be 0 % CPU.
-
-- `src/journal.rs` and `src/remote.rs`: the benchmark harness's
-  instrumentation journal and control channel, off unless `GENEA_JOURNAL=1`.
-  `journal.rs` is the only module that uses Slint's `unstable-*` APIs
-  (`unstable-winit-030`, `unstable-wgpu-30`).
 
 The editor font is Menlo 13 pt with a line height of 1.2 (`Theme` in
 `ui/theme.slint` and `LINE_HEIGHT` in `src/surface.rs`; keep them in step).
@@ -166,3 +271,8 @@ scripts/bench.sh             # the benchmark harness (bench/README.md)
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`.
+
+Releases (a signed, notarized DMG for Apple Silicon, macOS 14+) and the
+third-party licence list shown in About are in `docs/releasing.md`:
+`scripts/release.sh [--local]`, `scripts/third-party-licences.sh`,
+`packaging/`.

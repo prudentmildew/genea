@@ -10,10 +10,10 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::EditorView;
+use genea_core::{EditorView, Severity, grid_pieces};
 use slint::{Color, Model, ModelRc, VecModel};
 
-use crate::{Line, ProjectWindow, Run, Span};
+use crate::{Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry};
 
 /// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
 /// ui/theme.slint.
@@ -23,8 +23,9 @@ pub const LINE_HEIGHT: f32 = 15.6;
 /// huge file. The base moves (and every slot is rebuilt) past this distance.
 const REBASE_LINES: usize = 10_000;
 
-/// `Theme.editor-foreground`. Highlighting gives runs their own colours.
-const FOREGROUND: u32 = 0x24292f;
+/// A run colour that means `Theme.editor-foreground`, which follows the
+/// light or dark theme. Highlighting gives runs their own colours.
+const FOREGROUND: Color = Color::from_argb_encoded(0);
 
 #[derive(PartialEq)]
 struct SlotState {
@@ -32,11 +33,17 @@ struct SlotState {
     base: usize,
     text: String,
     selections: Vec<Range<usize>>,
+    /// Problems underlined on the line: columns, and whether it's an error.
+    problems: Vec<(Range<usize>, bool)>,
+    /// Display columns of the carets on the line other than the primary.
+    carets: Vec<usize>,
     /// The cell width the selections were laid out with.
     char_width: f32,
 }
 
+/// One pane's surface (ticket #31): the left one is pane 0, the right one 1.
 pub struct Surface {
+    pane: usize,
     lines: Rc<VecModel<Line>>,
     slots: Vec<Option<SlotState>>,
     base: usize,
@@ -45,10 +52,14 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(window: &ProjectWindow) -> Self {
+    pub fn new(window: &ProjectWindow, pane: usize) -> Self {
         let lines = Rc::new(VecModel::default());
-        window.set_lines(ModelRc::from(lines.clone()));
-        Surface { lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0 }
+        if pane == 0 {
+            window.set_left_lines(ModelRc::from(lines.clone()));
+        } else {
+            window.set_right_lines(ModelRc::from(lines.clone()));
+        }
+        Surface { pane, lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0 }
     }
 
     /// The viewport's height in rows, if it changed since the last call.
@@ -96,6 +107,18 @@ impl Surface {
                     base: self.base,
                     text: line.text.clone(),
                     selections: line.selections.clone(),
+                    problems: editor
+                        .problems
+                        .iter()
+                        .filter(|p| p.line == line.index)
+                        .map(|p| (p.columns.clone(), p.severity == Severity::Error))
+                        .collect(),
+                    carets: editor
+                        .carets
+                        .iter()
+                        .filter(|c| c.line == line.index && **c != editor.caret)
+                        .map(|c| c.column)
+                        .collect(),
                     char_width,
                 });
             }
@@ -114,11 +137,7 @@ impl Surface {
                     runs: if s.text.trim().is_empty() {
                         ModelRc::default()
                     } else {
-                        ModelRc::new(VecModel::from(vec![Run {
-                            x: 0.0,
-                            text: s.text.as_str().into(),
-                            color: Color::from_argb_encoded(0xff00_0000 | FOREGROUND),
-                        }]))
+                        ModelRc::new(VecModel::from(grid_runs(&s.text, char_width)))
                     },
                     selections: if s.selections.is_empty() {
                         ModelRc::default()
@@ -130,6 +149,27 @@ impl Surface {
                                 .collect::<Vec<_>>(),
                         ))
                     },
+                    problems: if s.problems.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(
+                            s.problems
+                                .iter()
+                                .map(|(r, error)| Mark {
+                                    x: r.start as f32 * char_width,
+                                    width: r.len() as f32 * char_width,
+                                    error: *error,
+                                })
+                                .collect::<Vec<_>>(),
+                        ))
+                    },
+                    carets: if s.carets.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(
+                            s.carets.iter().map(|&column| column as f32 * char_width).collect::<Vec<_>>(),
+                        ))
+                    },
                 },
             };
             self.lines.set_row_data(slot, row);
@@ -137,14 +177,39 @@ impl Surface {
         }
 
         let base = self.base as f64;
-        window.set_offset_y(-((self.scroll_top - base) * LINE_HEIGHT as f64) as f32);
+        let mut geometry = if self.pane == 0 { window.get_left_geometry() } else { window.get_right_geometry() };
+        geometry.offset_y = -((self.scroll_top - base) * LINE_HEIGHT as f64) as f32;
         if let Some(editor) = editor {
             // While composing, the caret is drawn after the preedit.
             let preedit = editor.preedit.map_or(0, |p| p.width);
-            window.set_compose_x(editor.caret.column as f32 * char_width);
-            window.set_preedit_width(preedit as f32 * char_width);
-            window.set_caret_x((editor.caret.column + preedit) as f32 * char_width);
-            window.set_caret_y(((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32);
+            geometry.compose_x = editor.caret.column as f32 * char_width;
+            geometry.preedit_width = preedit as f32 * char_width;
+            geometry.caret_x = (editor.caret.column + preedit) as f32 * char_width;
+            geometry.caret_y = ((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32;
         }
+        set_geometry(window, self.pane, geometry);
     }
+}
+
+/// Sets a pane's geometry; Slint skips an equal value, so nothing repaints.
+fn set_geometry(window: &ProjectWindow, pane: usize, geometry: SurfaceGeometry) {
+    if pane == 0 {
+        window.set_left_geometry(geometry);
+    } else {
+        window.set_right_geometry(geometry);
+    }
+}
+
+/// A line's runs, one per grid piece: wide characters (CJK, emoji) are
+/// drawn from fallback fonts whose advances aren't two Menlo cells, so each
+/// is placed at its own column to keep the rest of the line on the grid.
+fn grid_runs(text: &str, char_width: f32) -> Vec<Run> {
+    grid_pieces(text)
+        .into_iter()
+        .map(|piece| Run {
+            x: piece.column as f32 * char_width,
+            text: piece.text.into(),
+            color: FOREGROUND,
+        })
+        .collect()
 }

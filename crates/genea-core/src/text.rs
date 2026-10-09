@@ -1,6 +1,34 @@
-//! Plain-text helpers for the editor: line endings and word boundaries.
+//! Plain-text helpers for the editor: decoding files, line endings and word
+//! boundaries.
 
 use ropey::Rope;
+
+/// A file's contents as the editor gets them.
+pub(crate) enum Decoded {
+    /// Valid UTF-8: editable.
+    Text(String),
+    /// Not valid UTF-8 (spec #19: UTF-8 only). Each invalid sequence is a
+    /// U+FFFD replacement character, so the file can be read but not saved.
+    Invalid(String),
+    /// Not text at all: the editor doesn't show it.
+    Binary,
+}
+
+/// How far into a file to look for a NUL byte, the sign of a binary file
+/// (git's heuristic). Text in UTF-8 never has one.
+const BINARY_SNIFF_BYTES: usize = 8000;
+
+impl Decoded {
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        if bytes[..bytes.len().min(BINARY_SNIFF_BYTES)].contains(&0) {
+            return Decoded::Binary;
+        }
+        match String::from_utf8(bytes) {
+            Ok(text) => Decoded::Text(text),
+            Err(error) => Decoded::Invalid(String::from_utf8_lossy(error.as_bytes()).into_owned()),
+        }
+    }
+}
 
 /// A file's line ending. Detected when the file is read and used for every
 /// line break Genea inserts, so a file keeps its line endings when saved.
@@ -28,6 +56,14 @@ impl LineEnding {
         match self {
             LineEnding::Lf => "\n",
             LineEnding::CrLf => "\r\n",
+        }
+    }
+
+    /// The status bar's name for it.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            LineEnding::Lf => "LF",
+            LineEnding::CrLf => "CRLF",
         }
     }
 

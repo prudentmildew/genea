@@ -24,9 +24,9 @@
 //! `main` opens while the journal is on. `GENEA_JOURNAL_TRACE=1` also prints
 //! winit's window events to stderr, for debugging.
 //!
-//! This is the one module that uses Slint's `unstable-*` APIs
-//! (`unstable-winit-030` for the event filter, `unstable-wgpu-30` for the
-//! rendering notifier on Metal), so a Slint pin bump touches only this file.
+//! This is the only module that uses Slint's `unstable-winit-030` (the event
+//! filter) and `unstable-wgpu-30` (the rendering notifier on Metal), so a
+//! Slint pin bump touches only this file for them.
 
 use std::{
     cell::RefCell,
