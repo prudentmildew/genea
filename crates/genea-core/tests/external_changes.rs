@@ -38,3 +38,21 @@ fn a_clean_buffer_reloads_when_its_file_changes_on_disk() {
     assert_eq!(text(&workbench, project), ["let a = 2;", "let b = 3;", ""]);
     assert!(!editor(&workbench, project).modified, "the reloaded buffer matches the disk");
 }
+
+#[test]
+fn undo_after_a_reload_returns_the_previous_contents() {
+    let (fixture, mut workbench, project) = open("main.ts", "let a = 1;\n");
+    run(&mut workbench, project, [Command::InsertText("x".into()), Command::Save]);
+    workbench.settle().unwrap();
+
+    fixture.write("main.ts", "let b = 2;\n");
+    workbench.settle().unwrap();
+    run(&mut workbench, project, [Command::Undo]);
+
+    assert_eq!(text(&workbench, project), ["xlet a = 1;", ""], "one undo step takes back the whole reload");
+    assert!(editor(&workbench, project).modified, "the disk still has the external change");
+
+    run(&mut workbench, project, [Command::Redo]);
+    assert_eq!(text(&workbench, project), ["let b = 2;", ""]);
+    assert!(!editor(&workbench, project).modified);
+}
