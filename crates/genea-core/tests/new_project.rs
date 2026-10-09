@@ -167,6 +167,47 @@ fn create_needs_a_parent_folder() {
 }
 
 #[test]
+fn the_parent_folder_is_remembered_for_next_time_and_after_a_restart() {
+    let host = host();
+    let parent = FixtureProject::new().build();
+    let mut workbench = Workbench::new(host.shared());
+    open_dialog(&mut workbench);
+    create(&mut workbench, "first", parent.root());
+
+    assert_eq!(open_dialog(&mut workbench).parent.as_deref(), Some(parent.root()));
+    drop(workbench);
+
+    let mut restarted = Workbench::new(host.shared());
+    assert_eq!(open_dialog(&mut restarted).parent.as_deref(), Some(parent.root()));
+}
+
+#[test]
+fn without_a_remembered_folder_the_parent_defaults_to_the_home_folder() {
+    let host = host();
+    let home = FixtureProject::new().build();
+    host.set_launch_environment([("PATH", "/usr/bin:/bin"), ("HOME", home.root().to_str().unwrap())]);
+    let mut workbench = Workbench::new(host.shared());
+
+    assert_eq!(open_dialog(&mut workbench).parent.as_deref(), Some(home.root()));
+}
+
+#[test]
+fn a_refused_create_doesnt_change_the_remembered_folder() {
+    let host = host();
+    let used = FixtureProject::new().build();
+    let refused = FixtureProject::new().file("taken/file.txt", "").build();
+    let mut workbench = Workbench::new(host.shared());
+    open_dialog(&mut workbench);
+    create(&mut workbench, "first", used.root());
+    open_dialog(&mut workbench);
+
+    create(&mut workbench, "taken", refused.root());
+    workbench.dispatch_new_project(NewProjectCommand::Cancel);
+
+    assert_eq!(open_dialog(&mut workbench).parent.as_deref(), Some(used.root()));
+}
+
+#[test]
 fn the_dialog_says_whats_wrong_with_the_name_while_typing() {
     let mut workbench = Workbench::new(host().shared());
     open_dialog(&mut workbench);
