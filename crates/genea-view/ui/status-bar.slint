@@ -20,6 +20,8 @@ export component StatusBar inherits Rectangle {
     in property <string> caret;
     in property <string> encoding;
     in property <string> line-ending;
+    // The open file's indentation, "2 spaces" or "Tabs" (ticket #26).
+    in property <string> indentation;
     // The update notice ("Genea 0.2.0 is available"), or empty.
     in property <string> update;
     // Why the open file has no highlighting: it is over 5 MB (ticket #27).
@@ -142,6 +144,13 @@ export component StatusBar inherits Rectangle {
 
         Text {
             text: root.caret;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.indentation;
             color: Theme.chrome-foreground;
             font-size: Theme.chrome-font-size;
             vertical-alignment: center;

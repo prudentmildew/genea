@@ -4,7 +4,7 @@
 //! answers into edits, carets and view state.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     ops::Range,
     time::Instant,
 };
@@ -13,6 +13,7 @@ use super::{CaretSelection, Editor};
 use crate::{
     command::CaretMove,
     history::{Change, EditKind},
+    indentation::Indentation,
     syntax::{Comment, FoldRegion, Language, Syntax, structure},
     view::{Caret, Fold},
 };
@@ -26,23 +27,20 @@ pub(super) struct Expansions {
     before: Vec<Vec<CaretSelection>>,
 }
 
-/// One level of indentation. Ticket #26 resolves it from `.oxfmtrc.json`
-/// and `.editorconfig`; until then it is Oxfmt's default.
-const INDENT_UNIT: &str = "  ";
-
 impl Editor {
     /// Return: breaks the line at every caret, indenting the new line like
     /// the caret's line, one level deeper when the caret is just inside a
     /// block (after `{`, `(`, `[` or an element's start tag). When the text
     /// after the caret closes that block, it goes on a line of its own and
     /// the caret stays on the indented line between. Whitespace after the
-    /// caret is dropped.
-    pub(crate) fn new_line(&mut self, now: Instant, viewport_rows: f64) {
+    /// caret is dropped. A level is one of `indentation` (ticket #26).
+    pub(crate) fn new_line(&mut self, indentation: Indentation, now: Instant, viewport_rows: f64) {
         self.preedit.clear();
         if self.read_only {
             return;
         }
         let break_text = self.line_ending.normalize("\n");
+        let unit = indentation.unit();
         let edits = (0..self.carets.len())
             .map(|i| {
                 let range = self.carets[i].range();
@@ -66,7 +64,7 @@ impl Editor {
 
                 let mut text = format!("{break_text}{base}");
                 if indent.deeper {
-                    text.push_str(INDENT_UNIT);
+                    text.push_str(&unit);
                 }
                 let caret = text.chars().count();
                 if indent.deeper && indent.split {
@@ -93,18 +91,9 @@ impl Editor {
             Comment::Block(open, close) => (open, Some(close)),
         };
 
-        let mut rows = BTreeSet::new();
-        for caret in &self.carets {
-            let range = caret.range();
-            let first = self.text.char_to_line(range.start);
-            let mut last = self.text.char_to_line(range.end);
-            if last > first && range.end == self.text.line_to_char(last) {
-                last -= 1;
-            }
-            rows.extend(first..=last);
-        }
-        let lines: Vec<(usize, String)> =
-            rows.into_iter().map(|line| (line, self.line_chars(line).into_iter().collect())).collect();
+        let lines: Vec<(usize, String)> = self
+            .caret_lines()
+            .into_iter().map(|line| (line, self.line_chars(line).into_iter().collect())).collect();
         let filled: Vec<&(usize, String)> = lines.iter().filter(|(_, text)| !text.trim().is_empty()).collect();
         let commented = |text: &str| {
             let text = text.trim();
@@ -221,7 +210,7 @@ impl Editor {
     /// on the text it was on: each entry replaces a char range (sorted, not
     /// overlapping) of the text as it is now. A caret where text is
     /// inserted moves after it.
-    fn edit_text(&mut self, mut edits: Vec<(Range<usize>, String)>, kind: EditKind, now: Instant, rows: f64) {
+    pub(super) fn edit_text(&mut self, mut edits: Vec<(Range<usize>, String)>, kind: EditKind, now: Instant, rows: f64) {
         edits.retain(|(range, text)| !(range.is_empty() && text.is_empty()));
         if self.read_only || edits.is_empty() {
             return;

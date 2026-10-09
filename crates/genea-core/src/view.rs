@@ -10,7 +10,8 @@ use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{
     Highlight,
-    command::Command,
+    action::Action,
+    command::{Command, SearchQuery},
     config::Config,
     problems::{ProblemSource, Severity, TextPosition},
 };
@@ -62,6 +63,10 @@ pub struct ProjectView {
     /// The review banner, e.g. "2 files changed outside Genea", shown while
     /// `changes` isn't empty.
     pub review_banner: Option<String>,
+    /// The Search view (⌘⇧F): the last query and its results.
+    pub search: SearchView,
+    /// The fuzzy finder overlay, while it is open (ticket #33).
+    pub finder: Option<FinderView>,
 }
 
 /// A file in the Changes view: it differs on disk from its review baseline
@@ -89,6 +94,105 @@ pub enum ChangeKind {
     Created,
     /// It has a baseline but is gone from disk.
     Deleted,
+}
+
+/// The fuzzy finder overlay: a query and the results matching it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderView {
+    pub mode: FinderMode,
+    /// What the user typed.
+    pub query: String,
+    /// Best first. While a new query is being matched, these are the last
+    /// query's results.
+    pub items: Vec<FinderItem>,
+    /// Index into `items` of the result Return opens or runs; `None`
+    /// without results.
+    pub selected: Option<usize>,
+}
+
+/// What the finder finds. Each mode has its shortcut, which opens the
+/// finder in it with `Command::OpenFinder`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FinderMode {
+    /// ⌘⇧O: the project's files, without `node_modules` and the config's
+    /// `exclude`. With an empty query, the recent files.
+    Files,
+    /// ⌘E: the files opened lately (by opening them or selecting their
+    /// tab), most recent first. A query narrows them, keeping that order.
+    /// With an empty query the file before the current one is selected.
+    RecentFiles,
+    /// ⌘⇧A: every action, with its shortcut. Choosing one runs it.
+    Actions,
+    /// ⇧⇧: files and actions together, best match first. With an empty
+    /// query, the recent files.
+    Everywhere,
+}
+
+/// A result in the finder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinderItem {
+    /// A file's name, or an action's.
+    pub label: String,
+    /// A file's folder, relative to the project root (empty at the root,
+    /// and for actions).
+    pub detail: String,
+    /// The keyboard shortcut of an action that has one, e.g. `⌘S`.
+    pub shortcut: Option<String>,
+    pub kind: FinderItemKind,
+}
+
+/// What choosing a result does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FinderItemKind {
+    /// Opens the file (relative to the project root).
+    File(PathBuf),
+    /// Runs the action's command.
+    Action(Action),
+}
+
+/// The Search view: a query and its results, grouped by file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchView {
+    /// The query the results are for.
+    pub query: SearchQuery,
+    /// Files with matches, in case-insensitive name order, folder by
+    /// folder. Grows while `searching`. Shared, so a snapshot doesn't copy
+    /// a long list.
+    pub files: Arc<[SearchFile]>,
+    /// Matches in `files`.
+    pub match_count: usize,
+    /// The search is still running: more results may come.
+    pub searching: bool,
+    /// The search stopped at [`MAX_SEARCH_MATCHES`](crate::MAX_SEARCH_MATCHES):
+    /// there are more matches than `files` lists.
+    pub limited: bool,
+    /// Why the query can't be searched for (an invalid regex), if it can't.
+    pub error: Option<String>,
+}
+
+/// A file with matches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchFile {
+    /// Relative to the project root.
+    pub path: PathBuf,
+    /// Top to bottom; a line with several matches has one per match.
+    pub matches: Vec<SearchMatch>,
+}
+
+/// One match. Clicking it opens the file at `position` with
+/// `Command::OpenFileAt`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchMatch {
+    /// Where the match starts (0-based line, char column).
+    pub position: TextPosition,
+    /// `position` as the user reads it: `line:column`, 1-based.
+    pub location: String,
+    /// The line's text around the match: before it (without leading
+    /// whitespace), the match, and after it. Long lines are cut off with
+    /// `…`; tabs show as spaces.
+    pub before: String,
+    pub matched: String,
+    pub after: String,
 }
 
 /// A row in the Files view: a file, or a folder the user can expand.
@@ -150,6 +254,8 @@ pub enum LeftColumnView {
     Files,
     /// ⌘6.
     Problems,
+    /// ⌘⇧F: project search.
+    Search,
     /// The files changed outside Genea, to review (ticket #53).
     Changes,
 }
@@ -352,6 +458,10 @@ pub struct StatusBar {
     /// The open file's line ending, `LF` or `CRLF`, or `None` with no
     /// editor.
     pub line_ending: Option<String>,
+    /// How the open file is indented, as `.oxfmtrc.json` and
+    /// `.editorconfig` resolve it (ticket #26): `2 spaces`, `4 spaces` or
+    /// `Tabs`; `None` with no editor.
+    pub indentation: Option<String>,
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,

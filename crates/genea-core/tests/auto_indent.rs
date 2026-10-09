@@ -1,6 +1,6 @@
 //! Auto-indent on Return (ticket #25): the new line is indented according
-//! to the syntax around the caret. The indent unit is two spaces until the
-//! project's indentation is resolved (ticket #26).
+//! to the syntax around the caret, one level of the file's indentation
+//! deeper (two spaces here; `indentation.rs` covers the rest, ticket #26).
 
 use genea_core::{Command, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};

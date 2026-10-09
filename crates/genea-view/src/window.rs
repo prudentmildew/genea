@@ -7,14 +7,16 @@
 //! surface diffs its slots, so a sync with nothing new repaints nothing.
 
 use std::{
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use genea_core::{
-    ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, LeftColumnView, PaneView,
-    ProblemItem, ProjectId, Severity, Theme as ConfigTheme, ToolchainOption, Workbench,
+    ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView, LeftColumnView,
+    MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId, SearchFile, SearchView, Severity, TextPosition,
+    Theme as ConfigTheme, ToolchainOption, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -22,8 +24,11 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    ChangeMark, ChangeRow, FileEntry, LeftView, PickerRow, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app,
-    dialogs, fonts, keys::Modifiers, links, surface::Surface,
+    ChangeMark, ChangeRow, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app,
+    dialogs, fonts,
+    keys::Modifiers,
+    links,
+    surface::Surface,
     terminal::{self, TerminalSurface},
 };
 
@@ -62,6 +67,8 @@ pub struct WindowController {
     /// The Changes view's items as last pushed, likewise.
     changes: Arc<[ChangeItem]>,
     change_rows: Rc<VecModel<ChangeRow>>,
+    /// The Search view's results as last pushed.
+    search: SearchResults,
     /// The button went down with ⌥ (adding a caret) or on a fold marker,
     /// so a drag doesn't select.
     option_press: bool,
@@ -71,6 +78,10 @@ pub struct WindowController {
     /// the user saw and an unchanged list isn't pushed again.
     picker_options: Vec<ToolchainOption>,
     picker_rows: Rc<VecModel<PickerRow>>,
+    /// The finder's mode while it is open, and its results as last pushed.
+    finder_mode: Option<FinderMode>,
+    finder_items: Vec<FinderItem>,
+    finder_rows: Rc<VecModel<FinderRow>>,
 }
 
 /// How far left of the text a press still hits a git gutter marker: its
@@ -95,6 +106,10 @@ impl WindowController {
         window.set_files(ModelRc::from(file_rows.clone()));
         let change_rows = Rc::new(VecModel::default());
         window.set_changes(ModelRc::from(change_rows.clone()));
+        let search = SearchResults::default();
+        window.set_search_rows(ModelRc::from(search.rows.clone()));
+        let finder_rows = Rc::new(VecModel::default());
+        window.set_finder_items(ModelRc::from(finder_rows.clone()));
         Ok(WindowController {
             key,
             window,
@@ -114,10 +129,14 @@ impl WindowController {
             file_rows,
             changes: Arc::from([]),
             change_rows,
+            search,
             option_press: false,
             picker_open: false,
             picker_options: Vec::new(),
             picker_rows,
+            finder_mode: None,
+            finder_items: Vec::new(),
+            finder_rows,
         })
     }
 
@@ -311,6 +330,7 @@ impl WindowController {
             Some(LeftColumnView::Files) => window.set_left_view(LeftView::Files),
             Some(LeftColumnView::Problems) => window.set_left_view(LeftView::Problems),
             Some(LeftColumnView::Changes) => window.set_left_view(LeftView::Changes),
+            Some(LeftColumnView::Search) => window.set_left_view(LeftView::Search),
             None => {}
         }
         window.set_review_banner(view.review_banner.clone().unwrap_or_default().into());
@@ -335,6 +355,7 @@ impl WindowController {
             self.change_rows.set_vec(rows);
             self.changes = view.changes.clone();
         }
+        self.search.sync(window, &view.search);
         // The core shares an unchanged tree, so this is a pointer compare.
         if view.files != self.files {
             let rows: Vec<FileEntry> = view
@@ -368,6 +389,7 @@ impl WindowController {
         }
         window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
         window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
+        window.set_status_indentation(view.status.indentation.clone().unwrap_or_default().into());
         let action = view.notices.last().and_then(|n| n.action.clone());
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
@@ -441,10 +463,16 @@ impl WindowController {
         if let Some(editor) = editor.filter(|e| !e.lines.is_empty()) {
             crate::journal::mark_shown(&editor.path);
         }
-        if view.focused_pane != self.focused_pane || view.terminal.focused != self.terminal_focused {
+        // The finder takes the keyboard focus when it opens, from the
+        // terminal too; when it closes, the focused pane or the terminal
+        // gets it back.
+        let finder_closed = self.sync_finder(view.finder.as_ref());
+        if view.focused_pane != self.focused_pane || view.terminal.focused != self.terminal_focused || finder_closed {
             self.focused_pane = view.focused_pane;
             self.terminal_focused = view.terminal.focused;
-            window.invoke_refocus();
+            if view.finder.is_none() {
+                self.window.invoke_refocus();
+            }
         }
 
         if let Some(prompt) = &view.close_prompt
@@ -456,6 +484,52 @@ impl WindowController {
                 with_app(move |app| app.resolve_close(key, choice))
             });
         }
+    }
+
+    /// Shows the finder overlay as the core has it. Returns whether it just
+    /// closed, so the editor takes the keyboard back.
+    fn sync_finder(&mut self, finder: Option<&FinderView>) -> bool {
+        let window = &self.window;
+        let Some(finder) = finder else {
+            window.set_finder_open(false);
+            return self.finder_mode.take().is_some();
+        };
+        window.set_finder_open(true);
+        window.set_finder_title(finder_title(finder.mode).into());
+        // The query is the TextInput's own text; set it only when the core's
+        // differs, i.e. when a finder (re)opens empty.
+        if window.get_finder_query() != finder.query.as_str() {
+            window.set_finder_query(finder.query.as_str().into());
+        }
+        if self.finder_mode != Some(finder.mode) {
+            self.finder_mode = Some(finder.mode);
+            window.invoke_focus_finder();
+        }
+        if finder.items != self.finder_items {
+            let rows: Vec<FinderRow> = finder
+                .items
+                .iter()
+                .map(|item| FinderRow {
+                    label: item.label.as_str().into(),
+                    detail: item.detail.as_str().into(),
+                    shortcut: item.shortcut.as_deref().unwrap_or_default().into(),
+                })
+                .collect();
+            for row in &rows {
+                fonts::prepare(&row.label);
+                fonts::prepare(&row.detail);
+            }
+            self.finder_rows.set_vec(rows);
+            self.finder_items = finder.items.clone();
+        }
+        window.set_finder_selected(finder.selected.map_or(-1, |i| i as i32));
+        false
+    }
+
+    /// A finder result was clicked: choose it.
+    pub fn click_finder_item(&mut self, workbench: &mut Workbench, index: usize) {
+        workbench.dispatch(self.project, Command::SelectFinderItem(index));
+        self.dispatch(workbench, Command::AcceptFinder);
     }
 
     /// The close prompt was answered.
@@ -511,11 +585,110 @@ impl WindowController {
         self.dispatch(workbench, if keep { Command::KeepChange(path) } else { Command::RevertChange(path) });
     }
 
+    /// A Search view row was clicked: open the file, at the match for a
+    /// match row.
+    pub fn open_search_result(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some((path, at)) = self.search.targets.get(index) else { return };
+        let command = match at {
+            Some(at) => Command::OpenFileAt { path: path.clone(), at: *at },
+            None => Command::OpenFile(path.clone()),
+        };
+        self.dispatch(workbench, command);
+    }
+
+}
+
+/// The Search view's rows as last pushed, so a click maps to the result the
+/// user saw and unchanged results aren't pushed again.
+#[derive(Default)]
+struct SearchResults {
+    files: Arc<[SearchFile]>,
+    rows: Rc<VecModel<SearchRow>>,
+    /// What each row opens: a file, at a match for a match row.
+    targets: Vec<(PathBuf, Option<TextPosition>)>,
+}
+
+impl SearchResults {
+    /// Pushes the Search view's query, status line and results.
+    fn sync(&mut self, window: &ProjectWindow, search: &SearchView) {
+        window.set_search_query(search.query.text.as_str().into());
+        window.set_search_regex(search.query.regex);
+        window.set_search_case_sensitive(search.query.case_sensitive);
+        window.set_search_whole_word(search.query.whole_word);
+        window.set_search_status(search_status(search).into());
+        window.set_search_status_error(search.error.is_some());
+        // The core shares unchanged results, so this is a pointer compare.
+        if search.files == self.files {
+            return;
+        }
+        let mut rows = Vec::new();
+        let mut targets = Vec::new();
+        for file in search.files.iter() {
+            let path = file.path.display().to_string();
+            fonts::prepare(&path);
+            rows.push(SearchRow { file: true, label: path.into(), ..SearchRow::default() });
+            targets.push((file.path.clone(), None));
+            for m in &file.matches {
+                for text in [&m.before, &m.matched, &m.after] {
+                    fonts::prepare(text);
+                }
+                rows.push(SearchRow {
+                    file: false,
+                    label: m.location.as_str().into(),
+                    before: m.before.as_str().into(),
+                    matched: m.matched.as_str().into(),
+                    after: m.after.as_str().into(),
+                });
+                targets.push((file.path.clone(), Some(m.position)));
+            }
+        }
+        self.rows.set_vec(rows);
+        self.targets = targets;
+        self.files = search.files.clone();
+    }
+}
+
+impl WindowController {
     /// Shows a left-column view, leaving it showing if it already is.
     pub fn show_view(&mut self, workbench: &mut Workbench, view: LeftColumnView) {
         if workbench.project(self.project).is_some_and(|p| p.left_column != Some(view)) {
             self.dispatch(workbench, Command::ToggleLeftColumn(view));
         }
+    }
+}
+
+/// The Search view's status line: why the query can't run, or how many
+/// matches there are so far.
+fn search_status(search: &SearchView) -> String {
+    if let Some(error) = &search.error {
+        return error.lines().last().unwrap_or(error).trim().to_owned();
+    }
+    if search.query.text.is_empty() {
+        return String::new();
+    }
+    let files = search.files.len();
+    let counts = match (search.match_count, files) {
+        (0, _) => "No matches".to_owned(),
+        (1, _) => "1 match in 1 file".to_owned(),
+        (n, 1) => format!("{n} matches in 1 file"),
+        (n, f) => format!("{n} matches in {f} files"),
+    };
+    if search.searching {
+        if search.match_count == 0 { "Searching…".to_owned() } else { format!("{counts}, searching…") }
+    } else if search.limited {
+        format!("{counts} (stopped at {MAX_SEARCH_MATCHES})")
+    } else {
+        counts
+    }
+}
+
+/// The finder's heading.
+fn finder_title(mode: FinderMode) -> &'static str {
+    match mode {
+        FinderMode::Files => "Go to File",
+        FinderMode::RecentFiles => "Recent Files",
+        FinderMode::Actions => "Find Action",
+        FinderMode::Everywhere => "Search Everywhere",
     }
 }
 

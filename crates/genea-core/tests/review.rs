@@ -4,7 +4,10 @@
 
 use std::path::PathBuf;
 
-use genea_core::{ChangeItem, ChangeKind, Command, LARGE_FILE_BYTES, ProjectId, ToolchainPickerKind, Workbench};
+use genea_core::{
+    ChangeItem, ChangeKind, Command, FinderMode, LARGE_FILE_BYTES, LeftColumnView, ProjectId, ToolchainPickerKind,
+    Workbench,
+};
 use genea_testkit::{FixtureProject, TestHost};
 
 /// Opens a project with these files and waits for the first snapshot.
@@ -433,6 +436,21 @@ fn the_baseline_is_kept_in_the_support_folder_not_the_project() {
 
     let in_project: Vec<_> = std::fs::read_dir(fixture.root()).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(in_project, ["main.ts"], "review writes nothing into the project");
+}
+
+#[test]
+fn find_action_shows_the_changes_view() {
+    let (_fixture, mut workbench, project) = open(&[("a.ts", "a\n")]);
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    workbench.dispatch(project, Command::SetFinderQuery("changes".into()));
+    workbench.settle().unwrap();
+    let finder = workbench.project(project).unwrap().finder.unwrap();
+    assert_eq!(finder.items.first().map(|item| item.label.as_str()), Some("Changes"));
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+
+    assert_eq!(workbench.project(project).unwrap().left_column, Some(LeftColumnView::Changes));
 }
 
 fn editor_text(workbench: &Workbench, project: ProjectId) -> Vec<String> {

@@ -10,6 +10,7 @@
 //! selection. They are kept in the order they were added; the last one is
 //! the primary, which the view scrolls to and the status bar reports.
 
+mod indent;
 mod structural;
 
 use std::{
