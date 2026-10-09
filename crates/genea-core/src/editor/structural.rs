@@ -4,7 +4,7 @@
 //! answers into edits, carets and view state.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     ops::Range,
     time::Instant,
 };
@@ -91,18 +91,9 @@ impl Editor {
             Comment::Block(open, close) => (open, Some(close)),
         };
 
-        let mut rows = BTreeSet::new();
-        for caret in &self.carets {
-            let range = caret.range();
-            let first = self.text.char_to_line(range.start);
-            let mut last = self.text.char_to_line(range.end);
-            if last > first && range.end == self.text.line_to_char(last) {
-                last -= 1;
-            }
-            rows.extend(first..=last);
-        }
-        let lines: Vec<(usize, String)> =
-            rows.into_iter().map(|line| (line, self.line_chars(line).into_iter().collect())).collect();
+        let lines: Vec<(usize, String)> = self
+            .caret_lines()
+            .into_iter().map(|line| (line, self.line_chars(line).into_iter().collect())).collect();
         let filled: Vec<&(usize, String)> = lines.iter().filter(|(_, text)| !text.trim().is_empty()).collect();
         let commented = |text: &str| {
             let text = text.trim();
@@ -219,7 +210,7 @@ impl Editor {
     /// on the text it was on: each entry replaces a char range (sorted, not
     /// overlapping) of the text as it is now. A caret where text is
     /// inserted moves after it.
-    fn edit_text(&mut self, mut edits: Vec<(Range<usize>, String)>, kind: EditKind, now: Instant, rows: f64) {
+    pub(super) fn edit_text(&mut self, mut edits: Vec<(Range<usize>, String)>, kind: EditKind, now: Instant, rows: f64) {
         edits.retain(|(range, text)| !(range.is_empty() && text.is_empty()));
         if self.read_only || edits.is_empty() {
             return;

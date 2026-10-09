@@ -185,3 +185,47 @@ fn return_indents_with_a_tab_when_the_file_uses_tabs() {
 
     assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "function f() {\n\tif (a) {\n\t\t\n\t}\n}\n");
 }
+
+#[test]
+fn tab_inserts_spaces_up_to_the_next_indentation_stop() {
+    let fixture = FixtureProject::new()
+        .file(".oxfmtrc.json", r#"{ "tabWidth": 4 }"#)
+        .file("main.ts", "let a;\nab\n");
+    let (fixture, mut workbench, project) = open(fixture, "main.ts");
+
+    run(&mut workbench, project, [Command::Indent, Command::PlaceCaret { line: 1, column: 1 }, Command::Indent]);
+
+    assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "    let a;\na   b\n");
+    assert_eq!(workbench.project(project).unwrap().status.caret.unwrap(), "2:5");
+}
+
+#[test]
+fn tab_inserts_a_tab_when_the_file_uses_tabs() {
+    let fixture = FixtureProject::new()
+        .file(".editorconfig", "[*]\nindent_style = tab\n")
+        .file("main.ts", "let a;\n");
+    let (fixture, mut workbench, project) = open(fixture, "main.ts");
+
+    run(&mut workbench, project, [Command::Indent]);
+
+    assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "\tlet a;\n");
+}
+
+#[test]
+fn tab_with_a_selection_indents_the_selected_lines_but_empty_ones() {
+    let fixture = FixtureProject::new()
+        .file(".oxfmtrc.json", r#"{ "tabWidth": 4 }"#)
+        .file("main.ts", "a;\nb;\n\nc;\nd;\n");
+    let (fixture, mut workbench, project) = open(fixture, "main.ts");
+
+    // From inside line 2 to the start of line 5, which stays out.
+    run(
+        &mut workbench,
+        project,
+        [Command::PlaceCaret { line: 1, column: 1 }, Command::ExtendSelection { line: 4, column: 0 }, Command::Indent],
+    );
+
+    assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "a;\n    b;\n\n    c;\nd;\n");
+    let editor = workbench.project(project).unwrap().editor.unwrap();
+    assert_eq!(editor.lines[1].selections, [5..7], "the selection stays on its text");
+}

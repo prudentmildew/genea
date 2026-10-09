@@ -482,6 +482,12 @@ impl Project {
                     editor.new_line(indentation, now, self.viewport_rows);
                 }
             }
+            Command::Indent => {
+                let indentation = self.focused_indentation();
+                if let Some(editor) = &mut self.editor {
+                    editor.indent(indentation, now, self.viewport_rows);
+                }
+            }
             Command::Copy => {
                 if let Some(text) = self.editor.as_ref().and_then(Editor::selected_text) {
                     host.clipboard().write_text(&text);
