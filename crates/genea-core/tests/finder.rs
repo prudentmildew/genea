@@ -53,6 +53,44 @@ fn the_file_finder_lists_the_files_matching_the_query_without_node_modules() {
 }
 
 #[test]
+fn file_results_follow_files_created_and_deleted_while_the_finder_is_open() {
+    let (fixture, mut workbench, project) = open(FixtureProject::new().file("src/main.ts", ""));
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Files));
+    search(&mut workbench, project, "widget");
+    assert!(results(&workbench, project).is_empty());
+
+    fixture.write("src/widgets/Widget.tsx", "");
+    workbench.settle().unwrap();
+    assert_eq!(results(&workbench, project), ["Widget.tsx  src/widgets"]);
+
+    fixture.write("src/widget.ts", "");
+    workbench.settle().unwrap();
+    assert_eq!(results(&workbench, project), ["widget.ts  src", "Widget.tsx  src/widgets"]);
+
+    std::fs::remove_dir_all(fixture.path("src/widgets")).unwrap();
+    workbench.settle().unwrap();
+    assert_eq!(results(&workbench, project), ["widget.ts  src"]);
+}
+
+#[test]
+fn the_file_finder_hides_what_the_config_excludes() {
+    let (fixture, mut workbench, project) = open(
+        FixtureProject::new().file("src/app.ts", "").file("dist/app.js", "").file("src/app.test.ts", ""),
+    );
+
+    fixture.write("genea.jsonc", r#"{ "exclude": ["dist/", "*.test.ts"] }"#);
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Files));
+    search(&mut workbench, project, "app");
+    assert_eq!(results(&workbench, project), ["app.ts  src"]);
+
+    fixture.write("genea.jsonc", "{}");
+    workbench.settle().unwrap();
+    assert_eq!(results(&workbench, project), ["app.ts  src", "app.js  dist", "app.test.ts  src"]);
+}
+
+#[test]
 fn choosing_a_file_opens_it_and_closes_the_finder() {
     let (_fixture, mut workbench, project) =
         open(FixtureProject::new().file("src/a.ts", "let a = 1;\n").file("src/b.ts", "let b = 2;\n"));
