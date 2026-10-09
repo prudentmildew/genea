@@ -38,3 +38,33 @@ fn oxfmtrc_root_options_set_the_indentation() {
 
     assert_eq!(indentation(&workbench, project), "4 spaces");
 }
+
+#[test]
+fn oxfmtrc_overrides_win_over_its_root_options_for_the_files_they_match() {
+    let oxfmtrc = r#"{
+        // JSONC, like Oxfmt reads it.
+        "tabWidth": 4,
+        "overrides": [
+            { "files": ["*.md"], "options": { "tabWidth": 3 } },
+            { "files": ["docs/**"], "excludeFiles": ["docs/keep.md"], "options": { "useTabs": true } },
+        ],
+    }"#;
+    let fixture = FixtureProject::new()
+        .file(".oxfmtrc.json", oxfmtrc)
+        .file("src/main.ts", "")
+        .file("src/notes.md", "")
+        .file("docs/guide.md", "")
+        .file("docs/keep.md", "");
+    let (_fixture, mut workbench, project) = open(fixture, "src/main.ts");
+    assert_eq!(indentation(&workbench, project), "4 spaces");
+
+    let mut shown = Vec::new();
+    for file in ["src/notes.md", "docs/guide.md", "docs/keep.md"] {
+        workbench.dispatch(project, Command::OpenFile(file.into()));
+        workbench.settle().unwrap();
+        shown.push(indentation(&workbench, project));
+    }
+
+    // A pattern without a slash matches the file name in any folder.
+    assert_eq!(shown, ["3 spaces", "Tabs", "3 spaces"]);
+}

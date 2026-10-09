@@ -66,8 +66,25 @@ struct Options {
 /// An `.oxfmtrc.json`.
 #[derive(Debug)]
 struct Oxfmtrc {
+    /// Its folder: override globs match paths relative to it.
+    dir: PathBuf,
+    options: Options,
+    overrides: Vec<Override>,
+}
+
+/// An entry of `overrides`: options for the files its globs match.
+#[derive(Debug)]
+struct Override {
+    files: Globs,
+    exclude_files: Globs,
     options: Options,
 }
+
+/// Override globs, as Oxfmt normalises them: a pattern without a `/`
+/// matches in any folder (`**/` goes in front), and a leading `./` anchors
+/// it to the config's folder.
+#[derive(Debug)]
+struct Globs(Vec<String>);
 
 impl IndentationConfig {
     /// Reads the config files that apply to the project at `root`. Blocking:
@@ -77,8 +94,8 @@ impl IndentationConfig {
     }
 
     /// How the file at `path` (absolute) is indented.
-    pub(crate) fn resolve(&self, _path: &Path) -> Indentation {
-        let options = self.oxfmtrc.as_ref().map(|o| o.options).unwrap_or_default();
+    pub(crate) fn resolve(&self, path: &Path) -> Indentation {
+        let options = self.oxfmtrc.as_ref().map(|o| o.options_for(path)).unwrap_or_default();
         let default = Indentation::default();
         Indentation {
             use_tabs: options.use_tabs.unwrap_or(default.use_tabs),
@@ -100,7 +117,69 @@ impl Oxfmtrc {
         let text = fs::read_to_string(path).ok()?;
         let value = parse_to_value(&text, &ParseOptions::default()).ok()??;
         let JsonValue::Object(object) = value else { return None };
-        Some(Oxfmtrc { options: Options::parse(&object)? })
+        let overrides = match object.get("overrides") {
+            None | Some(JsonValue::Null) => Vec::new(),
+            Some(JsonValue::Array(entries)) => entries.iter().map(Override::parse).collect::<Option<_>>()?,
+            Some(_) => return None,
+        };
+        let dir = path.parent()?.to_path_buf();
+        Some(Oxfmtrc { dir, options: Options::parse(&object)?, overrides })
+    }
+
+    /// The root options, with every override that matches `path` (absolute)
+    /// merged over them in order.
+    fn options_for(&self, path: &Path) -> Options {
+        let relative = path.strip_prefix(&self.dir).unwrap_or(path).to_string_lossy();
+        self.overrides
+            .iter()
+            .filter(|o| o.files.matches(&relative) && !o.exclude_files.matches(&relative))
+            .fold(self.options, |options, o| Options {
+                use_tabs: o.options.use_tabs.or(options.use_tabs),
+                tab_width: o.options.tab_width.or(options.tab_width),
+            })
+    }
+}
+
+impl Override {
+    fn parse(value: &JsonValue) -> Option<Self> {
+        let JsonValue::Object(object) = value else { return None };
+        let options = match object.get("options") {
+            None | Some(JsonValue::Null) => Options::default(),
+            Some(JsonValue::Object(options)) => Options::parse(options)?,
+            Some(_) => return None,
+        };
+        Some(Override {
+            files: Globs::parse(object.get("files"))?,
+            exclude_files: Globs::parse(object.get("excludeFiles"))?,
+            options,
+        })
+    }
+}
+
+impl Globs {
+    /// A list of glob strings; absent is none. `None` if it isn't one or a
+    /// pattern is invalid, which Oxfmt rejects.
+    fn parse(value: Option<&JsonValue>) -> Option<Self> {
+        let patterns = match value {
+            None | Some(JsonValue::Null) => return Some(Globs(Vec::new())),
+            Some(JsonValue::Array(patterns)) => patterns,
+            Some(_) => return None,
+        };
+        let mut globs = Vec::new();
+        for pattern in patterns.iter() {
+            let JsonValue::String(pattern) = pattern else { return None };
+            fast_glob::validate(pattern.as_bytes()).ok()?;
+            globs.push(match pattern.strip_prefix("./") {
+                Some(anchored) => anchored.to_owned(),
+                None if pattern.contains('/') => pattern.to_string(),
+                None => format!("**/{pattern}"),
+            });
+        }
+        Some(Globs(globs))
+    }
+
+    fn matches(&self, relative: &str) -> bool {
+        self.0.iter().any(|glob| fast_glob::glob_match(glob, relative))
     }
 }
 
