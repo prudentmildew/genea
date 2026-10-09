@@ -441,7 +441,7 @@ impl Project {
             }
             Command::NewLine => {
                 if let Some(editor) = &mut self.editor {
-                    editor.insert("\n", EditKind::Typing, now, self.viewport_rows);
+                    editor.new_line(now, self.viewport_rows);
                 }
             }
             Command::Copy => {
@@ -472,6 +472,36 @@ impl Project {
             Command::Redo => {
                 if let Some(editor) = &mut self.editor {
                     editor.redo(self.viewport_rows);
+                }
+            }
+            Command::ToggleLineComment => {
+                if let Some(editor) = &mut self.editor {
+                    editor.toggle_line_comment(now, self.viewport_rows);
+                }
+            }
+            Command::ExpandSelection => {
+                if let Some(editor) = &mut self.editor {
+                    editor.expand_selection(self.viewport_rows);
+                }
+            }
+            Command::ShrinkSelection => {
+                if let Some(editor) = &mut self.editor {
+                    editor.shrink_selection(self.viewport_rows);
+                }
+            }
+            Command::ToggleFold { line } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.toggle_fold(line, self.viewport_rows);
+                }
+            }
+            Command::CollapseFold | Command::ExpandFold | Command::CollapseAllFolds | Command::ExpandAllFolds => {
+                if let Some(editor) = &mut self.editor {
+                    match command {
+                        Command::CollapseFold => editor.collapse_fold(self.viewport_rows),
+                        Command::ExpandFold => editor.expand_fold(self.viewport_rows),
+                        Command::CollapseAllFolds => editor.collapse_all_folds(self.viewport_rows),
+                        _ => editor.expand_all_folds(self.viewport_rows),
+                    }
                 }
             }
             Command::Save => {
