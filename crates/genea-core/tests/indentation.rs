@@ -148,3 +148,40 @@ fn editing_either_config_file_updates_the_open_file_without_a_reopen() {
     workbench.settle().unwrap();
     assert_eq!(indentation(&workbench, project), "4 spaces");
 }
+
+/// The open file as it is written to disk (the view expands tabs).
+fn saved(fixture: &FixtureProject, workbench: &mut Workbench, project: ProjectId, file: &str) -> String {
+    workbench.dispatch(project, Command::Save);
+    workbench.settle().unwrap();
+    fixture.read(file)
+}
+
+fn run(workbench: &mut Workbench, project: ProjectId, commands: impl IntoIterator<Item = Command>) {
+    for command in commands {
+        workbench.dispatch(project, command);
+    }
+}
+
+#[test]
+fn return_indents_a_level_of_the_resolved_indentation() {
+    let fixture = FixtureProject::new()
+        .file(".oxfmtrc.json", r#"{ "tabWidth": 4 }"#)
+        .file("main.ts", "function f() {}\n");
+    let (fixture, mut workbench, project) = open(fixture, "main.ts");
+
+    run(&mut workbench, project, [Command::PlaceCaret { line: 0, column: 14 }, Command::NewLine]);
+
+    assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "function f() {\n    \n}\n");
+}
+
+#[test]
+fn return_indents_with_a_tab_when_the_file_uses_tabs() {
+    let fixture = FixtureProject::new()
+        .file(".editorconfig", "[*.ts]\nindent_style = tab\n")
+        .file("main.ts", "function f() {\n\tif (a) {}\n}\n");
+    let (fixture, mut workbench, project) = open(fixture, "main.ts");
+
+    run(&mut workbench, project, [Command::PlaceCaret { line: 1, column: 12 }, Command::NewLine]);
+
+    assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "function f() {\n\tif (a) {\n\t\t\n\t}\n}\n");
+}

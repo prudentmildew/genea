@@ -477,8 +477,9 @@ impl Project {
                 }
             }
             Command::NewLine => {
+                let indentation = self.focused_indentation();
                 if let Some(editor) = &mut self.editor {
-                    editor.new_line(now, self.viewport_rows);
+                    editor.new_line(indentation, now, self.viewport_rows);
                 }
             }
             Command::Copy => {
@@ -621,6 +622,11 @@ impl Project {
     /// How a file (relative to the root, or absolute) is indented.
     fn indentation_of(&self, path: &Path) -> Indentation {
         self.indentation.resolve(&self.root.join(path))
+    }
+
+    /// How the focused file is indented.
+    fn focused_indentation(&self) -> Indentation {
+        self.editor.as_ref().map(|e| self.indentation_of(e.path())).unwrap_or_default()
     }
 
     /// The open file's problems on the visible lines, in grid columns.

@@ -13,6 +13,7 @@ use super::{CaretSelection, Editor};
 use crate::{
     command::CaretMove,
     history::{Change, EditKind},
+    indentation::Indentation,
     syntax::{Comment, FoldRegion, Language, Syntax, structure},
     view::{Caret, Fold},
 };
@@ -26,23 +27,20 @@ pub(super) struct Expansions {
     before: Vec<Vec<CaretSelection>>,
 }
 
-/// One level of indentation. Ticket #26 resolves it from `.oxfmtrc.json`
-/// and `.editorconfig`; until then it is Oxfmt's default.
-const INDENT_UNIT: &str = "  ";
-
 impl Editor {
     /// Return: breaks the line at every caret, indenting the new line like
     /// the caret's line, one level deeper when the caret is just inside a
     /// block (after `{`, `(`, `[` or an element's start tag). When the text
     /// after the caret closes that block, it goes on a line of its own and
     /// the caret stays on the indented line between. Whitespace after the
-    /// caret is dropped.
-    pub(crate) fn new_line(&mut self, now: Instant, viewport_rows: f64) {
+    /// caret is dropped. A level is one of `indentation` (ticket #26).
+    pub(crate) fn new_line(&mut self, indentation: Indentation, now: Instant, viewport_rows: f64) {
         self.preedit.clear();
         if self.read_only {
             return;
         }
         let break_text = self.line_ending.normalize("\n");
+        let unit = indentation.unit();
         let edits = (0..self.carets.len())
             .map(|i| {
                 let range = self.carets[i].range();
@@ -66,7 +64,7 @@ impl Editor {
 
                 let mut text = format!("{break_text}{base}");
                 if indent.deeper {
-                    text.push_str(INDENT_UNIT);
+                    text.push_str(&unit);
                 }
                 let caret = text.chars().count();
                 if indent.deeper && indent.split {

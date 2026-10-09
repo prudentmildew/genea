@@ -52,6 +52,11 @@ impl Default for Indentation {
 }
 
 impl Indentation {
+    /// One level of indentation, as typed: a tab, or `tab_width` spaces.
+    pub(crate) fn unit(self) -> String {
+        if self.use_tabs { "\t".to_owned() } else { " ".repeat(self.tab_width) }
+    }
+
     /// The status bar's item: `2 spaces`, or `Tabs`.
     pub(crate) fn label(self) -> String {
         if self.use_tabs { "Tabs".to_owned() } else { format!("{} spaces", self.tab_width) }
