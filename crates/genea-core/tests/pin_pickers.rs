@@ -117,3 +117,166 @@ fn picking_a_runtime_writes_an_exact_pin_and_downloads_it() {
     assert!(host.support_dir().join("toolchains/node/26.11.1/bin/node").is_file());
     assert!(view.notices.is_empty(), "{:?}", view.notices);
 }
+
+const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
+const BUN_RELEASES: &str = "https://api.github.com/repos/oven-sh/bun/releases?per_page=100";
+
+#[test]
+fn picking_bun_as_package_manager_writes_package_manager_and_downloads_bun() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().pnpm("12.10.1");
+    host.tools().pnpm("11.13.0");
+    host.tools().bun("1.4.2");
+    let fixture = project(PINNED);
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let picker = open_picker(&mut workbench, project, ToolchainPickerKind::PackageManager);
+    assert_eq!(picker.title, "Set package manager");
+    assert_eq!(options(&picker), [("pnpm", "12.10.1", "in use"), ("pnpm", "11.13.0", ""), ("Bun", "1.4.2", "")]);
+
+    pick(&mut workbench, project, &picker, "Bun", "1.4.2");
+    workbench.settle().unwrap();
+
+    let package_json = fixture.read("package.json");
+    assert!(package_json.contains("\"packageManager\": \"bun@1.4.2\""), "{package_json}");
+    assert!(package_json.contains("\"version\": \"24.18.0\""), "the runtime pin stays: {package_json}");
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.package_manager, ready("Bun", "1.4.2"));
+    assert_eq!(view.toolchain.runtime, ready("Node", "24.18.0"));
+    assert!(host.support_dir().join("toolchains/bun/1.4.2/bin/bun").is_file());
+}
+
+#[test]
+fn picking_a_runtime_for_an_unpinned_project_pins_only_the_runtime() {
+    let host = TestHost::new();
+    host.tools().node("24.21.0");
+    host.tools().pnpm("12.10.1");
+    host.tools().bun("1.4.2");
+    let fixture = project("{ \"name\": \"app\" }\n");
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let picker = open_picker(&mut workbench, project, ToolchainPickerKind::Runtime);
+    assert_eq!(options(&picker)[0], ("Node", "24.21.0", "in use"));
+    pick(&mut workbench, project, &picker, "Bun", "1.4.2");
+    workbench.settle().unwrap();
+
+    assert_eq!(
+        fixture.read("package.json"),
+        "{\n  \"name\": \"app\",\n  \"devEngines\": {\n    \"runtime\": {\n      \"name\": \"bun\",\n      \"version\": \"1.4.2\"\n    }\n  }\n}\n"
+    );
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.runtime, ready("Bun", "1.4.2"));
+    let messages: Vec<&str> = view.notices.iter().map(|n| n.message.as_str()).collect();
+    assert_eq!(messages, ["This project doesn't pin its package manager, so Genea uses pnpm 12.10.1."]);
+}
+
+#[test]
+fn typing_in_the_picker_filters_its_options() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().node("26.11.1");
+    host.tools().pnpm("12.10.1");
+    host.tools().bun("1.4.2");
+    let fixture = project(PINNED);
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    open_picker(&mut workbench, project, ToolchainPickerKind::Runtime);
+
+    workbench.dispatch(project, Command::FilterToolchainPicker("bun".into()));
+    let picker = workbench.project(project).unwrap().toolchain_picker.unwrap();
+    assert_eq!(picker.query, "bun");
+    assert_eq!(options(&picker), [("Bun", "1.4.2", "")]);
+
+    workbench.dispatch(project, Command::FilterToolchainPicker("26".into()));
+    let picker = workbench.project(project).unwrap().toolchain_picker.unwrap();
+    assert_eq!(options(&picker), [("Node", "26.11.1", "")]);
+}
+
+#[test]
+fn closing_the_picker_changes_nothing() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().node("26.11.1");
+    host.tools().pnpm("12.10.1");
+    let fixture = project(PINNED);
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    open_picker(&mut workbench, project, ToolchainPickerKind::Runtime);
+
+    workbench.dispatch(project, Command::CloseToolchainPicker);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain_picker, None);
+    assert_eq!(view.toolchain.runtime, ready("Node", "24.18.0"));
+    assert_eq!(fixture.read("package.json"), PINNED);
+}
+
+#[test]
+fn the_picker_shows_loading_until_the_lists_arrive() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().pnpm("12.10.1");
+    let fixture = project(PINNED);
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    host.download_server().hold(NODE_INDEX);
+
+    workbench.dispatch(project, Command::OpenToolchainPicker(ToolchainPickerKind::Runtime));
+    host.download_server().wait_held(NODE_INDEX);
+    workbench.pump();
+    let picker = workbench.project(project).unwrap().toolchain_picker.unwrap();
+    assert!(picker.loading);
+    assert!(picker.options.is_empty());
+
+    host.download_server().release(NODE_INDEX);
+    workbench.settle().unwrap();
+    assert!(!workbench.project(project).unwrap().toolchain_picker.unwrap().loading);
+}
+
+#[test]
+fn offline_the_picker_still_offers_the_downloaded_versions_and_says_why_the_rest_are_missing() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().pnpm("12.10.1");
+    let fixture = project(PINNED);
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    // The publishers can't be reached any more.
+    host.downloads().fail(NODE_INDEX, 503);
+    host.downloads().fail(BUN_RELEASES, 503);
+
+    let picker = open_picker(&mut workbench, project, ToolchainPickerKind::Runtime);
+
+    assert_eq!(options(&picker), [("Node", "24.18.0", "in use")]);
+    let message = picker.message.expect("a message");
+    assert!(message.starts_with("Couldn't list the Node versions"), "{message}");
+    assert!(message.contains("Couldn't list the Bun versions"), "{message}");
+}
+
+#[test]
+fn a_folder_without_package_json_has_no_picker_and_says_why() {
+    let host = TestHost::new();
+    let fixture = FixtureProject::new().file("main.ts", "").build();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::OpenToolchainPicker(ToolchainPickerKind::Runtime));
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain_picker, None);
+    assert_eq!(view.notices.len(), 1);
+    assert!(view.notices[0].message.contains("package.json"), "{:?}", view.notices);
+    assert!(!fixture.path("package.json").exists());
+}
