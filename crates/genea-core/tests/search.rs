@@ -2,7 +2,7 @@
 //! regex, case-sensitive and whole-word modes, without ignored or excluded
 //! files; a click opens the file at the match.
 
-use genea_core::{Command, ProjectId, SearchQuery, Workbench};
+use genea_core::{Command, MAX_SEARCH_MATCHES, ProjectId, SearchQuery, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 fn open(fixture: FixtureBuilder) -> (FixtureProject, Workbench, ProjectId) {
@@ -122,4 +122,125 @@ fn whole_word_and_case_combine_with_a_regex() {
     search(&mut workbench, project, query);
 
     assert_eq!(results(&workbench, project), ["a.ts", "  1:20 fooBar foo_bar FOO [foo]"]);
+}
+
+#[test]
+fn ignored_excluded_and_node_modules_files_never_appear_in_results() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new()
+            .file(".gitignore", "dist/\n*.log\n")
+            .file("genea.jsonc", r#"{ "exclude": ["fixtures/", "*.snap"] }"#)
+            .file("src/a.ts", "needle\n")
+            .file(".env", "NEEDLE=1\n")
+            .file("dist/a.js", "needle\n")
+            .file("debug.log", "needle\n")
+            .file("packages/p/.gitignore", "gen/\n")
+            .file("packages/p/gen/b.ts", "needle\n")
+            .file("packages/p/src/b.ts", "needle\n")
+            .file("fixtures/c.ts", "needle\n")
+            .file("src/a.test.ts.snap", "needle\n")
+            .file("node_modules/left-pad/index.js", "needle\n")
+            .file("packages/p/node_modules/x/index.js", "needle\n")
+            .file(".git/config", "needle\n"),
+    );
+
+    search(&mut workbench, project, literal("needle"));
+
+    assert_eq!(
+        results(&workbench, project),
+        [".env", "  1:1 [NEEDLE]=1", "packages/p/src/b.ts", "  1:1 [needle]", "src/a.ts", "  1:1 [needle]"]
+    );
+}
+
+#[test]
+fn binary_files_are_skipped() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("a.ts", "needle\n").file("image.png", b"\x89PNG\0\0needle\n"));
+
+    search(&mut workbench, project, literal("needle"));
+
+    assert_eq!(results(&workbench, project), ["a.ts", "  1:1 [needle]"]);
+}
+
+#[test]
+fn a_new_query_replaces_the_search_in_flight() {
+    let mut fixture = FixtureProject::new();
+    for i in 0..200 {
+        fixture = fixture.file(format!("src/f{i:03}.ts"), "alpha\n".repeat(50));
+    }
+    fixture = fixture.file("src/zeta.ts", "beta\n");
+    let (_fixture, mut workbench, project) = open(fixture);
+
+    workbench.dispatch(project, Command::Search(literal("alpha")));
+    workbench.dispatch(project, Command::Search(literal("beta")));
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap().search;
+    assert_eq!(view.query, literal("beta"));
+    assert_eq!(results(&workbench, project), ["src/zeta.ts", "  1:1 [beta]"]);
+    assert_eq!(view.match_count, 1);
+}
+
+#[test]
+fn an_empty_query_clears_the_results() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("a.ts", "needle\n"));
+    search(&mut workbench, project, literal("needle"));
+
+    search(&mut workbench, project, literal(""));
+
+    let view = workbench.project(project).unwrap().search;
+    assert!(view.files.is_empty());
+    assert_eq!(view.match_count, 0);
+    assert!(!view.searching);
+}
+
+#[test]
+fn clicking_a_result_opens_the_file_with_the_caret_at_the_match() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new().file("src/a.ts", "import x from 'y';\n\nexport const total = x + 1;\n").file("b.ts", ""),
+    );
+    workbench.dispatch(project, Command::OpenFile("b.ts".into()));
+    search(&mut workbench, project, literal("total"));
+
+    let found = workbench.project(project).unwrap().search.files[0].clone();
+    workbench.dispatch(project, Command::OpenFileAt { path: found.path, at: found.matches[0].position });
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    let editor = view.editor.unwrap();
+    assert_eq!(editor.path, std::path::Path::new("src/a.ts"));
+    assert_eq!(view.status.caret.as_deref(), Some("3:14"));
+}
+
+#[test]
+fn long_lines_are_cut_short_around_the_match() {
+    let line = format!("{}needle{}", "a".repeat(100), "b".repeat(200));
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("min.js", &line));
+
+    search(&mut workbench, project, literal("needle"));
+
+    let m = workbench.project(project).unwrap().search.files[0].matches[0].clone();
+    assert_eq!(m.location, "1:101");
+    assert_eq!(m.before, format!("…{}", "a".repeat(40)));
+    assert_eq!(m.after, format!("{}…", "b".repeat(120)));
+}
+
+#[test]
+fn a_search_stops_at_the_match_limit_and_says_so() {
+    let (_fixture, mut workbench, project) = open(
+        FixtureProject::new()
+            .file("a.ts", "x\n".repeat(MAX_SEARCH_MATCHES - 1))
+            .file("b.ts", "x x\n")
+            .file("c.ts", "x\n"),
+    );
+
+    search(&mut workbench, project, literal("x"));
+
+    let view = workbench.project(project).unwrap().search;
+    assert_eq!(view.match_count, MAX_SEARCH_MATCHES);
+    assert!(view.limited);
+    assert_eq!(view.files.iter().map(|f| f.path.display().to_string()).collect::<Vec<_>>(), ["a.ts", "b.ts"]);
+
+    search(&mut workbench, project, literal("x x"));
+    assert!(!workbench.project(project).unwrap().search.limited);
 }
