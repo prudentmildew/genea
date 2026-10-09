@@ -16,6 +16,7 @@ use genea_host::{Host, SharedHost};
 use crate::{
     command::Command,
     config::{self, CONFIG_FILE, Config},
+    dependencies::Dependencies,
     editor::Editor,
     environment::{Environment, ProcessEnv},
     files::FileIndex,
@@ -27,7 +28,7 @@ use crate::{
     syntax::ParseJob,
     terminal::Terminal,
     toolchain::{LOCKFILES, Toolchain, ToolchainContext},
-    view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
+    view::{InlineProblem, LeftColumnView, Notice, NoticeAction, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
@@ -77,6 +78,8 @@ pub(crate) struct Project {
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
     pub(crate) terminal: Terminal,
+    /// Whether `node_modules` is there (ticket #41).
+    pub(crate) dependencies: Dependencies,
 }
 
 impl Project {
@@ -85,6 +88,7 @@ impl Project {
             id,
             files: FileIndex::new(id, root.clone()),
             git: Git::new(id, root.clone()),
+            dependencies: Dependencies::new(id, &root),
             root,
             editor: None,
             panes: Panes::default(),
@@ -119,6 +123,7 @@ impl Project {
         self.find_nested_configs(jobs);
         self.files.start(jobs);
         self.git.reload(Vec::new(), jobs);
+        self.dependencies.check(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -131,6 +136,7 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
+        self.dependencies.files_changed(&changes, jobs);
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
             self.git.reload(open, jobs);
@@ -445,6 +451,7 @@ impl Project {
                     environment.capture(jobs);
                 }
             }
+            Command::InstallDependencies => {}
             Command::ExtendSelection { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, true, self.viewport_rows);
@@ -656,6 +663,7 @@ impl Project {
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
+        notices.extend(self.install_notice());
         notices.extend(self.environment.iter().flat_map(Environment::notices));
         ProjectView {
             root: self.root.clone(),
@@ -675,6 +683,16 @@ impl Project {
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
         }
+    }
+
+    /// "Install dependencies", while `node_modules` is missing in a project
+    /// whose package manager Genea runs, and no install is under way.
+    fn install_notice(&self) -> Option<Notice> {
+        let offer = self.dependencies.are_missing() && self.toolchain.as_ref().is_some_and(Toolchain::can_install);
+        offer.then(|| Notice {
+            message: "This project's dependencies aren't installed.".into(),
+            action: Some(NoticeAction { label: "Install dependencies".into(), command: Command::InstallDependencies }),
+        })
     }
 
     /// The open file's git gutter markers on the visible lines; lines

@@ -69,6 +69,13 @@ pub enum Command {
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
     ReloadEnvironment,
+    /// "Install dependencies" (ticket #41): runs the pinned package
+    /// manager's `install` in the project root, in a terminal tab of its
+    /// own, once the toolchain has settled. Install scripts run project
+    /// code (ADR 0005), so Genea dispatches this only on the user's click,
+    /// and the new-project flow dispatches it once for a project it just
+    /// created. While an install runs, it shows that tab instead.
+    InstallDependencies,
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },

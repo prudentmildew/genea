@@ -609,6 +609,13 @@ impl Toolchain {
         })
     }
 
+    /// Whether the project installs with a package manager Genea runs:
+    /// `package.json` is read and pins pnpm or Bun, or nothing (pnpm by
+    /// default). Not for a foreign or invalid pin.
+    pub(crate) fn can_install(&self) -> bool {
+        matches!(&self.slots[Role::PackageManager.index()], Some(Slot { want: Some(_), .. }))
+    }
+
     /// Whether every role has settled: its tool is ready, or it failed or
     /// is off. Nothing is being read, resolved or downloaded.
     pub(crate) fn is_settled(&self) -> bool {

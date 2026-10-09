@@ -22,6 +22,7 @@
 
 mod command;
 mod config;
+mod dependencies;
 mod disk;
 mod editor;
 mod environment;
