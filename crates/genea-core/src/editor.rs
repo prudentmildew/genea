@@ -282,6 +282,21 @@ impl Editor {
         self.replace(edits, kind, now, viewport_rows);
     }
 
+    /// ⌘V: like `insert`, except that text with as many lines as there are
+    /// carets (two or more) puts one line at each caret, top to bottom.
+    pub(crate) fn paste(&mut self, text: &str, now: Instant, viewport_rows: f64) {
+        let text = LineEnding::Lf.normalize(text);
+        let lines: Vec<&str> = text.strip_suffix('\n').unwrap_or(&text).split('\n').collect();
+        if self.cursors.len() < 2 || lines.len() != self.cursors.len() {
+            return self.insert(&text, EditKind::Other, now, viewport_rows);
+        }
+        self.preedit.clear();
+        let mut order: Vec<usize> = (0..self.cursors.len()).collect();
+        order.sort_by_key(|&i| self.cursors[i].range().start);
+        let edits = order.into_iter().zip(lines).map(|(i, line)| (i, self.cursors[i].range(), line.to_owned())).collect();
+        self.replace(edits, EditKind::Other, now, viewport_rows);
+    }
+
     pub(crate) fn set_preedit(&mut self, text: String) {
         self.preedit = text;
     }
@@ -443,10 +458,20 @@ impl Editor {
         });
     }
 
-    /// The selected text, or `None` with nothing selected.
+    /// The selected text, or `None` with nothing selected. Several
+    /// selections are joined top to bottom, one per line.
     pub(crate) fn selected_text(&self) -> Option<String> {
-        let range = self.primary().range();
-        (!range.is_empty()).then(|| self.text.slice(range).to_string())
+        let mut ranges: Vec<Range<usize>> =
+            self.cursors.iter().map(|c| c.range()).filter(|r| !r.is_empty()).collect();
+        ranges.sort_by_key(|r| r.start);
+        let texts: Vec<String> = ranges.into_iter().map(|r| self.text.slice(r).to_string()).collect();
+        (!texts.is_empty()).then(|| texts.join("\n"))
+    }
+
+    /// ⌘X's edit: deletes every selection, leaving carets without one
+    /// where they are.
+    pub(crate) fn delete_selections(&mut self, now: Instant, viewport_rows: f64) {
+        self.insert("", EditKind::Other, now, viewport_rows);
     }
 
     /// Scrolls by `rows`, keeping the last line at the bottom of the

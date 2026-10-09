@@ -10,7 +10,7 @@ use genea_host::Host;
 use ropey::Rope;
 
 use crate::{
-    command::{CaretMove, Command},
+    command::Command,
     editor::Editor,
     history::EditKind,
     jobs::Jobs,
@@ -132,14 +132,14 @@ impl Project {
                     && let Some(text) = editor.selected_text()
                 {
                     host.clipboard().write_text(&text);
-                    editor.delete(CaretMove::Left, EditKind::Other, now, self.viewport_rows);
+                    editor.delete_selections(now, self.viewport_rows);
                 }
             }
             Command::Paste => {
                 if let Some(editor) = &mut self.editor
                     && let Some(text) = host.clipboard().read_text()
                 {
-                    editor.insert(&text, EditKind::Other, now, self.viewport_rows);
+                    editor.paste(&text, now, self.viewport_rows);
                 }
             }
             Command::Undo => {
