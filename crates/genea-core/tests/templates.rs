@@ -263,6 +263,88 @@ fn a_new_project_is_an_empty_git_repository_on_main() {
 }
 
 #[test]
+fn the_pnpm_and_bun_variants_differ_only_in_package_manager_files() {
+    let bun = || PackageManagerPin::Bun("1.4.2".into());
+    for (template, differing) in [
+        (Template::Frontend, &["README.md", "package.json"][..]),
+        (Template::Backend, &["README.md", "package.json"][..]),
+        (Template::FullStack, &["README.md", "package.json", "pnpm-workspace.yaml"][..]),
+    ] {
+        let with_pnpm = create(template, "my-app", node(), pnpm());
+        let with_bun = create(template, "my-app", node(), bun());
+
+        let mut all = files(&with_pnpm, "my-app");
+        all.extend(files(&with_bun, "my-app"));
+        all.sort();
+        all.dedup();
+        let mut different: Vec<&str> = Vec::new();
+        for file in &all {
+            let path = format!("my-app/{file}");
+            let read = |parent: &FixtureProject| std::fs::read(parent.path(&path)).ok();
+            if read(&with_pnpm) != read(&with_bun) {
+                different.push(file);
+            }
+        }
+        assert_eq!(different, differing, "{template:?}");
+    }
+}
+
+#[test]
+fn node_types_follow_the_pinned_node_major() {
+    let node_26 = create(Template::Backend, "my-api", RuntimePin::Node("26.0.1".into()), pnpm());
+    let on_bun = create(Template::Backend, "my-api", RuntimePin::Bun("1.4.2".into()), pnpm());
+
+    assert_eq!(json_file(&node_26, "my-api/package.json")["devDependencies"]["@types/node"], "^26.0.0");
+    let bun_package = json_file(&on_bun, "my-api/package.json");
+    assert_eq!(bun_package["devEngines"]["runtime"], json!({ "name": "bun", "version": "1.4.2" }));
+    assert!(bun_package["devDependencies"]["@types/node"].as_str().unwrap().starts_with('^'));
+}
+
+#[test]
+fn a_project_can_be_created_in_an_existing_empty_folder() {
+    let parent = FixtureProject::new().dir("my-app").build();
+    let mut workbench = Workbench::new(TestHost::new().shared());
+    let folder = parent.path("my-app");
+
+    workbench.create_project(NewProject {
+        template: Template::Backend,
+        name: "my-app".into(),
+        folder: folder.clone(),
+        runtime: node(),
+        package_manager: pnpm(),
+    });
+    workbench.settle().unwrap();
+
+    assert_eq!(workbench.project_creation(), Some(ProjectCreation::Created { folder }));
+    assert!(parent.path("my-app/package.json").exists());
+}
+
+#[test]
+fn creating_a_project_in_a_folder_that_isnt_empty_is_refused_and_writes_nothing() {
+    let parent = FixtureProject::new().file("my-app/notes.txt", "keep me").build();
+    let mut workbench = Workbench::new(TestHost::new().shared());
+    let folder = parent.path("my-app");
+
+    workbench.create_project(NewProject {
+        template: Template::Frontend,
+        name: "my-app".into(),
+        folder: folder.clone(),
+        runtime: node(),
+        package_manager: pnpm(),
+    });
+    assert_eq!(workbench.project_creation(), Some(ProjectCreation::Creating { folder: folder.clone() }));
+    workbench.settle().unwrap();
+
+    let Some(ProjectCreation::Failed { folder: failed, message }) = workbench.project_creation() else {
+        panic!("expected a failure, got {:?}", workbench.project_creation());
+    };
+    assert_eq!(failed, folder);
+    assert!(message.contains("isn't empty"), "{message}");
+    assert_eq!(files(&parent, "my-app"), ["notes.txt"]);
+    assert!(!parent.path("my-app/.git").exists());
+}
+
+#[test]
 fn generation_starts_no_process_and_downloads_nothing() {
     let parent = FixtureProject::new().build();
     let host = TestHost::new();

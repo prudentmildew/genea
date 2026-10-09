@@ -95,6 +95,10 @@ const WORKSPACE_PACKAGES: [&str; 2] = ["apps/*", "packages/*"];
 pub(super) fn generate(request: &NewProject) -> Result<(), String> {
     let folder = &request.folder;
     fs::create_dir_all(folder).map_err(|e| format!("Couldn't create {}: {e}", folder.display()))?;
+    let mut entries = fs::read_dir(folder).map_err(|e| format!("Couldn't read {}: {e}", folder.display()))?;
+    if entries.next().is_some() {
+        return Err(format!("{} isn't empty. Choose a new or empty folder.", folder.display()));
+    }
     let out = Writer { folder, name: &request.name };
     let root = match request.template {
         Template::Frontend => frontend(request, &out)?,
