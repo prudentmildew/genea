@@ -16,7 +16,7 @@ use crate::{
     project::Project,
     recent::RecentProjects,
     templates::{self, Creations, NewProject, ProjectCreation},
-    toolchain::ToolchainContext,
+    toolchain::{self, ToolchainContext},
     update::{self, UpdateNotice},
     view::{ProjectView, WelcomeView},
 };
@@ -67,6 +67,15 @@ pub(crate) struct Core {
 impl Core {
     pub(crate) fn project_mut(&mut self, id: ProjectId) -> Option<&mut Project> {
         self.projects.get_mut(&id)
+    }
+
+    pub(crate) fn open_projects(&self) -> impl Iterator<Item = &Project> {
+        self.projects.values()
+    }
+
+    /// The recent projects' roots, most recent first.
+    pub(crate) fn recent_roots(&self) -> &[PathBuf] {
+        self.recent.roots()
     }
 }
 
@@ -143,6 +152,12 @@ impl Workbench {
     /// Applies a command to a project. Commands for a closed project are
     /// ignored.
     pub fn dispatch(&mut self, project: ProjectId, command: Command) {
+        if command == Command::RemoveUnusedToolchains {
+            if self.core.projects.contains_key(&project) {
+                toolchain::remove_unused(&mut self.core, project);
+            }
+            return;
+        }
         let Core { projects, jobs, host, .. } = &mut self.core;
         if let Some(project) = projects.get_mut(&project) {
             project.dispatch(command, jobs, host.as_ref());

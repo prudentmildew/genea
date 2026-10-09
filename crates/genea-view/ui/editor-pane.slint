@@ -30,6 +30,9 @@ export component EditorPane inherits Rectangle {
     in property <bool> can-split;
     in property <[Line]> lines <=> surface.lines;
     in property <SurfaceGeometry> geometry;
+    // The file changed on disk while it had unsaved edits (ticket #32):
+    // the conflict bar shows over the top of the editor.
+    in property <bool> conflict;
 
     out property <length> char-width: surface.char-width;
     out property <length> viewport-height: surface.viewport-height;
@@ -39,6 +42,8 @@ export component EditorPane inherits Rectangle {
     callback tab-closed(index: int);
     callback tab-moved(index: int);
     callback split-right();
+    // The conflict bar's buttons: Reload (`reload`) or Keep my edits.
+    callback conflict-resolved(reload: bool);
 
     callback scrolled <=> surface.scrolled;
     callback pressed <=> surface.pressed;
@@ -170,6 +175,62 @@ export component EditorPane inherits Rectangle {
                 font-size: 13px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
+            }
+
+            // Over the surface rather than above it, so the pane's height
+            // (and the core's one viewport) doesn't change with it.
+            if root.has-editor && root.conflict: Rectangle {
+                y: 0px;
+                height: 30px;
+                background: Theme.chrome-highlight;
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.chrome-border;
+                }
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 16px;
+
+                    Text {
+                        text: "This file changed on disk, and you have unsaved edits.";
+                        color: Theme.warning;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: "Reload";
+                        color: Theme.chrome-foreground;
+                        font-weight: 600;
+                        vertical-alignment: center;
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.conflict-resolved(true);
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Keep my edits";
+                        color: Theme.chrome-foreground;
+                        font-weight: 600;
+                        vertical-alignment: center;
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.conflict-resolved(false);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

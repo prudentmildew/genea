@@ -9,7 +9,9 @@
 //!
 //! - [`pins`]: reading pins from `package.json`, and writing exact ones.
 //! - [`Store`]: resolving a [`Request`] to a version (newest match in the
-//!   store, else newest match published) and installing it.
+//!   store, else newest match published), installing it, and removing it.
+//! - [`published`]: every version of a tool its publisher has for macOS
+//!   arm64 (the pin pickers list them).
 //!
 //! This crate is plain blocking code with no threads of its own: genea-core
 //! calls it from background jobs, and every download goes through the
@@ -23,6 +25,7 @@ mod tool;
 mod version;
 
 pub use pins::{Pin, Pins};
+pub use sources::published;
 pub use store::{Installed, Progress, Store, ToolchainError};
 pub use tool::Tool;
 pub use version::{Request, Version};

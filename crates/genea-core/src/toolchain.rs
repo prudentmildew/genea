@@ -15,7 +15,12 @@
 //! A folder without a root `package.json` has no toolchain and downloads
 //! nothing.
 
-use std::{fs, io, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use genea_host::SharedHost;
 use genea_toolchain::{Installed, Pin, Pins, Progress, Request, Store, Tool, Version, pins};
@@ -23,7 +28,12 @@ use genea_toolchain::{Installed, Pin, Pins, Progress, Request, Store, Tool, Vers
 use crate::{
     command::Command,
     jobs::Jobs,
-    view::{Notice, NoticeAction, ToolState, ToolView, ToolchainView},
+    problems::{Problem, ProblemSource, Severity, TextPosition},
+    templates::{PackageManagerPin, RuntimePin},
+    view::{
+        Notice, NoticeAction, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
+        ToolchainView,
+    },
     workbench::{Core, ProjectId},
 };
 
@@ -76,6 +86,62 @@ pub(crate) struct Toolchain {
     load_generation: u64,
     /// `package.json` is being read.
     loading: bool,
+    /// The open toolchain picker, if any.
+    picker: Option<Picker>,
+    /// Bumped by every picker opened, so a slow listing can't fill a newer
+    /// picker.
+    picker_generation: u64,
+    /// The lockfiles at the project root, checked against `packageManager`.
+    lockfiles: Lockfiles,
+    /// Where `packageManager` is in `package.json`: lockfile warnings point
+    /// there.
+    package_manager_at: TextPosition,
+    /// Bumped by every lockfile check, so a slow one can't undo a newer one.
+    lockfile_generation: u64,
+}
+
+/// The lockfiles Genea cross-checks, at the project root only: pnpm's, and
+/// Bun's text and (older) binary ones.
+pub(crate) const LOCKFILES: [&str; 3] = ["pnpm-lock.yaml", "bun.lock", "bun.lockb"];
+
+/// Which lockfiles are at the project root.
+#[derive(Clone, Copy, Debug, Default)]
+struct Lockfiles {
+    pnpm: bool,
+    /// `bun.lock` or `bun.lockb`.
+    bun: Option<&'static str>,
+}
+
+impl Lockfiles {
+    /// Stats the root for lockfiles (blocking).
+    fn find(root: &Path) -> Self {
+        let exists = |name: &str| root.join(name).is_file();
+        Lockfiles { pnpm: exists(LOCKFILES[0]), bun: LOCKFILES[1..].iter().copied().find(|name| exists(name)) }
+    }
+}
+
+/// Where `packageManager` is in `package.json`'s text, else the start.
+fn package_manager_position(text: &str) -> TextPosition {
+    text.find("\"packageManager\"").map(|offset| TextPosition::of_byte_offset(text, offset)).unwrap_or_default()
+}
+
+/// An open toolchain picker.
+struct Picker {
+    kind: ToolchainPickerKind,
+    query: String,
+    generation: u64,
+    /// `None` while the versions are being listed.
+    listed: Option<Listed>,
+}
+
+/// The versions a picker offers, per tool.
+struct Listed {
+    /// Per tool: published and stored versions together, newest first.
+    versions: Vec<(Tool, Vec<Version>)>,
+    /// Per tool: the versions in the store.
+    installed: Vec<(Tool, Vec<Version>)>,
+    /// Lists that couldn't be fetched, for the picker's message.
+    errors: Vec<String>,
 }
 
 struct Slot {
@@ -104,7 +170,20 @@ enum SlotState {
 
 impl Toolchain {
     pub(crate) fn new(project: ProjectId, root: PathBuf, context: ToolchainContext) -> Self {
-        Toolchain { project, root, context, slots: [None, None], problems: Vec::new(), load_generation: 0, loading: false }
+        Toolchain {
+            project,
+            root,
+            context,
+            slots: [None, None],
+            problems: Vec::new(),
+            load_generation: 0,
+            loading: false,
+            picker: None,
+            picker_generation: 0,
+            lockfiles: Lockfiles::default(),
+            package_manager_at: TextPosition::default(),
+            lockfile_generation: 0,
+        }
     }
 
     /// Reads `package.json` in the background, then starts every role.
@@ -112,20 +191,32 @@ impl Toolchain {
         self.load_generation += 1;
         self.loading = true;
         let generation = self.load_generation;
-        let (id, path) = (self.project, self.root.join("package.json"));
+        self.lockfile_generation += 1;
+        let lockfile_generation = self.lockfile_generation;
+        let (id, root) = (self.project, self.root.clone());
         jobs.spawn("read toolchain pins", move || {
-            let pins = match fs::read_to_string(&path) {
-                Ok(text) => Some(pins::read(&text)),
+            let mut package_manager_at = TextPosition::default();
+            let pins = match fs::read_to_string(root.join("package.json")) {
+                Ok(text) => {
+                    package_manager_at = package_manager_position(&text);
+                    Some(pins::read(&text))
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 Err(error) => Some(Err(error.to_string())),
             };
+            let lockfiles = Lockfiles::find(&root);
             Box::new(move |core| {
                 let jobs = core.jobs.clone();
                 let Some(toolchain) = toolchain_mut(core, id) else { return };
                 if toolchain.load_generation == generation {
                     toolchain.loading = false;
+                    toolchain.package_manager_at = package_manager_at;
+                    if toolchain.lockfile_generation == lockfile_generation {
+                        toolchain.lockfiles = lockfiles;
+                    }
                     toolchain.loaded(pins, &jobs);
                 }
+                update_problems(core, id);
             })
         });
     }
@@ -262,6 +353,253 @@ impl Toolchain {
         });
     }
 
+    /// Opens a toolchain picker and lists its versions in the background:
+    /// what the publishers have plus what the store has, so a picker still
+    /// offers the downloaded versions offline.
+    pub(crate) fn open_picker(&mut self, kind: ToolchainPickerKind, jobs: &Jobs) {
+        self.picker_generation += 1;
+        let generation = self.picker_generation;
+        self.picker = Some(Picker { kind, query: String::new(), generation, listed: None });
+        let tools: Vec<Tool> = match kind {
+            ToolchainPickerKind::Runtime => vec![Tool::Node, Tool::Bun],
+            ToolchainPickerKind::PackageManager => vec![Tool::Pnpm, Tool::Bun],
+            ToolchainPickerKind::Update => {
+                let mut tools: Vec<Tool> =
+                    self.slots.iter().flatten().filter_map(|slot| slot.want.as_ref().map(|(tool, _)| *tool)).collect();
+                tools.dedup();
+                tools
+            }
+        };
+        let id = self.project;
+        let ToolchainContext { host, store } = self.context.clone();
+        jobs.spawn("list toolchain versions", move || {
+            let mut listed = Listed { versions: Vec::new(), installed: Vec::new(), errors: Vec::new() };
+            for tool in tools {
+                let installed = store.installed(tool);
+                let mut versions = match genea_toolchain::published(host.downloads(), tool) {
+                    Ok(published) => published,
+                    Err(error) => {
+                        listed.errors.push(format!("Couldn't list the {tool} versions: {error}"));
+                        Vec::new()
+                    }
+                };
+                versions.extend(installed.iter().cloned());
+                versions.sort_by(|a, b| b.cmp(a));
+                versions.dedup();
+                listed.versions.push((tool, versions));
+                listed.installed.push((tool, installed));
+            }
+            Box::new(move |core| {
+                let Some(toolchain) = toolchain_mut(core, id) else { return };
+                if let Some(picker) = toolchain.picker.as_mut().filter(|p| p.generation == generation) {
+                    picker.listed = Some(listed);
+                }
+            })
+        });
+    }
+
+    pub(crate) fn filter_picker(&mut self, query: String) {
+        if let Some(picker) = &mut self.picker {
+            picker.query = query;
+        }
+    }
+
+    pub(crate) fn close_picker(&mut self) {
+        self.picker = None;
+    }
+
+    /// Pins the runtime to an exact version (a picker's option).
+    pub(crate) fn set_runtime(&mut self, pin: RuntimePin, jobs: &Jobs) {
+        let (tool, version) = match pin {
+            RuntimePin::Node(version) => (Tool::Node, version),
+            RuntimePin::Bun(version) => (Tool::Bun, version),
+        };
+        self.set_pin(Role::Runtime, tool, &version, jobs);
+    }
+
+    /// Pins the package manager to an exact version (a picker's option).
+    pub(crate) fn set_package_manager(&mut self, pin: PackageManagerPin, jobs: &Jobs) {
+        let (tool, version) = match pin {
+            PackageManagerPin::Pnpm(version) => (Tool::Pnpm, version),
+            PackageManagerPin::Bun(version) => (Tool::Bun, version),
+        };
+        self.set_pin(Role::PackageManager, tool, &version, jobs);
+    }
+
+    /// Writes `tool` `version` as the role's exact pin in the background,
+    /// then switches the role to it and starts its download.
+    fn set_pin(&mut self, role: Role, tool: Tool, version: &str, jobs: &Jobs) {
+        self.picker = None;
+        let Ok(version) = Version::parse(version) else {
+            self.problems.push(format!("Couldn't pin {tool} to \"{version}\": it isn't a version."));
+            return;
+        };
+        let (id, path) = (self.project, self.root.join("package.json"));
+        let written_version = version.clone();
+        jobs.spawn("write toolchain pin", move || {
+            let written = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|text| {
+                let pin = Some((tool, &written_version));
+                let text = match role {
+                    Role::Runtime => pins::write(&text, pin, None),
+                    Role::PackageManager => pins::write(&text, None, pin),
+                }?;
+                fs::write(&path, &text).map_err(|e| e.to_string())?;
+                Ok(package_manager_position(&text))
+            });
+            Box::new(move |core| {
+                let jobs = core.jobs.clone();
+                let Some(toolchain) = toolchain_mut(core, id) else { return };
+                match written {
+                    Ok(package_manager_at) => {
+                        toolchain.package_manager_at = package_manager_at;
+                        toolchain.pinned(role, tool, version, &jobs);
+                    }
+                    Err(reason) => toolchain.problems.push(format!("Couldn't write the pin to package.json: {reason}")),
+                }
+                update_problems(core, id);
+            })
+        });
+    }
+
+    /// The role is now pinned to `tool` `version`: download it.
+    fn pinned(&mut self, role: Role, tool: Tool, version: Version, jobs: &Jobs) {
+        let generation = self.slots[role.index()].as_ref().map_or(0, |slot| slot.generation);
+        let mut slot = Slot::new(tool.display_name(), Some((tool, Request::Exact(version))), false);
+        slot.generation = generation;
+        self.slots[role.index()] = Some(slot);
+        self.start(role, jobs);
+    }
+
+    /// The open picker, as the window shows it.
+    pub(crate) fn picker_view(&self) -> Option<ToolchainPicker> {
+        let picker = self.picker.as_ref()?;
+        let title = match picker.kind {
+            ToolchainPickerKind::Runtime => "Set runtime",
+            ToolchainPickerKind::PackageManager => "Set package manager",
+            ToolchainPickerKind::Update => "Update toolchain",
+        };
+        let mut view = ToolchainPicker {
+            kind: picker.kind,
+            title: title.into(),
+            query: picker.query.clone(),
+            loading: picker.listed.is_none(),
+            message: None,
+            options: Vec::new(),
+        };
+        let Some(listed) = &picker.listed else { return Some(view) };
+        let mut options = Vec::new();
+        match picker.kind {
+            ToolchainPickerKind::Runtime | ToolchainPickerKind::PackageManager => {
+                let role = if picker.kind == ToolchainPickerKind::Runtime { Role::Runtime } else { Role::PackageManager };
+                let in_use = self.in_use(role);
+                for (tool, versions) in &listed.versions {
+                    let installed = listed.installed.iter().find(|(t, _)| t == tool).map(|(_, v)| v.as_slice());
+                    for version in versions {
+                        let detail = if in_use.as_ref().is_some_and(|(t, v)| t == tool && v == version) {
+                            "in use"
+                        } else if installed.is_some_and(|installed| installed.contains(version)) {
+                            "downloaded"
+                        } else {
+                            ""
+                        };
+                        options.push(option(role, *tool, version, detail.into()));
+                    }
+                }
+            }
+            ToolchainPickerKind::Update => {
+                let mut current = Vec::new();
+                for role in Role::ALL {
+                    let Some((tool, now)) = self.in_use(role) else { continue };
+                    current.push(format!("{tool} {now}"));
+                    let versions = listed.versions.iter().find(|(t, _)| *t == tool).map(|(_, v)| v.as_slice());
+                    for version in versions.unwrap_or_default().iter().filter(|v| **v > now) {
+                        options.push(option(role, tool, version, format!("{}, now {now}", role.noun())));
+                    }
+                }
+                if options.is_empty() && !current.is_empty() {
+                    let verb = if current.len() == 1 { "is" } else { "are" };
+                    view.message = Some(format!("{} {verb} up to date.", current.join(" and ")));
+                }
+            }
+        }
+        if !listed.errors.is_empty() {
+            view.message = Some(listed.errors.join(" "));
+        }
+        let query = picker.query.to_lowercase();
+        view.options = options
+            .into_iter()
+            .filter(|o| query.is_empty() || format!("{} {} {}", o.tool, o.version, o.detail).to_lowercase().contains(&query))
+            .collect();
+        Some(view)
+    }
+
+    /// The tool and version a role uses now: its resolved version, or its
+    /// exact pin.
+    fn in_use(&self, role: Role) -> Option<(Tool, Version)> {
+        let slot = self.slots[role.index()].as_ref()?;
+        let (tool, request) = slot.want.as_ref()?;
+        let version = match request {
+            Request::Exact(version) => version.clone(),
+            Request::Range { .. } => Version::parse(&slot.version).ok()?,
+        };
+        Some((*tool, version))
+    }
+
+    /// Looks at the root's lockfiles again in the background (one changed
+    /// on disk).
+    pub(crate) fn check_lockfiles(&mut self, jobs: &Jobs) {
+        self.lockfile_generation += 1;
+        let generation = self.lockfile_generation;
+        let (id, root) = (self.project, self.root.clone());
+        jobs.spawn("check lockfiles", move || {
+            let lockfiles = Lockfiles::find(&root);
+            Box::new(move |core| {
+                let Some(toolchain) = toolchain_mut(core, id) else { return };
+                if toolchain.lockfile_generation == generation {
+                    toolchain.lockfiles = lockfiles;
+                }
+                update_problems(core, id);
+            })
+        });
+    }
+
+    /// The lockfile cross-check: `packageManager` (or Genea's default)
+    /// decides, and a root lockfile of the other package manager is a
+    /// warning on `package.json`. A foreign or invalid pin isn't checked
+    /// here.
+    fn lockfile_problems(&self) -> Vec<Problem> {
+        let Some(slot) = &self.slots[Role::PackageManager.index()] else { return Vec::new() };
+        let Some((tool, _)) = &slot.want else { return Vec::new() };
+        let Lockfiles { pnpm, bun } = self.lockfiles;
+        let (stale, stale_kind) = match tool {
+            Tool::Bun => (pnpm.then_some(LOCKFILES[0]), Tool::Pnpm),
+            _ => (bun, Tool::Bun),
+        };
+        let Some(stale) = stale else { return Vec::new() };
+        let message = match (pnpm && bun.is_some(), slot.defaulted) {
+            (true, defaulted) => {
+                let decides = if defaulted {
+                    "This project doesn't pin its package manager".to_owned()
+                } else {
+                    format!("packageManager pins {tool}")
+                };
+                format!(
+                    "Both {} and {} are at the project root. {decides}, so Genea uses {tool} and {stale} goes stale.",
+                    LOCKFILES[0],
+                    bun.unwrap_or_default(),
+                )
+            }
+            (false, true) => format!(
+                "This project doesn't pin its package manager, so Genea uses {tool}, but {stale} is a {stale_kind} lockfile."
+            ),
+            (false, false) => format!(
+                "packageManager pins {tool}, but {stale} is a {stale_kind} lockfile. Genea uses {tool}, so {stale} goes stale."
+            ),
+        };
+        let at = if slot.defaulted { TextPosition::default() } else { self.package_manager_at };
+        vec![Problem { severity: Severity::Warning, path: "package.json".into(), start: at, end: at, message }]
+    }
+
     /// The roles' tools that are in the store, runtime first: the project
     /// environment puts each [`Installed::bin_dir`] first on PATH (#36).
     pub(crate) fn installed(&self) -> impl Iterator<Item = &Installed> {
@@ -351,11 +689,91 @@ impl Toolchain {
     }
 }
 
+/// A picker option that pins `tool` `version` for `role`.
+fn option(role: Role, tool: Tool, version: &Version, detail: String) -> ToolchainOption {
+    let v = version.to_string();
+    let command = match (role, tool) {
+        (Role::Runtime, Tool::Bun) => Command::SetRuntime(RuntimePin::Bun(v.clone())),
+        (Role::Runtime, _) => Command::SetRuntime(RuntimePin::Node(v.clone())),
+        (Role::PackageManager, Tool::Bun) => Command::SetPackageManager(PackageManagerPin::Bun(v.clone())),
+        (Role::PackageManager, _) => Command::SetPackageManager(PackageManagerPin::Pnpm(v.clone())),
+    };
+    ToolchainOption { tool: tool.display_name().into(), version: v, detail, command }
+}
+
 impl Slot {
     fn new(name: &str, want: Option<(Tool, Request)>, defaulted: bool) -> Self {
         let version = want.as_ref().map(|(_, request)| request.to_string()).unwrap_or_default();
         Slot { name: name.to_owned(), want, defaulted, version, state: SlotState::Resolving, generation: 0 }
     }
+}
+
+/// "Remove unused toolchains": deletes, in the background, every store
+/// version that no recent or open project uses, and tells project `id` what
+/// went. A project uses what its root `package.json` pins now: an exact
+/// version, the newest stored match of a range, or Genea's default for a
+/// role it doesn't pin. What an open project is running stays too.
+pub(crate) fn remove_unused(core: &mut Core, id: ProjectId) {
+    let mut roots: Vec<PathBuf> = core.recent_roots().to_vec();
+    let mut keep: HashSet<(Tool, Version)> = HashSet::new();
+    for project in core.open_projects() {
+        roots.push(project.root().to_owned());
+        let running = project.toolchain.iter().flat_map(Toolchain::installed);
+        keep.extend(running.map(|installed| (installed.tool, installed.version.clone())));
+    }
+    let store = core.toolchain.store.clone();
+    core.jobs.spawn("remove unused toolchains", move || {
+        for root in roots {
+            let Ok(text) = fs::read_to_string(root.join("package.json")) else { continue };
+            let Ok(pins) = pins::read(&text) else { continue };
+            for (pin, default) in [(pins.runtime, Tool::Node), (pins.package_manager, Tool::Pnpm)] {
+                match pin {
+                    Pin::Unpinned => {
+                        keep.insert((default, default.default_version()));
+                    }
+                    Pin::Pinned { tool, request } => {
+                        if let Some(version) = request.newest_match(&store.installed(tool)) {
+                            keep.insert((tool, version.clone()));
+                        }
+                    }
+                    Pin::Foreign(_) | Pin::Invalid(_) => {}
+                }
+            }
+        }
+        let (mut removed, mut failed) = (Vec::new(), Vec::new());
+        for tool in Tool::ALL {
+            let mut versions = store.installed(tool);
+            versions.sort();
+            for version in versions.into_iter().filter(|v| !keep.contains(&(tool, v.clone()))) {
+                match store.remove(tool, &version) {
+                    Ok(()) => removed.push(format!("{tool} {version}")),
+                    Err(error) => failed.push(format!("{tool} {version} ({error})")),
+                }
+            }
+        }
+        let mut message = match (removed.len(), failed.is_empty()) {
+            (0, true) => "There are no unused toolchain versions to remove.".to_owned(),
+            (0, false) => String::new(),
+            (1, _) => format!("Removed 1 unused toolchain version: {}. ", removed[0]),
+            (n, _) => format!("Removed {n} unused toolchain versions: {}. ", removed.join(", ")),
+        };
+        if !failed.is_empty() {
+            message.push_str(&format!("Couldn't remove {}.", failed.join(", ")));
+        }
+        let message = message.trim_end().to_owned();
+        Box::new(move |core| {
+            if let Some(project) = core.project_mut(id) {
+                project.notify(message);
+            }
+        })
+    });
+}
+
+/// Puts the toolchain's warnings into the project's Problems.
+fn update_problems(core: &mut Core, id: ProjectId) {
+    let Some(project) = core.project_mut(id) else { return };
+    let problems = project.toolchain.as_ref().map(Toolchain::lockfile_problems).unwrap_or_default();
+    project.replace_problems(ProblemSource::Toolchain, problems);
 }
 
 fn toolchain_mut(core: &mut Core, id: ProjectId) -> Option<&mut Toolchain> {

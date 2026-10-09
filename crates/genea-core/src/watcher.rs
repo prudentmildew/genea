@@ -6,7 +6,7 @@
 //! [`Project::files_changed`](crate::project::Project::files_changed): the
 //! first event after a batch was taken schedules the next one, and every
 //! event until it runs joins it. Each area that cares about files on disk
-//! (the config now; the file index, open editors and review later) reacts
+//! (the config, the file index and open editors now; review later) reacts
 //! there.
 //!
 //! **Settle.** The watcher is a long-lived background source, so `settle`

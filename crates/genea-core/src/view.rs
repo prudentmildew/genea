@@ -6,7 +6,7 @@
 //! freely. They are snapshots: re-read them after a command or a change
 //! notification.
 
-use std::{ops::Range, path::PathBuf};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{
     Highlight,
@@ -49,6 +49,34 @@ pub struct ProjectView {
     pub left_column: Option<LeftColumnView>,
     /// The terminal pane (ticket #38).
     pub terminal: TerminalView,
+    /// The open toolchain picker ("Set runtime…", "Set package manager…",
+    /// "Update toolchain…"), if any.
+    pub toolchain_picker: Option<ToolchainPicker>,
+    /// The Files view's tree: the rows it shows, top to bottom. Shared, so
+    /// a snapshot doesn't copy a large tree, and unchanged trees compare
+    /// equal at once.
+    pub files: Arc<[FileRow]>,
+}
+
+/// A row in the Files view: a file, or a folder the user can expand.
+/// Clicking a file opens it with `Command::OpenFile(path)`; clicking a
+/// folder toggles it with `Command::ToggleFolder(path)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRow {
+    /// Relative to the project root.
+    pub path: PathBuf,
+    /// The file or folder name.
+    pub name: String,
+    /// How deep it is: 0 for the root's entries.
+    pub depth: usize,
+    pub kind: FileRowKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileRowKind {
+    File,
+    /// A folder; its entries follow it, one level deeper, while expanded.
+    Folder { expanded: bool },
 }
 
 /// One side of the editor area: a tab strip and the active tab's editor.
@@ -85,6 +113,8 @@ pub struct ClosePrompt {
 /// collapses the column when it is already showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LeftColumnView {
+    /// ⌘1: the project's file tree. A project opens showing it.
+    Files,
     /// ⌘6.
     Problems,
 }
@@ -124,9 +154,17 @@ pub struct EditorView {
     /// The tab title: the file name.
     pub title: String,
     pub read_only: bool,
+    /// Only the file's beginning is in: the rest is still being read
+    /// (ticket #27). Read-only until it is.
+    pub loading: bool,
     /// The buffer has edits that aren't on disk yet: the tab and window
     /// show it as unsaved.
     pub modified: bool,
+    /// The file changed on disk, outside Genea, while the buffer had
+    /// unsaved edits: the editor shows a bar offering Reload or Keep my
+    /// edits (`Command::ResolveConflict`). A buffer without unsaved edits
+    /// reloads instead, as one undo step.
+    pub conflict: bool,
     /// Lines in the file. A file ending in a newline has an empty last line.
     pub line_count: usize,
     /// The first visible row, fractional while scrolling smoothly. The view
@@ -216,6 +254,10 @@ pub struct StatusBar {
     /// Toolchain download progress, e.g. `Downloading Node 24.18.0 42%`,
     /// while a download runs.
     pub toolchain: Option<String>,
+    /// Set while the open file is a large file (over
+    /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
+    /// language intelligence.
+    pub large_file: Option<String>,
 }
 
 /// A message for the user.
@@ -266,6 +308,49 @@ pub enum ToolState {
     Failed,
     /// A foreign tool (npm, Yarn, …): Genea never runs it.
     Off,
+}
+
+/// Which toolchain picker to open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ToolchainPickerKind {
+    /// "Set runtime…": every Node and Bun version.
+    Runtime,
+    /// "Set package manager…": every pnpm and Bun version.
+    PackageManager,
+    /// "Update toolchain…": the versions newer than the ones in use, per
+    /// role.
+    Update,
+}
+
+/// A toolchain picker: a filterable list of versions. Picking an option
+/// dispatches its command, which writes an exact pin and downloads it;
+/// nothing changes until then.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolchainPicker {
+    pub kind: ToolchainPickerKind,
+    /// "Set runtime", "Set package manager" or "Update toolchain".
+    pub title: String,
+    /// The filter text (`Command::FilterToolchainPicker`).
+    pub query: String,
+    /// The version lists are still being fetched.
+    pub loading: bool,
+    /// Said above the list: why a list is missing or empty.
+    pub message: Option<String>,
+    /// Newest first, grouped by tool, filtered by `query`.
+    pub options: Vec<ToolchainOption>,
+}
+
+/// One version in a toolchain picker.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolchainOption {
+    /// `Node`, `Bun` or `pnpm`.
+    pub tool: String,
+    pub version: String,
+    /// `in use`, `downloaded`, or (updates) the role and the version it
+    /// replaces, e.g. `runtime, now 24.18.0`; empty otherwise.
+    pub detail: String,
+    /// What picking it dispatches: `SetRuntime` or `SetPackageManager`.
+    pub command: Command,
 }
 
 /// The welcome, shown while no project is open: Open…, New Project… and the

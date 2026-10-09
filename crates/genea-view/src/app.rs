@@ -23,7 +23,7 @@ use std::{
 /// How often background work may refresh the windows: a 120 Hz frame.
 const FRAME: Duration = Duration::from_millis(8);
 
-use genea_core::{CloseChoice, Command, LeftColumnView, ProjectId, Workbench};
+use genea_core::{CloseChoice, Command, ConflictChoice, LeftColumnView, ProjectId, ToolchainPickerKind, Workbench};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
@@ -282,12 +282,6 @@ impl App {
             links::open_url(&notice.url);
         }
     }
-
-    fn pick_file(&mut self, key: WindowKey) {
-        let Some(project) = self.controller(key).map(|c| c.project) else { return };
-        let Some(root) = self.workbench.project(project).map(|view| view.root) else { return };
-        dialogs::pick_file(&root, move |file| with_app(move |app| app.dispatch(key, Command::OpenFile(file))));
-    }
 }
 
 /// Connects a window's callbacks to the app.
@@ -302,7 +296,6 @@ fn wire(controller: &WindowController) {
             })
         });
     });
-    window.on_open_file(move || with_app(move |app| app.pick_file(key)));
     window.on_show_about(|| with_app(App::show_about));
     window.on_notice_action(move || {
         with_app(move |app| {
@@ -468,9 +461,40 @@ fn wire(controller: &WindowController) {
             controller.open_problem(&mut app.workbench, index);
         });
     });
+    window.on_conflict_resolved(move |pane, reload| {
+        let Ok(pane) = usize::try_from(pane) else { return };
+        let choice = if reload { ConflictChoice::Reload } else { ConflictChoice::KeepMyEdits };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.resolve_conflict(&mut app.workbench, pane, choice);
+        });
+    });
+    window.on_file_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.click_file(&mut app.workbench, index);
+        });
+    });
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
+    window.on_set_runtime(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Runtime)));
+    window.on_set_package_manager(menu(Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager)));
+    window.on_update_toolchain(menu(Command::OpenToolchainPicker(ToolchainPickerKind::Update)));
+    window.on_remove_unused_toolchains(menu(Command::RemoveUnusedToolchains));
+    window.on_picker_filter_edited(move |text| {
+        let text = text.to_string();
+        with_app(move |app| app.dispatch(key, Command::FilterToolchainPicker(text)));
+    });
+    window.on_picker_picked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.pick_toolchain(&mut app.workbench, index);
+        });
+    });
+    window.on_picker_cancelled(menu(Command::CloseToolchainPicker));
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));
@@ -481,6 +505,7 @@ fn wire(controller: &WindowController) {
 /// The core's name for a left-column view.
 fn left_column_view(view: LeftView) -> LeftColumnView {
     match view {
+        LeftView::Files => LeftColumnView::Files,
         LeftView::Problems => LeftColumnView::Problems,
     }
 }

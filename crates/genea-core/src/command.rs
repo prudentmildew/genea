@@ -6,7 +6,11 @@
 
 use std::path::PathBuf;
 
-use crate::{problems::TextPosition, view::LeftColumnView};
+use crate::{
+    problems::TextPosition,
+    templates::{PackageManagerPin, RuntimePin},
+    view::{LeftColumnView, ToolchainPickerKind},
+};
 
 /// Something the user does in a project's window.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +43,28 @@ pub enum Command {
     /// Writes Genea's default versions as exact pins to `package.json` for
     /// the roles the project doesn't pin (the unpinned notice's action).
     PinToolchainDefaults,
+    /// "Set runtime…", "Set package manager…" or "Update toolchain…":
+    /// opens the toolchain picker, which lists versions in the background
+    /// (`ProjectView::toolchain_picker`). Nothing is written until an
+    /// option's command is dispatched.
+    OpenToolchainPicker(ToolchainPickerKind),
+    /// Typing in the toolchain picker: shows only the options whose tool,
+    /// version or detail contain the text (ignoring case).
+    FilterToolchainPicker(String),
+    /// Closes the toolchain picker without changing anything.
+    CloseToolchainPicker,
+    /// Pins the runtime: writes `devEngines.runtime` to the root
+    /// `package.json` as an exact version, then downloads that version. A
+    /// toolchain picker option's command; closes the picker.
+    SetRuntime(RuntimePin),
+    /// Pins the package manager: writes `packageManager` to the root
+    /// `package.json` as an exact version, then downloads that version. A
+    /// toolchain picker option's command; closes the picker.
+    SetPackageManager(PackageManagerPin),
+    /// "Remove unused toolchains": deletes every version in the shared
+    /// toolchain store that no recently opened (or open) project uses. A
+    /// notice says what was removed.
+    RemoveUnusedToolchains,
     /// "Reload environment": runs the login shell again and gives processes
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
@@ -116,6 +142,10 @@ pub enum Command {
     /// A left-column view's shortcut (⌘6 for Problems): shows that view, or
     /// collapses the column if it is already showing.
     ToggleLeftColumn(LeftColumnView),
+    /// A click on a folder in the Files view (a path relative to the
+    /// project root): expands it, or collapses it if it is expanded. A
+    /// folder keeps what was expanded inside it while it is collapsed.
+    ToggleFolder(PathBuf),
 
     // Tabs and the split (ticket #31). Panes are indexed left to right and
     // tabs left to right within a pane, as `ProjectView::panes` lists them.
@@ -141,6 +171,10 @@ pub enum Command {
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
 
+    /// Answers an open file's conflict bar (`EditorView::conflict`): its
+    /// file changed on disk while it had unsaved edits. The path is as in
+    /// `EditorView::path`.
+    ResolveConflict { path: PathBuf, choice: ConflictChoice },
     // The terminal pane (ticket #38).
     /// ⌥F12: shows the terminal pane and focuses it; if it is showing and
     /// focused, collapses it and gives the editor the focus back. The
@@ -228,6 +262,16 @@ pub struct Modifiers {
     pub alt: bool,
     /// ⌃.
     pub ctrl: bool,
+}
+
+/// What to do when an open file with unsaved edits changed on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictChoice {
+    /// Replace the buffer with the file on disk, as one undo step, so Undo
+    /// brings the unsaved edits back.
+    Reload,
+    /// Keep the buffer as it is; the next save overwrites the file on disk.
+    KeepMyEdits,
 }
 
 /// What to do with unsaved edits in a closing tab.
