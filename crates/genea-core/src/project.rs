@@ -4,7 +4,7 @@ mod tabs;
 
 use std::{
     fs::File,
-    io::{BufReader, BufWriter, Write},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -16,6 +16,7 @@ use crate::{
     editor::Editor,
     history::EditKind,
     jobs::Jobs,
+    text::Decoded,
     toolchain::{Toolchain, ToolchainContext},
     view::{Notice, ProjectView, StatusBar},
     workbench::ProjectId,
@@ -202,6 +203,8 @@ impl Project {
         let tabs = self.tabs_view(editor.as_ref());
         let status = StatusBar {
             caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
+            encoding: self.editor.as_ref().map(|_| "UTF-8".to_owned()),
+            line_ending: self.editor.as_ref().map(|e| e.line_ending().label().to_owned()),
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
         };
         let mut notices = self.notices.clone();
@@ -223,7 +226,7 @@ impl Project {
     /// Writes an open file in the background, as it is now. Edits made
     /// while it is written stay unsaved; a failed write adds a notice.
     fn save(&mut self, path: PathBuf, jobs: &Jobs) {
-        let Some(editor) = self.open_editor(&path) else { return };
+        let Some(editor) = self.open_editor(&path).filter(|e| !e.is_read_only()) else { return };
         let snapshot = editor.snapshot();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
@@ -255,8 +258,9 @@ impl Project {
     }
 
     /// Reads the file in the background and opens it in a new tab. The
-    /// current editor stays until the new file is read; a failed read leaves
-    /// it and adds a notice. A file that is already open just has its tab
+    /// current editor stays until the new file is read; a failed read or a
+    /// binary file leaves it and adds a notice. A file that isn't valid
+    /// UTF-8 opens read-only. A file that is already open just has its tab
     /// focused.
     fn open_file(&mut self, path: PathBuf, jobs: &Jobs) {
         let absolute = self.root.join(&path);
@@ -268,14 +272,25 @@ impl Project {
         let generation = self.open_generation;
         let id = self.id;
         jobs.spawn("open file", move || {
-            let read = File::open(&absolute).and_then(|f| Rope::from_reader(BufReader::new(f)));
+            let read = std::fs::read(&absolute).map(Decoded::from_bytes);
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 if project.open_generation != generation {
                     return;
                 }
                 match read {
-                    Ok(text) => project.open_tab(Editor::new(shown, text)),
+                    Ok(Decoded::Text(text)) => project.open_tab(Editor::new(shown, Rope::from_str(&text))),
+                    Ok(Decoded::Invalid(text)) => {
+                        project.notices.push(Notice {
+                            message: format!("{} isn't valid UTF-8, so it's open read-only.", shown.display()),
+                            action: None,
+                        });
+                        project.open_tab(Editor::new(shown, Rope::from_str(&text)).read_only());
+                    }
+                    Ok(Decoded::Binary) => project.notices.push(Notice {
+                        message: format!("{} is a binary file, so Genea doesn't open it in the editor.", shown.display()),
+                        action: None,
+                    }),
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()), action: None }),

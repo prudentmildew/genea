@@ -22,6 +22,7 @@
 
 mod command;
 mod editor;
+mod grid;
 mod history;
 mod jobs;
 mod project;
@@ -36,6 +37,7 @@ mod workbench;
 pub use command::{CaretMove, Command};
 pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;
+pub use grid::{GridPiece, grid_pieces};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{

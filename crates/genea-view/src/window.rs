@@ -14,7 +14,7 @@ use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::{ProjectWindow, TabEntry, app::with_app, dialogs, surface::Surface};
+use crate::{ProjectWindow, TabEntry, app::with_app, dialogs, fonts, surface::Surface};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -171,6 +171,8 @@ impl WindowController {
         window.set_has_editor(editor.is_some());
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
+        window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
+        window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
         let action = view.notices.last().and_then(|n| n.action.clone());
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
@@ -202,6 +204,12 @@ impl WindowController {
                 window.set_left_has_editor(editor.is_some());
             } else {
                 window.set_right_has_editor(editor.is_some());
+            }
+            // Before Slint shapes the text: registers fallback fonts it needs.
+            let titles = shown.iter().flat_map(|p| &p.tabs).map(|tab| &tab.title);
+            let lines = editor.iter().flat_map(|e| &e.lines).map(|line| &line.text);
+            for text in titles.chain(lines) {
+                fonts::prepare(text);
             }
             self.surfaces[pane].sync(window, editor);
         }

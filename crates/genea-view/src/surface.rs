@@ -10,7 +10,7 @@
 
 use std::{ops::Range, rc::Rc};
 
-use genea_core::EditorView;
+use genea_core::{EditorView, grid_pieces};
 use slint::{Color, Model, ModelRc, VecModel};
 
 use crate::{Line, ProjectWindow, Run, Span, SurfaceGeometry};
@@ -120,11 +120,7 @@ impl Surface {
                     runs: if s.text.trim().is_empty() {
                         ModelRc::default()
                     } else {
-                        ModelRc::new(VecModel::from(vec![Run {
-                            x: 0.0,
-                            text: s.text.as_str().into(),
-                            color: Color::from_argb_encoded(0xff00_0000 | FOREGROUND),
-                        }]))
+                        ModelRc::new(VecModel::from(grid_runs(&s.text, char_width)))
                     },
                     selections: if s.selections.is_empty() {
                         ModelRc::default()
@@ -164,4 +160,18 @@ fn set_geometry(window: &ProjectWindow, pane: usize, geometry: SurfaceGeometry) 
     } else {
         window.set_right_geometry(geometry);
     }
+}
+
+/// A line's runs, one per grid piece: wide characters (CJK, emoji) are
+/// drawn from fallback fonts whose advances aren't two Menlo cells, so each
+/// is placed at its own column to keep the rest of the line on the grid.
+fn grid_runs(text: &str, char_width: f32) -> Vec<Run> {
+    grid_pieces(text)
+        .into_iter()
+        .map(|piece| Run {
+            x: piece.column as f32 * char_width,
+            text: piece.text.into(),
+            color: Color::from_argb_encoded(0xff00_0000 | FOREGROUND),
+        })
+        .collect()
 }
