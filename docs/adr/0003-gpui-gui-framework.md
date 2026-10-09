@@ -1,5 +1,7 @@
 # GPUI as the GUI framework
 
+**Status: reopened.** The validation spike ([Does GPUI meet Genea's budgets?](https://github.com/prudentmildew/genea/issues/14)) missed several budgets: idle wake-ups, idle memory, start time and keystroke-to-frame. Under the reopen condition below, a Slint spike is measured with the same harness, and the decision is then taken again. GPUI stays the working choice until then.
+
 Genea's UI is built on GPUI, the framework Zed is built on. It is consumed as a git dependency on `zed-industries/zed`, pinned to a Zed stable release tag. GPUI is the only candidate whose whole stack is shaped like Genea: a 120 fps code editor on Metal, with CoreText shaping, its own `NSTextInputClient`, a native `NSMenu`, and AccessKit. Zed 1.x proves it in production every week. We accept that GPUI is pre-1.0 with frequent breaking changes, has thin docs, isn't usefully published to crates.io, and follows Zed's roadmap rather than ours.
 
 Genea depends only on Zed's Apache-2.0 crates (GPUI and its support crates such as `sum_tree`). It does not depend on Zed's GPL crates (`editor`, `rope`, `text`, `ui`, `theme`, `lsp`) or on gpui-component. Genea writes its own components and editor surface, building the editor on the crates from the editor-crates research. Apache-2.0 code from gpui-component may be copied in with attribution.
