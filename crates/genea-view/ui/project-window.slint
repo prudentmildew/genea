@@ -9,6 +9,15 @@ import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ProblemRow } from "problems-view.slint";
 
+// The Code menu's items (ticket #25).
+export enum StructuralAction {
+    toggle-line-comment,
+    expand-fold,
+    collapse-fold,
+    expand-all-folds,
+    collapse-all-folds,
+}
+
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
     // The focused tab has a file: the editing menu items work.
@@ -58,6 +67,8 @@ export component ProjectWindow inherits Window {
     callback paste();
     callback select-all();
     callback reload-environment();
+    // The Code menu's structural editing items (ticket #25).
+    callback structural(StructuralAction);
     callback show-about();
     callback open-config();
     // A left-column view's shortcut: show it, or collapse the column.
@@ -223,6 +234,60 @@ export component ProjectWindow inherits Window {
                 enabled: root.has-editor;
                 activated => {
                     root.select-all();
+                }
+            }
+        }
+
+        // Structural editing (ticket #25). Expand and Shrink Selection
+        // (⌥↑ / ⌥↓) are keys, not menu items, so the clone-caret gesture
+        // (⌥⌥↑) still gets the arrows.
+        Menu {
+            title: "Code";
+            MenuItem {
+                title: "Comment with Line Comment";
+                shortcut: @keys(Control + "/");
+                enabled: root.has-editor;
+                activated => {
+                    root.structural(StructuralAction.toggle-line-comment);
+                }
+            }
+
+            Menu {
+                title: "Folding";
+                // ⌘+ and ⌘− are zoom's (#13); these are WebStorm's
+                // Expand and Collapse Recursively keys.
+                MenuItem {
+                    title: "Expand";
+                    shortcut: @keys(Control + Alt + "=");
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.expand-fold);
+                    }
+                }
+
+                MenuItem {
+                    title: "Collapse";
+                    shortcut: @keys(Control + Alt + "-");
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.collapse-fold);
+                    }
+                }
+
+                MenuItem {
+                    title: "Expand All";
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.expand-all-folds);
+                    }
+                }
+
+                MenuItem {
+                    title: "Collapse All";
+                    enabled: root.has-editor;
+                    activated => {
+                        root.structural(StructuralAction.collapse-all-folds);
+                    }
                 }
             }
         }

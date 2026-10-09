@@ -28,6 +28,11 @@ export global Theme {
     out property <color> gutter-foreground: root.dark ? #6e7681 : #9a9a9a;
     out property <color> caret: root.dark ? #58a6ff : #1f6feb;
     out property <color> selection: root.dark ? #264f78 : #b6d6fd;
+    // The bracket at the caret and its match (ticket #25).
+    out property <color> bracket-match: root.dark ? #3fb95033 : #2da44e26;
+    out property <color> bracket-match-border: root.dark ? #3fb950aa : #2da44e99;
+    // A collapsed fold's placeholder after its first line.
+    out property <color> fold-placeholder: root.dark ? #30363d : #eaeef2;
     // Underlines and markers for problems.
     out property <color> error: root.dark ? #f85149 : #cf222e;
     out property <color> warning: root.dark ? #d29922 : #9a6700;
