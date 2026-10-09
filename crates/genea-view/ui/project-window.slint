@@ -14,6 +14,7 @@ export component ProjectWindow inherits Window {
     in property <bool> tab-modified;
     in property <string> status-caret;
     in property <string> status-notice;
+    in property <string> status-update;
 
     in property <[Line]> lines <=> surface.lines;
     in property <length> offset-y <=> surface.offset-y;
@@ -34,6 +35,8 @@ export component ProjectWindow inherits Window {
     callback paste();
     callback select-all();
     callback show-about();
+    // Opens the release page of the update notice.
+    callback open-update();
 
     // Editor input.
     callback scrolled <=> surface.scrolled;
@@ -180,6 +183,10 @@ export component ProjectWindow inherits Window {
         StatusBar {
             notice: root.status-notice;
             caret: root.status-caret;
+            update: root.status-update;
+            update-clicked => {
+                root.open-update();
+            }
         }
     }
 }

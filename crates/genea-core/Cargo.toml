@@ -13,7 +13,8 @@ ropey.workspace = true
 unicode-width.workspace = true
 # Templates: `git init` (ticket #60).
 gix = { workspace = true, features = ["sha1"] }
-# Templates write package.json with its keys in the conventional order.
+# Templates write package.json with its keys in the conventional order; the
+# update check (ticket #64) reads GitHub's release JSON.
 serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]

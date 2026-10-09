@@ -27,12 +27,14 @@ mod project;
 mod recent;
 mod templates;
 mod text;
+mod update;
 mod view;
 mod workbench;
 
 pub use command::{CaretMove, Command};
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
+pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
     Caret, EditorView, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView,
 };

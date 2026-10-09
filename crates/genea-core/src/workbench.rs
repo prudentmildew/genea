@@ -16,6 +16,7 @@ use crate::{
     project::Project,
     recent::RecentProjects,
     templates::{self, Creations, NewProject, ProjectCreation},
+    update::{self, UpdateNotice},
     view::{ProjectView, WelcomeView},
 };
 
@@ -51,6 +52,11 @@ pub(crate) struct Core {
     next_id: u64,
     recent: RecentProjects,
     pub(crate) creations: Creations,
+    /// A newer Genea release, once the update check has found one.
+    pub(crate) update_notice: Option<UpdateNotice>,
+    /// Lives as long as the core. Host timers hold a weak reference to it,
+    /// so they do nothing once the workbench is gone.
+    alive: Arc<()>,
 }
 
 impl Core {
@@ -64,7 +70,10 @@ impl Workbench {
         let (jobs, inbox) = jobs::channel();
         let recent = RecentProjects::load(host.support_dir());
         let creations = Creations::default();
-        Workbench { core: Core { host, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations }, inbox }
+        let (update_notice, alive) = (None, Arc::new(()));
+        let core =
+            Core { host, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations, update_notice, alive };
+        Workbench { core, inbox }
     }
 
     /// Registers the change notification. `notify` is called from any
@@ -149,6 +158,23 @@ impl Workbench {
     /// any.
     pub fn project_creation(&self) -> Option<ProjectCreation> {
         self.core.creations.view()
+    }
+
+    /// Starts the release-update check: at most once a day, the first one a
+    /// little after start, always off the main thread. A newer release shows
+    /// up as [`update_notice`](Self::update_notice), with the change
+    /// notification. Call it once, after the first window is up, with the
+    /// running Genea's version (`env!("CARGO_PKG_VERSION")`). What it learns
+    /// is kept in the host's support folder, so restarts don't check more.
+    pub fn start_update_checks(&mut self, current_version: &str) {
+        let core = &self.core;
+        update::start(core.host.clone(), core.jobs.clone(), Arc::downgrade(&core.alive), current_version);
+    }
+
+    /// The newer release the update check found, if any. It isn't tied to a
+    /// project: every window shows it.
+    pub fn update_notice(&self) -> Option<UpdateNotice> {
+        self.core.update_notice.clone()
     }
 
     /// Applies finished background work without waiting. Returns whether
