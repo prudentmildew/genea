@@ -73,10 +73,12 @@ CRATES
   displaydoc 0.2.7: MIT OR Apache-2.0
   document-features 0.2.12: MIT OR Apache-2.0
   dpi 0.1.2: Apache-2.0 AND MIT
+  editorconfig-parser 0.0.4: MIT
   either 1.19.0: MIT OR Apache-2.0
   equivalent 1.0.2: Apache-2.0 OR MIT
   errno 0.3.14: MIT OR Apache-2.0
   euclid 0.22.14: MIT OR Apache-2.0
+  fast-glob 1.1.2: MIT
   faster-hex 0.10.1: MIT
   fastrand 2.5.0: Apache-2.0 OR MIT
   fdeflate 0.3.7: MIT OR Apache-2.0
@@ -5251,7 +5253,7 @@ SOFTWARE.
 MIT License (MIT)
 ================================================================================
 
-Used by: block2 0.5.1, block2 0.6.2, chrono 0.4.45, dispatch2 0.3.1, dispatch 0.2.0, dpi 0.1.2, libm 0.2.16, lyon_algorithms 1.0.21, lyon_extra 1.1.0, lyon_geom 1.0.19, lyon_path 1.0.19, objc-sys 0.3.5, objc2-app-kit 0.2.2, objc2-app-kit 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-text 0.3.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2 0.5.3, objc2 0.6.5, profiling 1.0.18, skia-bindings 0.153.3, skia-safe 0.153.3, taffy 0.10.1, tree-sitter-html 0.23.2, tree-sitter-json 0.24.8, tree-sitter-md 0.5.3, tree-sitter-typescript 0.23.2
+Used by: block2 0.5.1, block2 0.6.2, chrono 0.4.45, dispatch2 0.3.1, dispatch 0.2.0, dpi 0.1.2, editorconfig-parser 0.0.4, fast-glob 1.1.2, libm 0.2.16, lyon_algorithms 1.0.21, lyon_extra 1.1.0, lyon_geom 1.0.19, lyon_path 1.0.19, objc-sys 0.3.5, objc2-app-kit 0.2.2, objc2-app-kit 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-text 0.3.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2 0.5.3, objc2 0.6.5, profiling 1.0.18, skia-bindings 0.153.3, skia-safe 0.153.3, taffy 0.10.1, tree-sitter-html 0.23.2, tree-sitter-json 0.24.8, tree-sitter-md 0.5.3, tree-sitter-typescript 0.23.2
 
 MIT License
 
