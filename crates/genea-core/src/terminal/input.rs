@@ -1,9 +1,10 @@
-//! What keys send to the program: xterm's encodings, which depend on the
-//! modes the program has set (application cursor keys, …).
+//! What keys and the mouse send to the program: xterm's encodings, which
+//! depend on the modes the program has set (application cursor keys, mouse
+//! reporting, …).
 
 use alacritty_terminal::term::TermMode;
 
-use crate::command::{Modifiers, TerminalKey};
+use crate::command::{Modifiers, MouseAction, MouseButton, TerminalKey};
 
 /// The bytes a key press sends.
 pub(super) fn key(key: TerminalKey, m: Modifiers, mode: TermMode) -> Vec<u8> {
@@ -79,4 +80,64 @@ fn control(c: char) -> Vec<u8> {
         _ => return c.to_string().into_bytes(),
     };
     vec![code]
+}
+
+/// The report of a mouse action, if the program's mouse mode reports it.
+pub(super) fn mouse(action: MouseAction, line: usize, column: usize, m: Modifiers, mode: TermMode) -> Vec<u8> {
+    let reported = match action {
+        MouseAction::Press(_) | MouseAction::Release(_) => mode.intersects(TermMode::MOUSE_MODE),
+        MouseAction::Drag(_) => mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION),
+        MouseAction::Move => mode.contains(TermMode::MOUSE_MOTION),
+    };
+    if !reported {
+        return Vec::new();
+    }
+    let button = |button: MouseButton| match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    };
+    let sgr = mode.contains(TermMode::SGR_MOUSE);
+    let code = match action {
+        MouseAction::Press(b) => button(b),
+        // The original encoding can't say which button was released.
+        MouseAction::Release(b) => if sgr { button(b) } else { 3 },
+        MouseAction::Drag(b) => 32 + button(b),
+        MouseAction::Move => 32 + 3,
+    };
+    let code = code + 4 * u32::from(m.shift) + 8 * u32::from(m.alt) + 16 * u32::from(m.ctrl);
+    report(code, line, column, matches!(action, MouseAction::Release(_)), mode)
+}
+
+/// The report of one step of the scroll wheel, if the program takes the
+/// mouse.
+pub(super) fn wheel(up: bool, line: usize, column: usize, mode: TermMode) -> Vec<u8> {
+    if !mode.intersects(TermMode::MOUSE_MODE) {
+        return Vec::new();
+    }
+    report(if up { 64 } else { 65 }, line, column, false, mode)
+}
+
+/// A mouse report in the program's encoding: SGR, or xterm's original
+/// (optionally with UTF-8 positions).
+fn report(code: u32, line: usize, column: usize, release: bool, mode: TermMode) -> Vec<u8> {
+    let (x, y) = (column + 1, line + 1);
+    if mode.contains(TermMode::SGR_MOUSE) {
+        let end = if release { 'm' } else { 'M' };
+        return format!("\x1b[<{code};{x};{y}{end}").into_bytes();
+    }
+    let mut report = b"\x1b[M".to_vec();
+    for value in [code as usize, x, y] {
+        let value = 32 + value;
+        if mode.contains(TermMode::UTF8_MOUSE) && value < 2048 {
+            let mut buffer = [0; 4];
+            report.extend_from_slice(char::from_u32(value as u32).unwrap_or(' ').encode_utf8(&mut buffer).as_bytes());
+        } else if value <= 255 {
+            report.push(value as u8);
+        } else {
+            // Past column 223 the original encoding has no way to say it.
+            return Vec::new();
+        }
+    }
+    report
 }

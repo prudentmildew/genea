@@ -156,6 +156,11 @@ pub enum Command {
     /// scrollback, unless the program takes it: a program that reports the
     /// mouse gets wheel events, and a full-screen one gets ↑ and ↓.
     ScrollTerminal { rows: i32, line: usize, column: usize },
+    /// A mouse button or movement over the terminal's cell at `line` and
+    /// `column` (0-based visible row and grid column). Reported to a
+    /// program that asked for the mouse, in the encoding it chose;
+    /// otherwise nothing happens.
+    TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.
@@ -179,6 +184,24 @@ pub enum TerminalKey {
     F(u8),
     /// A character key with ⌃ or ⌥ held (⌃C is `Char('c')` with `ctrl`).
     Char(char),
+}
+
+/// What the mouse did over the terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseAction {
+    Press(MouseButton),
+    Release(MouseButton),
+    /// Moved with the button down.
+    Drag(MouseButton),
+    /// Moved with no button down.
+    Move,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
 }
 
 /// Modifier keys held with a terminal key or mouse event.

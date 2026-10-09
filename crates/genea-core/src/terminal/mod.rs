@@ -289,6 +289,11 @@ impl Terminal {
             Command::SetTerminalSize { rows, columns } => self.resize(Size { rows: rows.max(1), columns: columns.max(2) }),
             Command::TerminalText(text) => self.send(text.into_bytes()),
             Command::ScrollTerminal { rows, line, column } => self.scroll(rows, line, column),
+            Command::TerminalMouse { action, line, column, modifiers } => {
+                if let Some(mode) = self.mode() {
+                    self.send(input::mouse(action, line, column, modifiers, mode));
+                }
+            }
             Command::TerminalKey(key, modifiers) => {
                 if let Some(mode) = self.mode() {
                     self.send(input::key(key, modifiers, mode));
@@ -328,7 +333,7 @@ impl Terminal {
         let up = rows < 0;
         let count = rows.unsigned_abs() as usize;
         if mode.intersects(TermMode::MOUSE_MODE) {
-            let _ = (line, column);
+            self.send(input::wheel(up, line, column, mode).repeat(count));
         } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
             let key = if up { TerminalKey::Up } else { TerminalKey::Down };
             self.send(input::key(key, Modifiers::default(), mode).repeat(count));

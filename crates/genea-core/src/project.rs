@@ -298,7 +298,8 @@ impl Project {
             Command::SetTerminalSize { .. }
             | Command::TerminalText(_)
             | Command::TerminalKey(..)
-            | Command::ScrollTerminal { .. } => {
+            | Command::ScrollTerminal { .. }
+            | Command::TerminalMouse { .. } => {
                 self.terminal.command(command)
             }
             Command::SetViewport { rows } => {

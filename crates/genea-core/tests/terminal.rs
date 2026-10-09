@@ -9,7 +9,7 @@
 use std::{path::Path, sync::mpsc, time::Duration};
 
 use genea_core::{
-    Command, Modifiers, ProjectId, TerminalColor, TerminalKey, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
+    Command, Modifiers, MouseAction, MouseButton, ProjectId, TerminalColor, TerminalKey, TerminalRun, TerminalStatus, TerminalStyle, TerminalView,
     ToolState, ToolView, Workbench,
 };
 use genea_host::PtySize;
@@ -310,4 +310,102 @@ fn the_scrollback_keeps_ten_thousand_lines() {
     let view = terminal(&workbench, project);
     assert_eq!(view.scrolled_back, 0);
     assert_eq!(view.lines[22].text, "line 10099");
+}
+
+/// A full-screen program's output: the alternate screen, a hidden cursor,
+/// SGR mouse reporting, and a 24-bit coloured title bar over a list.
+const TUI_START: &str = concat!(
+    "\x1b[?1049h", // alternate screen
+    "\x1b[?25l",   // hide the cursor
+    "\x1b[?1000h\x1b[?1002h\x1b[?1006h", // clicks, drags, SGR encoding
+    "\x1b[2J\x1b[H",
+    "\x1b[48;2;40;44;52m\x1b[38;2;220;220;220m Files \x1b[0m",
+    "\x1b[3;3H> main.ts",
+    "\x1b[4;3H  util.ts",
+);
+const TUI_END: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l";
+
+fn mouse(action: MouseAction, line: usize, column: usize) -> Command {
+    Command::TerminalMouse { action, line, column, modifiers: Modifiers::default() }
+}
+
+#[test]
+fn a_full_screen_program_draws_on_the_alternate_screen_and_takes_the_mouse() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    pty.output("~/app $ tui\r\n");
+    workbench.settle().unwrap();
+    // Without mouse reporting, clicks don't reach the program.
+    workbench.dispatch(project, mouse(MouseAction::Press(MouseButton::Left), 0, 0));
+
+    pty.output(TUI_START);
+    workbench.settle().unwrap();
+
+    let view = terminal(&workbench, project);
+    assert!(view.alternate_screen && view.mouse_reporting);
+    assert_eq!(view.cursor, None);
+    assert_eq!(screen(&workbench, project), [" Files", "", "  > main.ts", "    util.ts"]);
+    let bar = TerminalStyle {
+        foreground: TerminalColor::Rgb(220, 220, 220),
+        background: TerminalColor::Rgb(40, 44, 52),
+        ..TerminalStyle::default()
+    };
+    assert_eq!(view.lines[0].runs, [run(0..7, " Files ", bar)]);
+
+    // A click on util.ts, a drag, the wheel; then a key.
+    workbench.dispatch(project, mouse(MouseAction::Press(MouseButton::Left), 3, 4));
+    workbench.dispatch(project, mouse(MouseAction::Drag(MouseButton::Left), 3, 6));
+    workbench.dispatch(project, mouse(MouseAction::Release(MouseButton::Left), 3, 6));
+    workbench.dispatch(project, Command::ScrollTerminal { rows: -2, line: 2, column: 0 });
+    workbench.dispatch(project, Command::TerminalText("q".into()));
+    assert_eq!(
+        pty.wait_for_input("q"),
+        "\x1b[<0;5;4M\x1b[<32;7;4M\x1b[<0;7;4m\x1b[<64;1;3M\x1b[<64;1;3Mq"
+    );
+
+    // It exits: the shell's screen is back, with its scrollback.
+    pty.output(TUI_END);
+    workbench.settle().unwrap();
+    let view = terminal(&workbench, project);
+    assert!(!view.alternate_screen && !view.mouse_reporting);
+    assert_eq!(screen(&workbench, project), ["~/app $ tui"]);
+    assert!(view.cursor.is_some());
+}
+
+#[test]
+fn the_wheel_in_a_full_screen_program_without_the_mouse_sends_arrows() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    pty.output("\x1b[?1049h\x1b[?1h");
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::ScrollTerminal { rows: -2, line: 0, column: 0 });
+    workbench.dispatch(project, Command::ScrollTerminal { rows: 1, line: 0, column: 0 });
+
+    assert_eq!(pty.wait_for_input("\x1bOB"), "\x1bOA\x1bOA\x1bOB");
+}
+
+#[test]
+fn mouse_reports_use_the_programs_encoding() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    // Clicks only, in xterm's original encoding.
+    pty.output("\x1b[?1000h");
+    workbench.settle().unwrap();
+
+    let shift = Modifiers { shift: true, ..Modifiers::default() };
+    workbench.dispatch(project, Command::TerminalMouse {
+        action: MouseAction::Press(MouseButton::Right),
+        line: 1,
+        column: 2,
+        modifiers: shift,
+    });
+    // Drags aren't reported in this mode.
+    workbench.dispatch(project, mouse(MouseAction::Drag(MouseButton::Right), 1, 3));
+    workbench.dispatch(project, mouse(MouseAction::Release(MouseButton::Right), 1, 3));
+
+    assert_eq!(pty.wait_for_input("\x1b[M#"), "\x1b[M&#\"\x1b[M#$\"");
 }
