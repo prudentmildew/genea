@@ -109,6 +109,9 @@ pub(crate) struct Project {
     finder_files: u64,
     /// Files opened lately, most recent first: Recent Files (⌘E).
     recent_files: Vec<PathBuf>,
+    /// Commands only the workbench can carry out (New Project…), from a
+    /// menu or the finder; it takes them after each dispatch.
+    for_workbench: Vec<Command>,
 }
 
 impl Project {
@@ -143,7 +146,13 @@ impl Project {
             finder_generation: 0,
             finder_files: 0,
             recent_files: Vec::new(),
+            for_workbench: Vec::new(),
         }
+    }
+
+    /// The commands this project's last dispatch left for the workbench.
+    pub(crate) fn take_workbench_commands(&mut self) -> Vec<Command> {
+        std::mem::take(&mut self.for_workbench)
     }
 
     /// Starts the project's background work once it is open: the watcher,
@@ -538,6 +547,8 @@ impl Project {
             }
             // The workbench handles it: it needs the recent projects.
             Command::RemoveUnusedToolchains => {}
+            // The dialog isn't the project's (ticket #61).
+            Command::NewProject => self.for_workbench.push(command),
             Command::ReloadEnvironment => {
                 if let Some(environment) = &mut self.environment {
                     environment.capture(jobs);

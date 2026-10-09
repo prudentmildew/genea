@@ -114,10 +114,14 @@ impl Core {
             return;
         }
         let Core { projects, jobs, host, .. } = self;
-        if let Some(project) = projects.get_mut(&project) {
-            project.dispatch(command, jobs, host.as_ref());
-            // A command may restart the terminal's shell.
-            project.start_terminal_when_ready(host, jobs);
+        let Some(project) = projects.get_mut(&project) else { return };
+        project.dispatch(command, jobs, host.as_ref());
+        // A command may restart the terminal's shell.
+        project.start_terminal_when_ready(host, jobs);
+        for command in project.take_workbench_commands() {
+            if command == Command::NewProject {
+                new_project::dispatch(self, NewProjectCommand::Open);
+            }
         }
     }
 

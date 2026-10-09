@@ -16,6 +16,7 @@ use crate::{
 /// Something the user can run from the finder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
+    NewProject,
     Save,
     CloseTab,
     OpenConfig,
@@ -61,7 +62,8 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 40] = [
+    pub const ALL: [Action; 41] = [
+        Action::NewProject,
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
@@ -107,6 +109,7 @@ impl Action {
     /// The action's name, as menus show it.
     pub fn name(self) -> &'static str {
         match self {
+            Action::NewProject => "New Project…",
             Action::Save => "Save",
             Action::CloseTab => "Close Tab",
             Action::OpenConfig => "Open Config",
@@ -183,7 +186,8 @@ impl Action {
             Action::ShowTerminal => "⌥F12",
             Action::SelectNextTab => "⇧⌘]",
             Action::SelectPreviousTab => "⇧⌘[",
-            Action::OpenConfig
+            Action::NewProject
+            | Action::OpenConfig
             | Action::ReloadEnvironment
             | Action::InstallDependencies
             | Action::SetRuntime
@@ -228,6 +232,7 @@ impl Action {
     /// which tab is active. `None` for the tab actions.
     pub(crate) fn command(self) -> Option<Command> {
         Some(match self {
+            Action::NewProject => Command::NewProject,
             Action::Save => Command::Save,
             Action::OpenConfig => Command::OpenConfig,
             Action::ReloadEnvironment => Command::ReloadEnvironment,

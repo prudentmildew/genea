@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use genea_core::{
-    NewProjectCommand, NewProjectDialog, NewProjectOption, PackageManagerPin, ProjectId, RuntimePin, Template, Workbench,
+    Command, FinderMode, NewProjectCommand, NewProjectDialog, NewProjectOption, PackageManagerPin, ProjectId, RuntimePin, Template, Workbench,
 };
 use genea_testkit::{FixtureProject, TestHost};
 use serde_json::{Value, json};
@@ -281,6 +281,34 @@ fn the_chosen_template_and_pins_are_what_is_created_and_installed() {
     let install = install_spec(&host);
     assert_eq!(version_of(&install.program), "1.4.2");
     assert_eq!(install.cwd.as_deref(), Some(folder.as_path()));
+}
+
+#[test]
+fn new_project_opens_the_dialog_from_a_project_window() {
+    let fixture = FixtureProject::new().build();
+    let mut workbench = Workbench::new(host().shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+
+    workbench.dispatch(project, Command::NewProject);
+
+    assert!(workbench.new_project_dialog().is_some());
+    workbench.dispatch_new_project(NewProjectCommand::Cancel);
+    assert_eq!(workbench.new_project_dialog(), None);
+}
+
+#[test]
+fn new_project_is_an_action_in_find_action() {
+    let fixture = FixtureProject::new().build();
+    let mut workbench = Workbench::new(host().shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    workbench.dispatch(project, Command::SetFinderQuery("new project".into()));
+    workbench.settle().unwrap();
+    assert_eq!(workbench.project(project).unwrap().finder.unwrap().items[0].label, "New Project…");
+    workbench.dispatch(project, Command::AcceptFinder);
+
+    assert!(workbench.new_project_dialog().is_some());
 }
 
 #[test]
