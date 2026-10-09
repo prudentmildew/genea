@@ -38,7 +38,15 @@ impl WindowController {
     pub fn new(key: WindowKey, project: ProjectId) -> Result<Self, slint::PlatformError> {
         let window = ProjectWindow::new()?;
         let surface = Surface::new(&window);
-        Ok(WindowController { key, window, project, surface, notice: None, notice_action: None, last_double_click: None })
+        Ok(WindowController {
+            key,
+            window,
+            project,
+            surface,
+            notice: None,
+            notice_action: None,
+            last_double_click: None,
+        })
     }
 
     pub fn show(&self) {
