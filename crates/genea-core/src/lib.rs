@@ -28,6 +28,7 @@ mod environment;
 mod files;
 mod grid;
 mod history;
+mod indentation;
 mod jobs;
 mod problems;
 mod project;
