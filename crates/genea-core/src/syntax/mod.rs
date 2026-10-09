@@ -29,7 +29,7 @@ use std::{
 
 pub use highlight::Highlight;
 pub(crate) use highlight::{Span, Spans};
-pub(crate) use language::Language;
+pub(crate) use language::{Comment, Language};
 pub(crate) use structure::Indent;
 use ropey::Rope;
 use tree_sitter::{InputEdit, Parser, Tree};

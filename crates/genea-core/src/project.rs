@@ -415,6 +415,11 @@ impl Project {
                     editor.redo(self.viewport_rows);
                 }
             }
+            Command::ToggleLineComment => {
+                if let Some(editor) = &mut self.editor {
+                    editor.toggle_line_comment(now, self.viewport_rows);
+                }
+            }
             Command::Save => {
                 if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
                     self.save(path, jobs);

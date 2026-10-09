@@ -140,6 +140,14 @@ pub enum Command {
     CloseSplit,
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
+
+    // Structural editing (ticket #25).
+    /// ⌘/: comments out the lines the carets and selections are on, or
+    /// uncomments them if every one that isn't blank is commented. Uses the
+    /// language's line comment (`//`, `#`), or wraps each line in its block
+    /// comment (`/* */` in CSS, `<!-- -->` in HTML and Markdown). A
+    /// selection that ends at the start of a line leaves that line out.
+    ToggleLineComment,
 }
 
 /// What to do with unsaved edits in a closing tab.
