@@ -23,8 +23,12 @@ pub const MAX_VISIBLE_COLUMNS: usize = 1000;
 pub(crate) struct Editor {
     path: PathBuf,
     text: Rope,
-    /// Char index into `text`.
+    /// Char index into `text`: where the caret is, the moving end of the
+    /// selection.
     caret: usize,
+    /// Char index of the selection's fixed end; equal to `caret` when
+    /// nothing is selected.
+    anchor: usize,
     /// The display column Up and Down aim for, kept across short lines.
     /// Set by the first vertical move; cleared by every other move.
     goal_column: Option<usize>,
@@ -34,10 +38,21 @@ pub(crate) struct Editor {
 
 impl Editor {
     pub(crate) fn new(path: PathBuf, text: Rope) -> Self {
-        Editor { path, text, caret: 0, goal_column: None, scroll_top: 0.0 }
+        Editor { path, text, caret: 0, anchor: 0, goal_column: None, scroll_top: 0.0 }
     }
 
-    pub(crate) fn move_caret(&mut self, movement: CaretMove, viewport_rows: f64) {
+    /// Moves the caret. With `extend`, the selection's anchor stays put, so
+    /// the selection grows or shrinks; without, the selection collapses.
+    pub(crate) fn move_caret(&mut self, movement: CaretMove, extend: bool, viewport_rows: f64) {
+        self.move_head(movement, viewport_rows);
+        if !extend {
+            self.anchor = self.caret;
+        }
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Moves the caret alone, leaving the anchor where it was.
+    fn move_head(&mut self, movement: CaretMove, viewport_rows: f64) {
         let (line, column) = self.caret_line_column();
         let last_line = self.text.len_lines() - 1;
         let page = (viewport_rows.floor() as usize).max(1);
@@ -63,7 +78,6 @@ impl Editor {
             CaretMove::DocumentStart => self.set_caret(0, 0),
             CaretMove::DocumentEnd => self.set_caret(last_line, self.line_len(last_line)),
         }
-        self.reveal_caret(viewport_rows);
     }
 
     /// Puts the caret at the last text position at or before a grid cell.
@@ -71,7 +85,44 @@ impl Editor {
         let line = line.min(self.text.len_lines() - 1);
         let char_column = self.char_column_at(line, column);
         self.set_caret(line, char_column);
+        self.anchor = self.caret;
         self.reveal_caret(viewport_rows);
+    }
+
+    /// Inserts `text` at the caret, replacing the selection, and puts the
+    /// caret after it.
+    pub(crate) fn insert(&mut self, text: &str, viewport_rows: f64) {
+        self.delete_selection();
+        self.text.insert(self.caret, text);
+        self.caret += text.chars().count();
+        self.anchor = self.caret;
+        self.goal_column = None;
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Deletes the selection, or the text the movement would pass over.
+    pub(crate) fn delete(&mut self, movement: CaretMove, viewport_rows: f64) {
+        if self.anchor == self.caret {
+            self.move_head(movement, viewport_rows);
+        }
+        self.delete_selection();
+        self.goal_column = None;
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// Removes the selected text and collapses the selection where it was.
+    fn delete_selection(&mut self) {
+        let (start, end) = self.selection();
+        if start != end {
+            self.text.remove(start..end);
+        }
+        self.caret = start;
+        self.anchor = start;
+    }
+
+    /// The selection as an ordered char range.
+    fn selection(&self) -> (usize, usize) {
+        (self.anchor.min(self.caret), self.anchor.max(self.caret))
     }
 
     /// Scrolls by `rows`, keeping the last line at the bottom of the

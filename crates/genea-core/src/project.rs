@@ -61,12 +61,22 @@ impl Project {
             }
             Command::MoveCaret(movement) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.move_caret(movement, self.viewport_rows);
+                    editor.move_caret(movement, false, self.viewport_rows);
                 }
             }
             Command::PlaceCaret { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, self.viewport_rows);
+                }
+            }
+            Command::InsertText(text) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.insert(&text, self.viewport_rows);
+                }
+            }
+            Command::Delete(movement) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.delete(movement, self.viewport_rows);
                 }
             }
         }

@@ -26,6 +26,13 @@ pub enum Command {
     /// view rounds a click to the nearest cell boundary first. Cells past the
     /// end of a line or below the last line clamp to the text.
     PlaceCaret { line: usize, column: usize },
+    /// Types text at the caret, replacing the selection: a key press or an
+    /// IME commit.
+    InsertText(String),
+    /// Deletes the selection or, with nothing selected, the text between the
+    /// caret and where the movement would put it: `Delete(Left)` is
+    /// Backspace, `Delete(Right)` is Delete, `Delete(WordLeft)` is ⌥⌫.
+    Delete(CaretMove),
 }
 
 /// Caret movements without a selection.
