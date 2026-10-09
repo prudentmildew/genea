@@ -78,6 +78,42 @@ fn opening_a_pinned_project_downloads_exactly_the_pinned_versions() {
 }
 
 #[test]
+fn a_bun_project_downloads_bun_once_for_both_roles() {
+    let host = TestHost::new();
+    let bun = host.tools().bun("1.4.2");
+    host.tools().bun("1.3.0");
+    let fixture = project(&pins("bun", "1.4.2", "bun@1.4.2"));
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let toolchain = workbench.project(project).unwrap().toolchain;
+    assert_eq!(toolchain.runtime, ready("Bun", "1.4.2"));
+    assert_eq!(toolchain.package_manager, ready("Bun", "1.4.2"));
+    assert_eq!(installed(&host), ["bun/1.4.2"]);
+    assert!(is_executable(&store(&host).join("bun/1.4.2/bin/bun")));
+    assert_eq!(host.download_server().request_count(&bun), 1);
+}
+
+#[test]
+fn a_bun_archive_that_fails_its_checksum_is_refused() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().bun_with_bad_checksum("1.4.2");
+    let fixture = project(&pins("node", "24.18.0", "bun@1.4.2"));
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.package_manager.unwrap().state, ToolState::Failed);
+    assert!(view.notices[0].message.starts_with("Couldn't download Bun 1.4.2"), "{:?}", view.notices);
+    assert_eq!(installed(&host), ["node/24.18.0"]);
+}
+
+#[test]
 fn a_second_project_with_the_same_pins_reuses_the_store() {
     let host = TestHost::new();
     let node = host.tools().node("24.18.0");
@@ -175,5 +211,88 @@ fn a_version_that_isnt_published_fails_only_its_role() {
     assert_eq!(view.toolchain.package_manager, ready("pnpm", "12.10.1"));
     assert_eq!(view.notices.len(), 1);
     assert_eq!(view.notices[0].action.as_ref().unwrap().label, "Retry");
+    assert_eq!(installed(&host), ["pnpm/12.10.1"]);
+}
+
+// --- Range pins --------------------------------------------------------------
+
+#[test]
+fn a_range_pin_prefers_the_newest_matching_version_in_the_store() {
+    let host = TestHost::new();
+    for version in ["22.23.3", "24.18.0", "24.21.0", "26.11.1"] {
+        host.tools().node(version);
+    }
+    host.tools().pnpm("12.10.1");
+    let mut workbench = Workbench::new(host.shared());
+    let exact = project(&pins("node", "24.18.0", "pnpm@12.10.1"));
+    workbench.open_project(exact.root()).unwrap();
+    workbench.settle().unwrap();
+    let requests_before = host.download_server().requests().len();
+
+    let ranged = project(&pins("node", "^24", "pnpm@12.10.1"));
+    let project = workbench.open_project(ranged.root()).unwrap();
+    workbench.settle().unwrap();
+
+    // 24.21.0 is published, but 24.18.0 is already here.
+    assert_eq!(workbench.project(project).unwrap().toolchain.runtime, ready("Node", "24.18.0"));
+    assert_eq!(installed(&host), ["node/24.18.0", "pnpm/12.10.1"]);
+    assert_eq!(host.download_server().requests().len(), requests_before, "no network needed");
+}
+
+#[test]
+fn a_range_pin_downloads_the_newest_matching_version_when_the_store_has_none() {
+    let host = TestHost::new();
+    for version in ["22.23.3", "24.18.0", "24.21.0", "26.11.1"] {
+        host.tools().node(version);
+    }
+    for version in ["11.13.0", "11.26.0", "12.10.1"] {
+        host.tools().pnpm(version);
+    }
+    let fixture = project(&pins("node", ">=22 <25", "pnpm@11.x"));
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let toolchain = workbench.project(project).unwrap().toolchain;
+    assert_eq!(toolchain.runtime, ready("Node", "24.21.0"));
+    assert_eq!(toolchain.package_manager, ready("pnpm", "11.26.0"));
+    assert_eq!(installed(&host), ["node/24.21.0", "pnpm/11.26.0"]);
+}
+
+#[test]
+fn a_bun_range_resolves_against_bun_releases() {
+    let host = TestHost::new();
+    for version in ["1.3.0", "1.4.2", "2.0.0"] {
+        host.tools().bun(version);
+    }
+    let fixture = project(&pins("bun", "~1.4.0", "bun@^1.3.0"));
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let toolchain = workbench.project(project).unwrap().toolchain;
+    assert_eq!(toolchain.runtime, ready("Bun", "1.4.2"));
+    assert_eq!(toolchain.package_manager, ready("Bun", "1.4.2"));
+}
+
+#[test]
+fn a_range_nothing_matches_fails_with_a_notice() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().pnpm("12.10.1");
+    let fixture = project(&pins("node", "^30", "pnpm@12.10.1"));
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(
+        view.toolchain.runtime,
+        Some(ToolView { tool: "Node".into(), version: "^30".into(), state: ToolState::Failed })
+    );
+    assert!(view.notices[0].message.contains("no published Node version matches ^30"), "{:?}", view.notices);
     assert_eq!(installed(&host), ["pnpm/12.10.1"]);
 }
