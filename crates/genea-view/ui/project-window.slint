@@ -12,6 +12,11 @@ import { ProblemRow } from "problems-view.slint";
 import { TerminalPane, TermRow, TermCursor, TermTab } from "terminal-pane.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
+import { SearchRow } from "search-view.slint";
+import { Finder, FinderRow } from "finder.slint";
+
+// What the finder finds (the core's FinderMode).
+export enum FinderKind { files, recent-files, actions, everywhere }
 
 // The Code menu's items (ticket #25).
 export enum StructuralAction {
@@ -37,8 +42,17 @@ export component ProjectWindow inherits Window {
     in property <LeftView> left-view;
     in property <[ProblemRow]> problems;
     in property <[FileEntry]> files;
+    // The Search view: the core's query and options, and its results.
+    in property <string> search-query;
+    in property <bool> search-regex;
+    in property <bool> search-case-sensitive;
+    in property <bool> search-whole-word;
+    in property <[SearchRow]> search-rows;
+    in property <string> search-status;
+    in property <bool> search-status-error;
     in property <string> status-encoding;
     in property <string> status-line-ending;
+    in property <string> status-indentation;
     in property <string> status-notice-action;
     in property <string> status-toolchain;
     in property <string> status-update;
@@ -55,6 +69,13 @@ export component ProjectWindow inherits Window {
     in property <string> picker-message;
     in property <bool> picker-loading;
     in property <[PickerRow]> picker-options;
+
+    // The fuzzy finder overlay (ticket #33), while `finder-open`.
+    in property <bool> finder-open;
+    in property <string> finder-title;
+    in property <[FinderRow]> finder-items;
+    in property <int> finder-selected;
+    in-out property <string> finder-query <=> finder.query;
 
     // The editor area (ticket #31): the left pane, and the right one while
     // split. `focused-pane` is 0 (left) or 1 (right).
@@ -124,6 +145,10 @@ export component ProjectWindow inherits Window {
     callback problem-clicked(int);
     // A Files view row: open the file, or expand or collapse the folder.
     callback file-clicked(int);
+    // The Search view's query or options changed.
+    callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
+    // A Search view row: open the file, at the match for a match row.
+    callback search-result-clicked(int);
     callback close-tab();
     callback split-right();
     callback move-tab();
@@ -144,6 +169,14 @@ export component ProjectWindow inherits Window {
     callback terminal-mouse(kind: int, button: int, x: length, y: length, shift: bool, alt: bool, ctrl: bool, cmd: bool);
     callback terminal-scrolled(delta-y: length, x: length, y: length);
     callback terminal-size-changed();
+
+    // The finder: a shortcut opens it; the rest come from the overlay.
+    callback open-finder(FinderKind);
+    callback finder-edited(string);
+    callback finder-move(int);
+    callback finder-accept();
+    callback finder-close();
+    callback finder-clicked(int);
 
     // Tab strips; `pane` is 0 (left) or 1 (right).
     callback tab-clicked(pane: int, index: int);
@@ -181,6 +214,11 @@ export component ProjectWindow inherits Window {
     }
     changed terminal-grid-height => {
         root.terminal-size-changed();
+    }
+
+    // Gives the finder's query the keyboard focus, when it opens.
+    public function focus-finder() {
+        finder.focus-query();
     }
 
     // Re-focuses the focused pane's hidden TextInput: once the native
@@ -406,6 +444,14 @@ export component ProjectWindow inherits Window {
             }
 
             MenuItem {
+                title: "Search";
+                shortcut: @keys(Control + Shift + F);
+                activated => {
+                    root.toggle-view(LeftView.search);
+                }
+            }
+
+            MenuItem {
                 title: "Problems";
                 shortcut: @keys(Control + "6");
                 activated => {
@@ -418,6 +464,41 @@ export component ProjectWindow inherits Window {
                 shortcut: @keys(Alt + F12);
                 activated => {
                     root.toggle-terminal();
+                }
+            }
+        }
+
+        Menu {
+            title: "Navigate";
+            MenuItem {
+                title: "Go to File…";
+                shortcut: @keys(Control + Shift + O);
+                activated => {
+                    root.open-finder(FinderKind.files);
+                }
+            }
+
+            MenuItem {
+                title: "Recent Files";
+                shortcut: @keys(Control + E);
+                activated => {
+                    root.open-finder(FinderKind.recent-files);
+                }
+            }
+
+            MenuItem {
+                title: "Find Action…";
+                shortcut: @keys(Control + Shift + A);
+                activated => {
+                    root.open-finder(FinderKind.actions);
+                }
+            }
+
+            // Its shortcut is ⇧⇧ (src/keys.rs), which a menu can't show.
+            MenuItem {
+                title: "Search Everywhere";
+                activated => {
+                    root.open-finder(FinderKind.everywhere);
                 }
             }
         }
@@ -487,6 +568,13 @@ export component ProjectWindow inherits Window {
                 view: root.left-view;
                 problems: root.problems;
                 files: root.files;
+                search-query: root.search-query;
+                search-regex: root.search-regex;
+                search-case-sensitive: root.search-case-sensitive;
+                search-whole-word: root.search-whole-word;
+                search-rows: root.search-rows;
+                search-status: root.search-status;
+                search-status-error: root.search-status-error;
                 show(view) => {
                     root.show-view(view);
                 }
@@ -495,6 +583,12 @@ export component ProjectWindow inherits Window {
                 }
                 file-clicked(index) => {
                     root.file-clicked(index);
+                }
+                search(text, regex, case-sensitive, whole-word) => {
+                    root.search(text, regex, case-sensitive, whole-word);
+                }
+                search-result-clicked(index) => {
+                    root.search-result-clicked(index);
                 }
             }
 
@@ -687,6 +781,7 @@ export component ProjectWindow inherits Window {
             caret: root.status-caret;
             encoding: root.status-encoding;
             line-ending: root.status-line-ending;
+            indentation: root.status-indentation;
             update: root.status-update;
             large-file: root.status-large-file;
             loading: root.status-loading;
@@ -696,6 +791,40 @@ export component ProjectWindow inherits Window {
             show-problems => {
                 root.show-view(LeftView.problems);
             }
+        }
+    }
+
+    // A click outside the finder closes it.
+    TouchArea {
+        visible: root.finder-open;
+        clicked => {
+            root.finder-close();
+        }
+    }
+
+    finder := Finder {
+        visible: root.finder-open;
+        width: min(640px, root.width - 40px);
+        height: min(420px, root.height - 80px);
+        x: (root.width - self.width) / 2;
+        y: 48px;
+        title: root.finder-title;
+        items: root.finder-items;
+        selected: root.finder-selected;
+        edited(text) => {
+            root.finder-edited(text);
+        }
+        move(by) => {
+            root.finder-move(by);
+        }
+        choose => {
+            root.finder-accept();
+        }
+        close => {
+            root.finder-close();
+        }
+        clicked(index) => {
+            root.finder-clicked(index);
         }
     }
 

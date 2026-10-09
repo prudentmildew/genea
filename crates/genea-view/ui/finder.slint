@@ -1,0 +1,163 @@
+// The fuzzy finder overlay (ticket #33): files (⌘⇧O), recent files (⌘E),
+// actions (⌘⇧A) and Search Everywhere (⇧⇧). The query is typed into a
+// real TextInput; ↑/↓ move the selection, Return chooses, Esc closes. The
+// results are set from Rust (src/window.rs) out of the core's FinderView,
+// which matches them in the background.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct FinderRow {
+    // A file's name or an action's.
+    label: string,
+    // A file's folder.
+    detail: string,
+    // An action's shortcut, e.g. "⌘S".
+    shortcut: string,
+}
+
+export component Finder inherits Rectangle {
+    in property <string> title;
+    in property <[FinderRow]> items;
+    // Index into `items`, or -1 without results.
+    in property <int> selected;
+    in-out property <string> query <=> input.text;
+
+    callback edited(string);
+    callback move(int);
+    callback choose();
+    callback close();
+    callback clicked(int);
+
+    property <length> row-height: 24px;
+
+    public function focus-query() {
+        input.focus();
+        input.select-all();
+    }
+
+    background: Theme.chrome-background;
+    border-color: Theme.chrome-border;
+    border-width: 1px;
+    border-radius: 6px;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #00000040;
+    clip: true;
+
+    // Keep the selected row in view.
+    changed selected => {
+        if root.selected >= 0 {
+            if root.selected * root.row-height + list.content-y < 0 {
+                list.content-y = -root.selected * root.row-height;
+            } else if (root.selected + 1) * root.row-height + list.content-y > list.visible-height {
+                list.content-y = list.visible-height - (root.selected + 1) * root.row-height;
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding: 1px;
+
+        Rectangle {
+            height: 24px;
+
+            Text {
+                x: 12px;
+                text: root.title;
+                color: Theme.chrome-muted;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            height: 30px;
+            background: Theme.editor-background;
+
+            input := TextInput {
+                x: 12px;
+                width: parent.width - 24px;
+                color: Theme.editor-foreground;
+                selection-background-color: Theme.selection;
+                font-size: 14px;
+                vertical-alignment: center;
+                single-line: true;
+
+                edited => {
+                    root.edited(self.text);
+                }
+                key-pressed(event) => {
+                    if event.text == Key.UpArrow {
+                        root.move(-1);
+                        return accept;
+                    }
+                    if event.text == Key.DownArrow {
+                        root.move(1);
+                        return accept;
+                    }
+                    if event.text == Key.Return {
+                        root.choose();
+                        return accept;
+                    }
+                    if event.text == Key.Escape {
+                        root.close();
+                        return accept;
+                    }
+                    reject
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.chrome-border;
+        }
+
+        list := ListView {
+            vertical-stretch: 1;
+
+            for item[index] in root.items: Rectangle {
+                height: root.row-height;
+                background: index == root.selected ? Theme.selection : touch.has-hover ? Theme.chrome-highlight : transparent;
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+
+                    Text {
+                        text: item.label;
+                        color: Theme.chrome-foreground;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: item.detail;
+                        color: Theme.chrome-muted;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: item.shortcut;
+                        color: Theme.chrome-muted;
+                        vertical-alignment: center;
+                    }
+                }
+
+                touch := TouchArea {
+                    clicked => {
+                        root.clicked(index);
+                    }
+                }
+            }
+        }
+    }
+
+    if root.items.length == 0 && root.query != "": Text {
+        y: 70px;
+        text: "Nothing found";
+        color: Theme.chrome-muted;
+        horizontal-alignment: center;
+    }
+}

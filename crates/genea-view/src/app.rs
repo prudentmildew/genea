@@ -23,12 +23,15 @@ use std::{
 /// How often background work may refresh the windows: a 120 Hz frame.
 const FRAME: Duration = Duration::from_millis(8);
 
-use genea_core::{CloseChoice, Command, ConflictChoice, LeftColumnView, ProjectId, ToolchainPickerKind, Workbench};
+use genea_core::{
+    CloseChoice, Command, ConflictChoice, FinderMode, LeftColumnView, ProjectId, SearchQuery, ToolchainPickerKind,
+    Workbench,
+};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, LeftView, StructuralAction, about, dialogs, links,
+    AboutWindow, FinderKind, LeftView, StructuralAction, about, dialogs, links,
     keys::{self, Modifiers},
     pasteboard::Pasteboard,
     welcome::WelcomeController,
@@ -358,12 +361,42 @@ fn wire(controller: &WindowController) {
     // Edits apply synchronously, in order: with_app only defers a key if
     // the app is busy, and then to the very next event-loop turn.
     let clone_caret = std::cell::RefCell::new(keys::CloneCaretGesture::default());
+    // ⇧⇧ works from the editor and the terminal alike.
+    let double_shift = std::rc::Rc::new(RefCell::new(keys::DoubleShift::default()));
+    let editor_shift = double_shift.clone();
     window.on_key(move |text, shift, cmd, alt, ctrl| {
         let modifiers = Modifiers { shift, cmd, alt, ctrl };
         let clone = clone_caret.borrow_mut().command_for(&text, modifiers);
-        if let Some(command) = clone.or_else(|| keys::command_for(&text, modifiers)) {
+        let everywhere = editor_shift.borrow_mut().command_for(&text);
+        if let Some(command) = clone.or(everywhere).or_else(|| keys::command_for(&text, modifiers)) {
             with_app(move |app| app.dispatch(key, command));
         }
+    });
+    // The finder (ticket #33).
+    window.on_open_finder(move |kind| {
+        let mode = match kind {
+            FinderKind::Files => FinderMode::Files,
+            FinderKind::RecentFiles => FinderMode::RecentFiles,
+            FinderKind::Actions => FinderMode::Actions,
+            FinderKind::Everywhere => FinderMode::Everywhere,
+        };
+        with_app(move |app| app.dispatch(key, Command::OpenFinder(mode)));
+    });
+    window.on_finder_edited(move |text| {
+        let text = text.to_string();
+        with_app(move |app| app.dispatch(key, Command::SetFinderQuery(text)));
+    });
+    window.on_finder_move(move |by| {
+        with_app(move |app| app.dispatch(key, Command::MoveFinderSelection(by as isize)));
+    });
+    window.on_finder_accept(move || with_app(move |app| app.dispatch(key, Command::AcceptFinder)));
+    window.on_finder_close(move || with_app(move |app| app.dispatch(key, Command::CloseFinder)));
+    window.on_finder_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.click_finder_item(&mut app.workbench, index);
+        });
     });
     window.on_committed(move |text| {
         let text = text.to_string();
@@ -414,6 +447,10 @@ fn wire(controller: &WindowController) {
         });
     });
     window.on_terminal_key(move |text, shift, cmd, alt, ctrl| {
+        if let Some(command) = double_shift.borrow_mut().command_for(&text) {
+            with_app(move |app| app.dispatch(key, command));
+            return;
+        }
         let text = text.to_string();
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
@@ -476,6 +513,17 @@ fn wire(controller: &WindowController) {
             controller.click_file(&mut app.workbench, index);
         });
     });
+    window.on_search(move |text, regex, case_sensitive, whole_word| {
+        let query = SearchQuery { text: text.into(), regex, case_sensitive, whole_word };
+        with_app(move |app| app.dispatch(key, Command::Search(query)));
+    });
+    window.on_search_result_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.open_search_result(&mut app.workbench, index);
+        });
+    });
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
@@ -534,6 +582,7 @@ fn left_column_view(view: LeftView) -> LeftColumnView {
     match view {
         LeftView::Files => LeftColumnView::Files,
         LeftView::Problems => LeftColumnView::Problems,
+        LeftView::Search => LeftColumnView::Search,
     }
 }
 
