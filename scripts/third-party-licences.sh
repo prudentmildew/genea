@@ -53,6 +53,10 @@ section() {
     cat packaging/licences/Skia.txt
 } >> "$tmp"
 
+# LF line endings only, as git stores them: some crates ship CRLF licences.
+tr -d '\r' < "$tmp" > "$tmp.lf"
+mv "$tmp.lf" "$tmp"
+
 if [ "${1:-}" = "--check" ]; then
     if ! cmp -s "$tmp" "$out"; then
         echo "error: $out is out of date; run scripts/third-party-licences.sh and commit it" >&2
