@@ -19,10 +19,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use editorconfig_parser::{EditorConfig, EditorConfigProperty, IndentStyle};
 use jsonc_parser::{JsonObject, JsonValue, ParseOptions, parse_to_value};
 
 /// Oxfmt's config files, in the order it prefers them in one folder.
-pub(crate) const OXFMT_CONFIGS: [&str; 2] = [".oxfmtrc.json", ".oxfmtrc.jsonc"];
+const OXFMT_CONFIGS: [&str; 2] = [".oxfmtrc.json", ".oxfmtrc.jsonc"];
+
+/// The EditorConfig file. Like Oxfmt, Genea reads only the nearest one,
+/// whether or not it says `root = true`.
+const EDITORCONFIG: &str = ".editorconfig";
+
+/// Whether a file with this name can change a project's indentation.
+pub(crate) fn is_config_file(name: &str) -> bool {
+    name == EDITORCONFIG || OXFMT_CONFIGS.contains(&name)
+}
 
 /// How a file is indented: what Tab, ⇧Tab, auto-indent and the status bar
 /// use.
@@ -54,6 +64,9 @@ impl Indentation {
 #[derive(Debug, Default)]
 pub(crate) struct IndentationConfig {
     oxfmtrc: Option<Oxfmtrc>,
+    /// The nearest `.editorconfig`, its section globs relative to its
+    /// folder.
+    editorconfig: Option<EditorConfig>,
 }
 
 /// The options Genea takes from Oxfmt's config: `None` is unset.
@@ -90,12 +103,18 @@ impl IndentationConfig {
     /// Reads the config files that apply to the project at `root`. Blocking:
     /// run it in the background.
     pub(crate) fn read(root: &Path) -> Self {
-        IndentationConfig { oxfmtrc: find_oxfmtrc(root).and_then(|path| Oxfmtrc::read(&path)) }
+        IndentationConfig {
+            oxfmtrc: find_oxfmtrc(root).and_then(|path| Oxfmtrc::read(&path)),
+            editorconfig: read_editorconfig(root),
+        }
     }
 
     /// How the file at `path` (absolute) is indented.
     pub(crate) fn resolve(&self, path: &Path) -> Indentation {
-        let options = self.oxfmtrc.as_ref().map(|o| o.options_for(path)).unwrap_or_default();
+        let mut options = self.oxfmtrc.as_ref().map(|o| o.options_for(path)).unwrap_or_default();
+        if let Some(editorconfig) = &self.editorconfig {
+            options.fill_from(editorconfig, path);
+        }
         let default = Indentation::default();
         Indentation {
             use_tabs: options.use_tabs.unwrap_or(default.use_tabs),
@@ -107,6 +126,14 @@ impl IndentationConfig {
 /// The Oxfmt config file in the nearest folder, from `root` up, that has one.
 fn find_oxfmtrc(root: &Path) -> Option<PathBuf> {
     root.ancestors().flat_map(|dir| OXFMT_CONFIGS.map(|name| dir.join(name))).find(|path| path.is_file())
+}
+
+/// The nearest `.editorconfig`, from `root` up. An unreadable one counts as
+/// none.
+fn read_editorconfig(root: &Path) -> Option<EditorConfig> {
+    let path = root.ancestors().map(|dir| dir.join(EDITORCONFIG)).find(|path| path.is_file())?;
+    let text = fs::read_to_string(&path).ok()?;
+    Some(EditorConfig::parse(&text).with_cwd(path.parent()?))
 }
 
 impl Oxfmtrc {
@@ -184,6 +211,29 @@ impl Globs {
 }
 
 impl Options {
+    /// Fills what is still unset from the `.editorconfig` sections matching
+    /// `path` (absolute), as Oxfmt does: `indent_style` gives `useTabs`;
+    /// `indent_size` gives `tabWidth` only when indenting with spaces
+    /// (Prettier's rule), else `tab_width` does.
+    fn fill_from(&mut self, editorconfig: &EditorConfig, path: &Path) {
+        let properties = editorconfig.resolve(path);
+        if self.use_tabs.is_none()
+            && let EditorConfigProperty::Value(style) = properties.indent_style
+        {
+            self.use_tabs = Some(style == IndentStyle::Tab);
+        }
+        if self.tab_width.is_none() {
+            let size = match (self.use_tabs, properties.indent_size) {
+                (Some(false), EditorConfigProperty::Value(size)) => Some(size),
+                _ => match properties.tab_width {
+                    EditorConfigProperty::Value(width) => Some(width),
+                    _ => None,
+                },
+            };
+            self.tab_width = size.filter(|size| (1..=u8::MAX as usize).contains(size));
+        }
+    }
+
     /// `useTabs` and `tabWidth` from a config object, or `None` if either has
     /// a value Oxfmt rejects.
     fn parse(object: &JsonObject) -> Option<Self> {

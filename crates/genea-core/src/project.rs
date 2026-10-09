@@ -20,7 +20,7 @@ use crate::{
     environment::{Environment, ProcessEnv},
     files::FileIndex,
     history::EditKind,
-    indentation::{Indentation, IndentationConfig, OXFMT_CONFIGS},
+    indentation::{self, Indentation, IndentationConfig},
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     reading::{self, Contents, FirstScreen},
@@ -217,7 +217,7 @@ impl Project {
     /// the root's can change: the watcher doesn't see the folders above it.
     fn is_indentation_config(&self, path: &Path) -> bool {
         path.parent() == Some(&self.root)
-            && path.file_name().and_then(OsStr::to_str).is_some_and(|name| OXFMT_CONFIGS.contains(&name))
+            && path.file_name().and_then(OsStr::to_str).is_some_and(indentation::is_config_file)
     }
 
     /// Walks the project in the background for `genea.jsonc` files below

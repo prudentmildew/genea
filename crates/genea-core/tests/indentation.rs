@@ -68,3 +68,61 @@ fn oxfmtrc_overrides_win_over_its_root_options_for_the_files_they_match() {
     // A pattern without a slash matches the file name in any folder.
     assert_eq!(shown, ["3 spaces", "Tabs", "3 spaces"]);
 }
+
+/// The indentation shown for each file, opened one after another.
+fn indentations(workbench: &mut Workbench, project: ProjectId, files: &[&str]) -> Vec<String> {
+    files
+        .iter()
+        .map(|file| {
+            workbench.dispatch(project, Command::OpenFile((*file).into()));
+            workbench.settle().unwrap();
+            indentation(workbench, project)
+        })
+        .collect()
+}
+
+#[test]
+fn editorconfig_sets_the_indentation_with_its_glob_sections() {
+    let editorconfig = "\
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+
+[*.md]
+indent_size = 3
+
+[Makefile]
+indent_style = tab
+";
+    let fixture = FixtureProject::new()
+        .file(".editorconfig", editorconfig)
+        .file("src/main.ts", "")
+        .file("docs/guide.md", "")
+        .file("Makefile", "");
+    let (_fixture, mut workbench, project) = open(fixture, "src/main.ts");
+
+    let shown = indentations(&mut workbench, project, &["src/main.ts", "docs/guide.md", "Makefile"]);
+
+    assert_eq!(shown, ["4 spaces", "3 spaces", "Tabs"]);
+}
+
+#[test]
+fn oxfmtrc_wins_over_editorconfig_which_fills_in_only_what_it_leaves_unset() {
+    let editorconfig = "[*]\nindent_style = tab\nindent_size = 8\n\n[*.md]\nindent_style = space\n";
+    let oxfmtrc = r#"{ "overrides": [{ "files": ["*.ts"], "options": { "useTabs": false } }] }"#;
+    let fixture = FixtureProject::new()
+        .file(".editorconfig", editorconfig)
+        .file(".oxfmtrc.json", oxfmtrc)
+        .file("src/main.ts", "")
+        .file("src/main.css", "")
+        .file("README.md", "");
+    let (_fixture, mut workbench, project) = open(fixture, "src/main.ts");
+
+    let shown = indentations(&mut workbench, project, &["src/main.ts", "src/main.css", "README.md"]);
+
+    // main.ts: spaces from Oxfmt, the width from `indent_size`. main.css:
+    // tabs from `.editorconfig`. README.md: its section's spaces.
+    assert_eq!(shown, ["8 spaces", "Tabs", "8 spaces"]);
+}
