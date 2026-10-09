@@ -1,0 +1,21 @@
+# PROTOTYPE: licence gate for the GPUI spike (ADR 0003 reopen condition:
+# any GPL crate in GPUI's pinned dependency tree is a failure).
+# Only permissive licences are allowed; GPL, LGPL, AGPL and MPL are not.
+[licenses]
+allow = [
+  "MIT", "MIT-0", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause",
+  "BSD-3-Clause", "ISC", "Zlib", "0BSD", "Unlicense", "CC0-1.0", "BSL-1.0",
+  "Unicode-3.0", "bzip2-1.0.6",
+]
+confidence-threshold = 0.9
+# MPL-2.0 is file-level copyleft, not GPL: allowed only for these, unmodified.
+exceptions = [
+  # Build-time only (gpui_apple's build script); never linked into Genea.
+  { crate = "cbindgen", allow = ["MPL-2.0"] },
+  # Linked: zed-font-kit -> dirs -> dirs-sys -> option-ext.
+  { crate = "option-ext", allow = ["MPL-2.0"] },
+]
+
+# Genea ships for Apple Silicon macOS only.
+[graph]
+targets = ["aarch64-apple-darwin"]

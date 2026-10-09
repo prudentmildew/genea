@@ -1,0 +1,380 @@
+{
+  "label": "raw",
+  "warm_start": {
+    "start_to_first_frame_ms": {
+      "n": 20,
+      "p50": 161.71,
+      "p95": 175.04,
+      "p99": 175.59,
+      "max": 175.59
+    }
+  },
+  "cold_start": {
+    "start_to_first_frame_ms": {
+      "n": 10,
+      "p50": 672.2,
+      "p95": 750.75,
+      "p99": 750.75,
+      "max": 750.75
+    }
+  },
+  "typing": {
+    "keys": 400,
+    "input_to_present_ms": {
+      "n": 400,
+      "p50": 8.42,
+      "p95": 17.15,
+      "p99": 17.47,
+      "max": 43.42
+    },
+    "genea_work_ms": {
+      "n": 400,
+      "p50": 8.33,
+      "p95": 17.04,
+      "p99": 17.38,
+      "max": 43.34
+    },
+    "genea_work_if_reparse_async_ms": {
+      "n": 400,
+      "p50": 1.77,
+      "p95": 10.31,
+      "p99": 12.75,
+      "max": 41.53
+    },
+    "gpui_draw_plus_present_ms": {
+      "n": 400,
+      "p50": 1.65,
+      "p95": 10.2,
+      "p99": 12.64,
+      "max": 38.4
+    },
+    "gpui_draw_ms": {
+      "n": 400,
+      "p50": 1.19,
+      "p95": 1.47,
+      "p99": 1.61,
+      "max": 1.74
+    },
+    "gpui_present_ms": {
+      "n": 400,
+      "p50": 0.17,
+      "p95": 0.24,
+      "p99": 0.3,
+      "max": 0.69
+    },
+    "wait_for_frame_ms": {
+      "n": 400,
+      "p50": 0.08,
+      "p95": 0.12,
+      "p99": 0.13,
+      "max": 0.19
+    },
+    "rope_edit_ms": {
+      "n": 400,
+      "p50": 0.01,
+      "p95": 0.02,
+      "p99": 0.02,
+      "max": 0.02
+    },
+    "treesitter_reparse_ms": {
+      "n": 400,
+      "p50": 5.82,
+      "p95": 7.99,
+      "p99": 9.06,
+      "max": 9.77
+    },
+    "longest_stall": {
+      "max_ms": 7.87,
+      "over_16ms": 0,
+      "top": [
+        {
+          "ms": 7.87,
+          "what": "input key_down"
+        },
+        {
+          "ms": 7.85,
+          "what": "action spike::Backspace"
+        },
+        {
+          "ms": 7.48,
+          "what": "input key_down"
+        },
+        {
+          "ms": 7.46,
+          "what": "action spike::Backspace"
+        },
+        {
+          "ms": 7.42,
+          "what": "input key_down"
+        }
+      ]
+    },
+    "lost_journal_entries": 0,
+    "window_visible_at_end": true
+  },
+  "scroll": {
+    "steady": {
+      "px_per_frame": 30.0,
+      "frames": {
+        "display_fps": 60.0,
+        "presented": 481,
+        "fps": 58.5638960794622,
+        "late_intervals": 0,
+        "late_pct": 0.0,
+        "frames_over_8_3ms_work": 0,
+        "interval_ms": {
+          "n": 480,
+          "p50": 16.69,
+          "p95": 17.72,
+          "p99": 17.87,
+          "max": 18.23
+        },
+        "draw_plus_present_ms": {
+          "n": 481,
+          "p50": 1.74,
+          "p95": 2.02,
+          "p99": 2.19,
+          "max": 2.36
+        },
+        "draw_ms": {
+          "n": 481,
+          "p50": 1.55,
+          "p95": 1.81,
+          "p99": 1.98,
+          "max": 2.15
+        }
+      },
+      "longest_stall": {
+        "max_ms": 2.15,
+        "over_16ms": 0,
+        "top": [
+          {
+            "ms": 2.15,
+            "what": "draw"
+          },
+          {
+            "ms": 2.0,
+            "what": "draw"
+          },
+          {
+            "ms": 2.0,
+            "what": "draw"
+          },
+          {
+            "ms": 1.99,
+            "what": "draw"
+          },
+          {
+            "ms": 1.99,
+            "what": "draw"
+          }
+        ]
+      }
+    },
+    "fling": {
+      "px_per_frame": 200.0,
+      "frames": {
+        "display_fps": 60.0,
+        "presented": 241,
+        "fps": 57.80887338558956,
+        "late_intervals": 0,
+        "late_pct": 0.0,
+        "frames_over_8_3ms_work": 1,
+        "interval_ms": {
+          "n": 240,
+          "p50": 16.77,
+          "p95": 19.3,
+          "p99": 19.91,
+          "max": 20.3
+        },
+        "draw_plus_present_ms": {
+          "n": 241,
+          "p50": 3.87,
+          "p95": 6.03,
+          "p99": 7.38,
+          "max": 8.35
+        },
+        "draw_ms": {
+          "n": 241,
+          "p50": 3.68,
+          "p95": 5.85,
+          "p99": 7.21,
+          "max": 8.18
+        }
+      },
+      "longest_stall": {
+        "max_ms": 8.18,
+        "over_16ms": 0,
+        "top": [
+          {
+            "ms": 8.18,
+            "what": "draw"
+          },
+          {
+            "ms": 7.41,
+            "what": "draw"
+          },
+          {
+            "ms": 7.21,
+            "what": "draw"
+          },
+          {
+            "ms": 6.79,
+            "what": "draw"
+          },
+          {
+            "ms": 6.76,
+            "what": "draw"
+          }
+        ]
+      }
+    },
+    "window_visible_at_end": true
+  },
+  "open": {
+    "open_to_first_frame_ms": {
+      "n": 20,
+      "p50": 13.65,
+      "p95": 17.68,
+      "p99": 79.36,
+      "max": 79.36
+    },
+    "longest_stall": {
+      "max_ms": 11.22,
+      "over_16ms": 0,
+      "top": [
+        {
+          "ms": 11.22,
+          "what": "task src/main.rs:121"
+        },
+        {
+          "ms": 10.47,
+          "what": "task src/main.rs:121"
+        },
+        {
+          "ms": 10.46,
+          "what": "task src/main.rs:121"
+        },
+        {
+          "ms": 10.27,
+          "what": "task src/main.rs:121"
+        },
+        {
+          "ms": 10.01,
+          "what": "task src/main.rs:121"
+        }
+      ]
+    },
+    "window_visible_at_end": true
+  },
+  "huge": {
+    "bytes": 103017651,
+    "open_to_first_screen_ms": 100.19,
+    "rope_built_ms": 92.92,
+    "longest_stall_while_opening": {
+      "max_ms": 8.23,
+      "over_16ms": 0,
+      "top": [
+        {
+          "ms": 8.23,
+          "what": "task src/editor.rs:90"
+        },
+        {
+          "ms": 0.59,
+          "what": "draw"
+        },
+        {
+          "ms": 0.59,
+          "what": "draw"
+        }
+      ]
+    },
+    "scrolling": {
+      "px_per_frame": 30.0,
+      "frames": {
+        "display_fps": 60.0,
+        "presented": 241,
+        "fps": 59.64510666061814,
+        "late_intervals": 0,
+        "late_pct": 0.0,
+        "frames_over_8_3ms_work": 0,
+        "interval_ms": {
+          "n": 240,
+          "p50": 16.64,
+          "p95": 17.7,
+          "p99": 17.95,
+          "max": 18.38
+        },
+        "draw_plus_present_ms": {
+          "n": 241,
+          "p50": 1.37,
+          "p95": 1.66,
+          "p99": 1.81,
+          "max": 2.3
+        },
+        "draw_ms": {
+          "n": 241,
+          "p50": 1.18,
+          "p95": 1.46,
+          "p99": 1.63,
+          "max": 2.01
+        }
+      },
+      "longest_stall": {
+        "max_ms": 2.01,
+        "over_16ms": 0,
+        "top": [
+          {
+            "ms": 2.01,
+            "what": "draw"
+          },
+          {
+            "ms": 1.71,
+            "what": "draw"
+          },
+          {
+            "ms": 1.63,
+            "what": "draw"
+          },
+          {
+            "ms": 1.58,
+            "what": "draw"
+          },
+          {
+            "ms": 1.58,
+            "what": "draw"
+          }
+        ]
+      }
+    },
+    "longest_stall_jump_to_end": {
+      "max_ms": 5.9,
+      "over_16ms": 0,
+      "top": [
+        {
+          "ms": 5.9,
+          "what": "draw"
+        },
+        {
+          "ms": 4.3,
+          "what": "draw"
+        },
+        {
+          "ms": 0.86,
+          "what": "draw"
+        },
+        {
+          "ms": 0.38,
+          "what": "task src/main.rs:121"
+        }
+      ]
+    },
+    "footprint_mb_with_file": 227.48540496826172,
+    "window_visible_at_end": true
+  },
+  "idle": {
+    "cpu_pct": 0.9409461759513194,
+    "wakeups_per_s": 103.94913636553264,
+    "footprint_mb": 111.61024475097656
+  }
+}
