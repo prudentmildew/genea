@@ -128,6 +128,17 @@ fn oxfmtrc_wins_over_editorconfig_which_fills_in_only_what_it_leaves_unset() {
 }
 
 #[test]
+fn an_oxfmtrc_that_oxfmt_rejects_counts_as_none() {
+    let fixture = FixtureProject::new()
+        .file(".oxfmtrc.json", r#"{ "useTabs": true, "tabWidth": "wide" }"#)
+        .file(".editorconfig", "[*]\nindent_style = space\nindent_size = 3\n")
+        .file("main.ts", "");
+    let (_fixture, workbench, project) = open(fixture, "main.ts");
+
+    assert_eq!(indentation(&workbench, project), "3 spaces");
+}
+
+#[test]
 fn editing_either_config_file_updates_the_open_file_without_a_reopen() {
     let (fixture, mut workbench, project) = open(FixtureProject::new().file("src/main.ts", ""), "src/main.ts");
     assert_eq!(indentation(&workbench, project), "2 spaces");

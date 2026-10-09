@@ -63,7 +63,8 @@ impl Indentation {
     }
 }
 
-/// The indentation settings of a project: what its Oxfmt config says.
+/// The indentation settings of a project: what its `.oxfmtrc.json` and
+/// `.editorconfig` say.
 /// Read in the background ([`IndentationConfig::read`]); resolving a file
 /// against it is cheap and touches no disk.
 #[derive(Debug, Default)]
