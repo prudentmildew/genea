@@ -609,6 +609,11 @@ impl Toolchain {
         })
     }
 
+    /// Whether `package.json` is being read.
+    pub(crate) fn is_loading(&self) -> bool {
+        self.loading
+    }
+
     /// Whether the project installs with a package manager Genea runs:
     /// `package.json` is read and pins pnpm or Bun, or nothing (pnpm by
     /// default). Not for a foreign or invalid pin.
@@ -620,7 +625,7 @@ impl Toolchain {
     /// doesn't run it.
     pub(crate) fn package_manager_name(&self) -> Result<&'static str, String> {
         match &self.slots[Role::PackageManager.index()] {
-            None => Err("Genea is still reading package.json. Try again in a moment.".into()),
+            None => Err("Couldn't read package.json, so Genea doesn't know the package manager.".into()),
             Some(Slot { want: Some((tool, _)), .. }) => Ok(tool.id()),
             Some(Slot { state: SlotState::Invalid(reason), .. }) => Err(format!("package.json: {reason}")),
             Some(slot) => Err(format!("Genea doesn't run {}, so it can't install this project's dependencies.", slot.name)),

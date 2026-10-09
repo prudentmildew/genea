@@ -87,6 +87,9 @@ pub(crate) struct Project {
     pub(crate) terminal: Terminal,
     /// Whether `node_modules` is there (ticket #41).
     pub(crate) dependencies: Dependencies,
+    /// "Install dependencies" came while `package.json` was being read: it
+    /// runs once it is read.
+    install_requested: bool,
 }
 
 impl Project {
@@ -113,6 +116,7 @@ impl Project {
             left_column: Some(LeftColumnView::Files),
             shown_hunk: None,
             terminal: Terminal::new(id),
+            install_requested: false,
         }
     }
 
@@ -298,6 +302,10 @@ impl Project {
     /// Starts the terminal's shell once the environment is ready. Called
     /// after opening and after every background result.
     pub(crate) fn start_terminal_when_ready(&mut self, host: &SharedHost, jobs: &Jobs) {
+        if self.install_requested && !self.toolchain.as_ref().is_some_and(Toolchain::is_loading) {
+            self.install_requested = false;
+            self.install_dependencies();
+        }
         if self.terminal.is_waiting() && self.environment_ready() {
             let env = self.process_env();
             let package_manager = match &self.toolchain {
@@ -311,6 +319,10 @@ impl Project {
     /// "Install dependencies": the pinned package manager's `install` in a
     /// terminal tab, which starts once the environment is ready.
     fn install_dependencies(&mut self) {
+        if self.toolchain.as_ref().is_some_and(Toolchain::is_loading) {
+            self.install_requested = true;
+            return;
+        }
         match self.toolchain.as_ref().map(Toolchain::package_manager_name) {
             Some(Ok(name)) => self.terminal.run_package_manager(name, &INSTALL),
             Some(Err(reason)) => self.notify(reason),
@@ -707,6 +719,7 @@ impl Project {
     fn install_notice(&self) -> Option<Notice> {
         let offer = self.dependencies.are_missing()
             && self.toolchain.as_ref().is_some_and(Toolchain::can_install)
+            && !self.install_requested
             && !self.terminal.is_running_package_manager(&INSTALL);
         offer.then(|| Notice {
             message: "This project's dependencies aren't installed.".into(),

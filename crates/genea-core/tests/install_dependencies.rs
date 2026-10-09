@@ -265,6 +265,29 @@ fn an_install_clicked_during_the_toolchain_download_waits_for_it() {
     assert_eq!(install.spec().args, ["install"]);
 }
 
+/// The new-project flow dispatches the command as soon as the new project
+/// opens, before Genea has read its `package.json`.
+#[test]
+fn the_command_dispatched_right_after_opening_installs_once_the_toolchain_is_ready() {
+    let host = TestHost::new();
+    host.tools().node("24.21.0");
+    host.tools().pnpm("12.10.1");
+    let fixture = with_package_json(PNPM).build();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+
+    workbench.dispatch(project, Command::InstallDependencies);
+    workbench.settle().unwrap();
+
+    let install = host.ptys().wait_for_spawn(2);
+    assert_eq!(version_of(&install.spec().program), "12.10.1");
+    assert_eq!(install.spec().args, ["install"]);
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.terminal.tabs[1], tab("pnpm install", TerminalStatus::Running));
+    assert_eq!(view.terminal.active_tab, 1);
+    assert_eq!(install_notice(&workbench, project), None);
+}
+
 #[test]
 fn a_folder_without_package_json_has_nothing_to_install() {
     let host = TestHost::new();
