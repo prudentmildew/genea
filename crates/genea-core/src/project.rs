@@ -367,7 +367,9 @@ impl Project {
             | Command::ScrollTerminal { .. }
             | Command::TerminalMouse { .. }
             | Command::TerminalPaste
-            | Command::NewTerminalTab => self.terminal.command(command, host),
+            | Command::NewTerminalTab
+            | Command::SelectTerminalTab(_)
+            | Command::CloseTerminalTab(_) => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);

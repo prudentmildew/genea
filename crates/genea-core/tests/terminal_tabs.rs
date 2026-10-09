@@ -65,3 +65,75 @@ fn a_new_tab_runs_its_own_shell_and_shows_its_output() {
     assert!(view.visible && view.focused);
     assert!(!first.hung_up());
 }
+
+/// A project with two tabs, each having printed its name; the second is
+/// active.
+fn two_tabs(host: &TestHost, fixture: &FixtureProject) -> (Workbench, ProjectId, FakePty, FakePty) {
+    let (mut workbench, project, first) = open(host, fixture);
+    first.output("first");
+    workbench.dispatch(project, Command::NewTerminalTab);
+    workbench.settle().unwrap();
+    let second = host.ptys().wait_for_spawn(2);
+    second.output("second");
+    workbench.settle().unwrap();
+    (workbench, project, first, second)
+}
+
+#[test]
+fn switching_tabs_shows_each_ones_output_and_types_into_it() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, first, second) = two_tabs(&host, &fixture);
+
+    workbench.dispatch(project, Command::SelectTerminalTab(0));
+    assert_eq!(terminal(&workbench, project).active, 0);
+    assert_eq!(screen(&workbench, project), ["first"]);
+    workbench.dispatch(project, Command::TerminalText("ls".into()));
+    assert_eq!(first.wait_for_input("ls"), "ls");
+
+    // Output to a tab in the background lands in it.
+    second.output(" and more");
+    workbench.settle().unwrap();
+    assert_eq!(screen(&workbench, project), ["first"]);
+    workbench.dispatch(project, Command::SelectTerminalTab(1));
+    assert_eq!(screen(&workbench, project), ["second and more"]);
+    assert_eq!(second.input(), "");
+}
+
+#[test]
+fn closing_a_tab_ends_its_shell_and_shows_a_neighbour() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, first, second) = two_tabs(&host, &fixture);
+
+    workbench.dispatch(project, Command::CloseTerminalTab(1));
+
+    second.wait_for_hang_up();
+    assert!(!first.hung_up());
+    assert_eq!(tabs(&workbench, project), (vec![running("zsh")], 0));
+    assert_eq!(screen(&workbench, project), ["first"]);
+}
+
+#[test]
+fn closing_the_last_tab_collapses_the_pane_and_showing_it_again_starts_a_new_shell() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, first) = open(&host, &fixture);
+    workbench.dispatch(project, Command::FocusTerminal);
+
+    workbench.dispatch(project, Command::CloseTerminalTab(0));
+
+    first.wait_for_hang_up();
+    let view = terminal(&workbench, project);
+    assert!(view.tabs.is_empty());
+    assert!(!view.visible && !view.focused);
+
+    workbench.dispatch(project, Command::ToggleTerminal);
+    workbench.settle().unwrap();
+    let second = host.ptys().wait_for_spawn(2);
+    second.output("fresh");
+    workbench.settle().unwrap();
+    assert_eq!(tabs(&workbench, project), (vec![running("zsh")], 0));
+    assert_eq!(screen(&workbench, project), ["fresh"]);
+    assert!(terminal(&workbench, project).focused);
+}

@@ -354,6 +354,11 @@ impl Terminal {
                 self.add_tab();
                 self.show();
             }
+            Command::SelectTerminalTab(index) if index < self.tabs.len() => {
+                self.show_tab(index);
+                self.show();
+            }
+            Command::CloseTerminalTab(index) if index < self.tabs.len() => self.close_tab(index),
             Command::TerminalKey(TerminalKey::Enter, _)
                 if self.active_tab().is_some_and(|tab| matches!(tab.shell, Shell::Exited(_) | Shell::Failed(_))) =>
             {
@@ -382,6 +387,31 @@ impl Terminal {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Closes a tab; dropping its session hangs up the shell.
+    fn close_tab(&mut self, index: usize) {
+        let closing_active = index == self.active;
+        if closing_active && self.focused {
+            self.report_focus(b"\x1b[O");
+        }
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            self.active = 0;
+            self.visible = false;
+            self.focused = false;
+            self.preedit = None;
+            return;
+        }
+        if index < self.active || self.active == self.tabs.len() {
+            self.active -= 1;
+        }
+        if closing_active {
+            self.preedit = None;
+            if self.focused {
+                self.report_focus(b"\x1b[I");
+            }
         }
     }
 

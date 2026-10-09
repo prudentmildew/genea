@@ -257,6 +257,13 @@ pub enum Command {
     /// ⌘T in the terminal, or the pane's +: opens a tab with a new shell,
     /// shows it and focuses the pane.
     NewTerminalTab,
+    /// A click on a terminal tab, or ⌘⇧[ / ⌘⇧] in the terminal: shows that
+    /// tab (by index) and focuses the pane.
+    SelectTerminalTab(usize),
+    /// Closes a terminal tab (by index), hanging up its shell. The pane
+    /// shows the tab to its right, else the one to its left; closing the
+    /// last tab collapses the pane, and showing it again opens a new one.
+    CloseTerminalTab(usize),
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.
