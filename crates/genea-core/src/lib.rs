@@ -30,8 +30,10 @@ mod view;
 mod workbench;
 
 pub use command::{CaretMove, Command};
+pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;
 pub use view::{
     Caret, EditorView, Notice, Preedit, ProjectView, RecentProject, StatusBar, VisibleLine, WelcomeView,
 };
+pub use view::{ClosePrompt, EditorTab, PaneView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

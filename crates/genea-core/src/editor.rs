@@ -382,6 +382,62 @@ impl Editor {
     }
 }
 
+/// One tab's place in a file: where its caret and selection are and how far
+/// it is scrolled (ticket #31). An open file has one `Editor` however many
+/// tabs show it, so edits show in every tab; each tab keeps its own cursor,
+/// and the project swaps it in while that tab is focused or drawn.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Cursor {
+    caret: usize,
+    anchor: usize,
+    goal_column: Option<usize>,
+    scroll_top: f64,
+    preedit: String,
+}
+
+impl Editor {
+    /// The file, relative to the project root when it is inside it.
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// The buffer has edits that aren't on disk yet.
+    pub(crate) fn is_modified(&self) -> bool {
+        self.version != self.saved_version
+    }
+
+    pub(crate) fn cursor(&self) -> Cursor {
+        Cursor {
+            caret: self.caret,
+            anchor: self.anchor,
+            goal_column: self.goal_column,
+            scroll_top: self.scroll_top,
+            preedit: self.preedit.clone(),
+        }
+    }
+
+    /// Puts a tab's cursor back. The text may have changed under it in
+    /// another tab, so positions are clamped to the text.
+    pub(crate) fn set_cursor(&mut self, cursor: &Cursor, viewport_rows: f64) {
+        let len = self.text.len_chars();
+        self.caret = cursor.caret.min(len);
+        self.anchor = cursor.anchor.min(len);
+        self.goal_column = cursor.goal_column;
+        self.scroll_top = cursor.scroll_top;
+        self.preedit.clone_from(&cursor.preedit);
+        self.scroll_by(0.0, viewport_rows);
+    }
+}
+
+impl Cursor {
+    /// The same cursor without the IME's marked text, for a tab that loses
+    /// focus.
+    pub(crate) fn parked(mut self) -> Self {
+        self.preedit.clear();
+        self
+    }
+}
+
 /// Grid columns taken by `chars` starting at column 0.
 fn display_columns(chars: impl Iterator<Item = char>) -> usize {
     chars.fold(0, display_columns_from)

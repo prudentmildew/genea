@@ -177,6 +177,10 @@ impl Workbench {
         }
         let _done = Done(&self.inbox);
         apply(&mut self.core);
+        // A pane without the focus shows a kept view (ticket #31).
+        for project in self.core.projects.values_mut() {
+            project.refresh_views();
+        }
     }
 }
 
