@@ -32,6 +32,8 @@ export component ProjectWindow inherits Window {
     callback open-folder();
     callback open-file();
     callback save();
+    callback undo();
+    callback redo();
     callback cut();
     callback copy();
     callback paste();
@@ -100,6 +102,26 @@ export component ProjectWindow inherits Window {
 
         Menu {
             title: "Edit";
+            MenuItem {
+                title: "Undo";
+                shortcut: @keys(Control + Z);
+                enabled: root.has-editor;
+                activated => {
+                    root.undo();
+                }
+            }
+
+            MenuItem {
+                title: "Redo";
+                shortcut: @keys(Control + Shift + Z);
+                enabled: root.has-editor;
+                activated => {
+                    root.redo();
+                }
+            }
+
+            MenuSeparator { }
+
             MenuItem {
                 title: "Cut";
                 shortcut: @keys(Control + X);

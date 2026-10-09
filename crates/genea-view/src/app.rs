@@ -306,6 +306,8 @@ fn wire(controller: &WindowController) {
         }
     };
     window.on_save(menu(Command::Save));
+    window.on_undo(menu(Command::Undo));
+    window.on_redo(menu(Command::Redo));
     window.on_cut(menu(Command::Cut));
     window.on_copy(menu(Command::Copy));
     window.on_paste(menu(Command::Paste));
