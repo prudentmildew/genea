@@ -6,8 +6,8 @@
 //! no installer: the user downloads the new DMG themselves.
 //!
 //! "At most once a day" holds across restarts: the time of the last check
-//! and what it found are kept in [`UpdateCheck::state_file`], on the host's
-//! wall clock.
+//! (on the host's wall clock) and what it found are kept in
+//! `update-check.json` in the host's application-support folder.
 
 use std::{
     fs,
@@ -32,16 +32,8 @@ const START_DELAY: Duration = Duration::from_secs(10);
 /// The most often Genea checks.
 const INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// How the app sets up the update check.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UpdateCheck {
-    /// The running Genea's version, e.g. `env!("CARGO_PKG_VERSION")`.
-    pub current_version: String,
-    /// Where the check keeps what it learned between runs, so that a restart
-    /// doesn't check more than once a day. The app puts it in its
-    /// application-support folder.
-    pub state_file: PathBuf,
-}
+/// What the check remembers between runs, in the host's support folder.
+const STATE_FILE: &str = "update-check.json";
 
 /// A newer Genea release exists.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,16 +51,17 @@ pub struct UpdateNotice {
 struct Checker {
     host: SharedHost,
     jobs: Jobs,
-    check: UpdateCheck,
+    state_file: PathBuf,
     current: Option<Version>,
     alive: Weak<()>,
 }
 
 /// Starts checking: the first check runs [`START_DELAY`] after this call,
 /// on a background job, and later ones a day apart.
-pub(crate) fn start(host: SharedHost, jobs: Jobs, alive: Weak<()>, check: UpdateCheck) {
-    let current = Version::parse(&check.current_version);
-    let checker = Arc::new(Checker { host, jobs, check, current, alive });
+pub(crate) fn start(host: SharedHost, jobs: Jobs, alive: Weak<()>, current_version: &str) {
+    let current = Version::parse(current_version);
+    let state_file = host.support_dir().join(STATE_FILE);
+    let checker = Arc::new(Checker { host, jobs, state_file, current, alive });
     checker.schedule(START_DELAY);
 }
 
@@ -91,7 +84,7 @@ impl Checker {
     /// earlier one) is a day old, else waits for the rest of the day.
     fn run(self: Arc<Self>) -> Apply {
         let now = self.host.clock().system_time();
-        let state = State::read(&self.check.state_file);
+        let state = State::read(&self.state_file);
         // A last check in the future means the system clock moved back:
         // check now rather than trust it.
         let since = state.checked_at.and_then(|at| now.duration_since(at).ok());
@@ -103,7 +96,7 @@ impl Checker {
             _ => {
                 // Failures are silent, and keep what an earlier check found.
                 let latest = self.fetch_latest().or(state.latest);
-                State { checked_at: Some(now), latest: latest.clone() }.write(&self.check.state_file);
+                State { checked_at: Some(now), latest: latest.clone() }.write(&self.state_file);
                 self.clone().schedule(INTERVAL);
                 latest
             }
@@ -141,7 +134,7 @@ struct Release {
     url: String,
 }
 
-/// What the check remembers between runs, in [`UpdateCheck::state_file`]:
+/// What the check remembers between runs, in [`STATE_FILE`]:
 /// `{"checked_at": <Unix seconds>, "latest": {"version": …, "url": …}}`.
 #[derive(Default)]
 struct State {

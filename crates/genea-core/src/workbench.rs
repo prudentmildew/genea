@@ -14,8 +14,9 @@ use crate::{
     command::Command,
     jobs::{self, Inbox, Jobs},
     project::Project,
-    update::{self, UpdateCheck, UpdateNotice},
-    view::ProjectView,
+    recent::RecentProjects,
+    update::{self, UpdateNotice},
+    view::{ProjectView, WelcomeView},
 };
 
 /// How long `settle` waits for background work before giving up. Real time,
@@ -49,6 +50,7 @@ pub(crate) struct Core {
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
+    recent: RecentProjects,
     /// A newer Genea release, once the update check has found one.
     pub(crate) update_notice: Option<UpdateNotice>,
     /// Lives as long as the core. Host timers hold a weak reference to it,
@@ -65,8 +67,9 @@ impl Core {
 impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
-        let core =
-            Core { host, jobs, projects: BTreeMap::new(), next_id: 0, update_notice: None, alive: Arc::new(()) };
+        let recent = RecentProjects::load(host.support_dir());
+        let (update_notice, alive) = (None, Arc::new(()));
+        let core = Core { host, jobs, projects: BTreeMap::new(), next_id: 0, recent, update_notice, alive };
         Workbench { core, inbox }
     }
 
@@ -78,15 +81,27 @@ impl Workbench {
         self.core.jobs.set_notifier(Some(Arc::new(notify)));
     }
 
-    /// Opens the folder at `root` as a project. Opening a folder that is
-    /// already open returns its existing id.
+    /// Opens the folder at `root` as a project and puts it first in the
+    /// recent projects. Opening a folder that is already open returns its
+    /// existing id; the app then focuses that project's window. A folder
+    /// that can't be opened leaves the recent projects.
     pub fn open_project(&mut self, root: impl AsRef<Path>) -> Result<ProjectId, OpenProjectError> {
         let root = root.as_ref();
         let error = |reason| OpenProjectError { path: root.to_owned(), reason };
-        let root = root.canonicalize().map_err(|e| error(e.to_string()))?;
-        if !root.is_dir() {
-            return Err(error("it isn't a folder".into()));
-        }
+        let checked = root.canonicalize().map_err(|e| e.to_string()).and_then(|canonical| {
+            if canonical.is_dir() { Ok(canonical) } else { Err("it isn't a folder".into()) }
+        });
+        let root = match checked {
+            Ok(root) => root,
+            Err(reason) => {
+                // A recent project that can't be opened any more leaves the list.
+                let Core { recent, jobs, host, .. } = &mut self.core;
+                recent.forget(root, jobs, host.clock());
+                return Err(error(reason));
+            }
+        };
+        let Core { recent, jobs, host, .. } = &mut self.core;
+        recent.opened(&root, jobs, host.clock());
         if let Some((id, _)) = self.core.projects.iter().find(|(_, p)| p.root() == root) {
             return Ok(*id);
         }
@@ -104,6 +119,12 @@ impl Workbench {
     /// The open projects, oldest first.
     pub fn projects(&self) -> Vec<ProjectId> {
         self.core.projects.keys().copied().collect()
+    }
+
+    /// What the welcome shows, or `None` while a project is open: the app
+    /// shows the welcome exactly when this is `Some`.
+    pub fn welcome(&self) -> Option<WelcomeView> {
+        self.core.projects.is_empty().then(|| WelcomeView { recent_projects: self.core.recent.view() })
     }
 
     /// Applies a command to a project. Commands for a closed project are
@@ -124,10 +145,12 @@ impl Workbench {
     /// Starts the release-update check: at most once a day, the first one a
     /// little after start, always off the main thread. A newer release shows
     /// up as [`update_notice`](Self::update_notice), with the change
-    /// notification. Call it once, after the first window is up.
-    pub fn start_update_checks(&mut self, check: UpdateCheck) {
+    /// notification. Call it once, after the first window is up, with the
+    /// running Genea's version (`env!("CARGO_PKG_VERSION")`). What it learns
+    /// is kept in the host's support folder, so restarts don't check more.
+    pub fn start_update_checks(&mut self, current_version: &str) {
         let core = &self.core;
-        update::start(core.host.clone(), core.jobs.clone(), Arc::downgrade(&core.alive), check);
+        update::start(core.host.clone(), core.jobs.clone(), Arc::downgrade(&core.alive), current_version);
     }
 
     /// The newer release the update check found, if any. It isn't tied to a

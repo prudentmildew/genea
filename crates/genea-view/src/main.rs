@@ -1,6 +1,6 @@
 //! Genea's thin Slint view layer (ADR 0004) and the `genea` binary.
 //!
-//!   genea                    an empty window; File › Open… picks a project
+//!   genea                    the welcome window: Open…, recent projects
 //!   genea FOLDER [FILE]      opens FOLDER as a project, and FILE in it
 //!
 //! The view renders the core's view state and turns input into commands. It
@@ -11,6 +11,7 @@
 //! - `app`: the workbench, the windows, callback wiring, the notifier;
 //! - `about`: the About window's third-party licences;
 //! - `window`: one project window's view-state → Slint sync;
+//! - `welcome`: the welcome window's sync;
 //! - `surface`: the editor surface's ring of line slots;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `links`: opening
 //!   web links in the browser.
@@ -21,6 +22,7 @@ mod dialogs;
 mod keys;
 mod links;
 mod surface;
+mod welcome;
 mod window;
 
 use std::path::PathBuf;
@@ -46,7 +48,9 @@ fn main() {
         eprintln!("genea: {error}");
         std::process::exit(1);
     }
-    if let Err(error) = slint::run_event_loop() {
+    // Not `run_event_loop`: closing the last project window brings back the
+    // welcome instead of quitting. The app quits from the welcome or ⌘Q.
+    if let Err(error) = slint::run_event_loop_until_quit() {
         eprintln!("genea: {error}");
         std::process::exit(1);
     }
