@@ -1,0 +1,35 @@
+{{!--
+  cargo-about template for packaging/third-party-licences.txt, which the
+  About dialog shows. Plain text: triple braces, so nothing is HTML-escaped.
+  scripts/third-party-licences.sh appends the texts cargo-about can't find
+  (Slint's royalty-free licence) and the notices for what isn't a crate (the
+  Inter font, Skia).
+--}}
+THIRD-PARTY SOFTWARE IN GENEA
+
+Genea is built with the open-source software listed below: every Rust crate
+in the app with the licence Genea uses it under, then the full text of each
+licence, then the software that isn't a crate.
+
+Genea's user interface is made with Slint (https://slint.dev), used under the
+Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0.
+
+Crates that are under the Mozilla Public License 2.0 are used unmodified. As
+that licence requires, their source code is available from the repository
+listed beside them and from crates.io.
+
+CRATES
+
+{{#each crates}}
+  {{{package.name}}} {{{package.version}}}: {{{license}}}{{#if (eq license "MPL-2.0")}}. Source code: {{{package.repository}}}{{/if}}
+{{/each}}
+{{#each licenses}}
+
+================================================================================
+{{{name}}} ({{{id}}})
+================================================================================
+
+Used by: {{#each used_by}}{{{crate.name}}} {{{crate.version}}}{{#unless @last}}, {{/unless}}{{/each}}
+
+{{{text}}}
+{{/each}}

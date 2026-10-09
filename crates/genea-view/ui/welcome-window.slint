@@ -16,12 +16,16 @@ export component WelcomeWindow inherits Window {
     in property <string> version;
     // Why the last open failed, if it did.
     in property <string> notice;
+    // The update notice ("Genea 0.2.0 is available"), or empty (#64).
+    in property <string> update;
 
     callback open-folder();
     // The new-project ticket (#61) wires this and enables New Project….
     callback new-project();
     callback open-recent(int);
     callback show-about();
+    // Opens the release page of the update notice.
+    callback open-update();
 
     title: "Welcome to Genea";
     preferred-width: 720px;
@@ -82,6 +86,19 @@ export component WelcomeWindow inherits Window {
                 text: "Version " + root.version;
                 color: Theme.chrome-muted;
                 horizontal-alignment: center;
+            }
+
+            if root.update != "": Text {
+                text: root.update;
+                color: Theme.link;
+                horizontal-alignment: center;
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.open-update();
+                    }
+                }
             }
 
             Rectangle {

@@ -1,0 +1,107 @@
+# cargo-about configuration for Genea's third-party licences (ticket #64).
+# scripts/third-party-licences.sh runs it; docs/releasing.md explains when.
+#
+# `accepted` is in order of preference: for a crate offered under several
+# licences, the first accepted one is the licence Genea uses. Slint's crates
+# are GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR
+# LicenseRef-Slint-Software-3.0; Genea uses the royalty-free one (ADR 0004).
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "MIT-0",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "bzip2-1.0.6",
+    "LicenseRef-Slint-Royalty-free-2.0",
+    # Permissive, for data: webpki-root-certs, which ureq's `native-tls`
+    # feature always links (ticket #35). Genea verifies against the system
+    # trust store, not these roots.
+    "CDLA-Permissive-2.0",
+    # File-level copyleft; fine for binary distribution as long as the source
+    # stays available (nucleo-matcher, spec #19). The template adds the notice.
+    "MPL-2.0",
+]
+
+# Only what ships in the app: Genea is built for Apple Silicon only.
+targets = ["aarch64-apple-darwin"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Genea's own crates (publish = false) are not third-party.
+[private]
+ignore = true
+
+# Slint's crates have no licence text cargo-about recognises for the
+# royalty-free licence, so point it at the file they ship. Add any new
+# Slint crate here (the checksum is the same for all of 1.18.1).
+
+[slint.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[slint.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[slint-macros.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[slint-macros.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[i-slint-backend-selector.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[i-slint-backend-selector.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[i-slint-backend-winit.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[i-slint-backend-winit.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[i-slint-common.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[i-slint-common.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[i-slint-compiler.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[i-slint-compiler.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[i-slint-core.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[i-slint-core.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[i-slint-core-macros.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[i-slint-core-macros.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"
+
+[i-slint-renderer-skia.clarify]
+license = "LicenseRef-Slint-Royalty-free-2.0"
+[[i-slint-renderer-skia.clarify.files]]
+path = "LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+license = "LicenseRef-Slint-Royalty-free-2.0"
+checksum = "5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe"

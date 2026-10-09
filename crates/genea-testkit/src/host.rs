@@ -1,4 +1,5 @@
-//! The test host: a manual clock, scripted processes and scripted downloads.
+//! The test host: a manual clock, scripted processes, scripted downloads
+//! backed by the local download fixture server, and a temp support folder.
 
 use std::{
     collections::HashMap,
@@ -6,17 +7,19 @@ use std::{
     io::{self, PipeReader, PipeWriter, Write},
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use genea_host::{
-    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, SharedHost,
-    TimerCallback,
+    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, RealHost,
+    SharedHost, TimerCallback,
 };
+
+use crate::{DownloadServer, FakeTools};
 
 /// A host whose effects are scripted by the test.
 ///
@@ -72,6 +75,23 @@ impl TestHost {
 
     pub fn downloads(&self) -> &ScriptedDownloads {
         &self.inner.downloads
+    }
+
+    /// The local download fixture server, started on first use. Fetches
+    /// with no scripted answer go to it.
+    pub fn download_server(&self) -> &DownloadServer {
+        self.inner.downloads.server()
+    }
+
+    /// Publishes fake Node, Bun and pnpm releases on the download server.
+    pub fn tools(&self) -> FakeTools<'_> {
+        FakeTools::new(self.download_server())
+    }
+
+    /// The application-support folder (a temp dir); the toolchain store is
+    /// under it.
+    pub fn support_dir(&self) -> &Path {
+        Host::support_dir(self)
     }
 
     pub fn clipboard(&self) -> &TestClipboard {
@@ -137,6 +157,8 @@ impl Clipboard for TestClipboard {
 ///
 /// Pending timers are not background work: `Workbench::settle` doesn't wait
 /// for them. Advance the clock, then settle.
+///
+/// Its wall-clock time starts at [`ManualClock::epoch`] and moves with it.
 pub struct ManualClock {
     start: Instant,
     state: Mutex<ClockState>,
@@ -156,6 +178,11 @@ impl Default for ManualClock {
 }
 
 impl ManualClock {
+    /// The wall-clock time a new manual clock starts at: 2026-01-01 00:00 UTC.
+    pub fn epoch() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_767_225_600)
+    }
+
     /// Moves time forward, firing every timer that comes due, in deadline
     /// order and on this thread.
     pub fn advance(&self, by: Duration) {
@@ -206,6 +233,10 @@ impl Clock for ManualClock {
         state.next_id += 1;
         let at = state.elapsed + delay;
         state.timers.push((at, id, fire));
+    }
+
+    fn system_time(&self) -> SystemTime {
+        Self::epoch() + self.state.lock().unwrap().elapsed
     }
 }
 
@@ -324,11 +355,15 @@ impl ProcessControl for FakeControl {
 
 // --- Downloads ---------------------------------------------------------------
 
-/// Downloads answered from a table. Unknown URLs answer HTTP 404.
+/// Downloads answered from a table, then from the local download fixture
+/// server once it is started. Other URLs answer HTTP 404.
 #[derive(Default)]
 pub struct ScriptedDownloads {
     table: Mutex<HashMap<String, Result<Vec<u8>, u16>>>,
     requests: Mutex<Vec<String>>,
+    server: OnceLock<DownloadServer>,
+    /// Real HTTP, to the fixture server on loopback only.
+    http: OnceLock<RealHost>,
 }
 
 impl ScriptedDownloads {
@@ -346,18 +381,38 @@ impl ScriptedDownloads {
     pub fn requests(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
     }
+
+    /// The local download fixture server, started on first use.
+    pub fn server(&self) -> &DownloadServer {
+        self.server.get_or_init(DownloadServer::start)
+    }
 }
 
 impl Downloads for ScriptedDownloads {
     fn fetch(&self, url: &str, sink: &mut dyn Write) -> Result<u64, DownloadError> {
+        self.fetch_with_length(url, sink, &mut |_| {})
+    }
+
+    fn fetch_with_length(
+        &self,
+        url: &str,
+        sink: &mut dyn Write,
+        length: &mut dyn FnMut(u64),
+    ) -> Result<u64, DownloadError> {
         self.requests.lock().unwrap().push(url.to_owned());
-        let answer = self.table.lock().unwrap().get(url).cloned().unwrap_or(Err(404));
-        match answer {
-            Ok(body) => {
+        let answer = self.table.lock().unwrap().get(url).cloned();
+        match (answer, self.server.get()) {
+            (Some(Ok(body)), _) => {
+                length(body.len() as u64);
                 sink.write_all(&body)?;
                 Ok(body.len() as u64)
             }
-            Err(status) => Err(DownloadError::Status(status)),
+            (Some(Err(status)), _) => Err(DownloadError::Status(status)),
+            (None, None) => Err(DownloadError::Status(404)),
+            (None, Some(server)) => {
+                let http = self.http.get_or_init(RealHost::new);
+                http.downloads().fetch_with_length(&server.local_url(url), sink, length)
+            }
         }
     }
 }
@@ -386,6 +441,15 @@ mod tests {
 
         host.clock().advance(Duration::from_millis(50));
         assert_eq!(*fired.lock().unwrap(), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn the_manual_clocks_wall_time_starts_at_its_epoch_and_moves_with_it() {
+        let host = TestHost::new();
+        assert_eq!(Host::clock(&host).system_time(), ManualClock::epoch());
+
+        host.clock().advance(Duration::from_secs(90));
+        assert_eq!(Host::clock(&host).system_time(), ManualClock::epoch() + Duration::from_secs(90));
     }
 
     #[test]
@@ -432,5 +496,31 @@ mod tests {
         assert_eq!(status("https://example.test/b"), 500);
         assert_eq!(status("https://example.test/missing"), 404);
         assert_eq!(host.downloads().requests().len(), 3);
+    }
+
+    #[test]
+    fn unscripted_downloads_go_to_the_fixture_server_once_it_runs() {
+        let host = TestHost::new();
+        host.downloads().serve("https://example.test/scripted", "table");
+        host.download_server().publish("https://example.test/served", "server");
+        host.download_server().publish("https://example.test/scripted", "shadowed");
+
+        let fetch = |url| {
+            let mut sink = Vec::new();
+            Host::downloads(&host).fetch(url, &mut sink).map(|_| String::from_utf8(sink).unwrap())
+        };
+        assert_eq!(fetch("https://example.test/scripted").unwrap(), "table");
+        assert_eq!(fetch("https://example.test/served").unwrap(), "server");
+        assert!(matches!(fetch("https://example.test/missing"), Err(DownloadError::Status(404))));
+        assert_eq!(host.download_server().requests(), ["https://example.test/served", "https://example.test/missing"]);
+    }
+
+    #[test]
+    fn the_support_folder_is_a_temp_dir_shared_by_clones() {
+        let host = TestHost::new();
+        let clone = host.clone();
+        assert!(host.support_dir().is_dir());
+        assert_eq!(Host::support_dir(&clone), host.support_dir());
+        assert_ne!(TestHost::new().support_dir(), host.support_dir());
     }
 }

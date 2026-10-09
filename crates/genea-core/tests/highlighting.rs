@@ -1,7 +1,7 @@
 //! Syntax highlighting (ticket #24): highlight spans in view state, for the
 //! first-class languages and the basic file types, kept in step with edits.
 
-use genea_core::{Command, Highlight, ProjectId, Workbench};
+use genea_core::{CaretMove::*, Command, Highlight, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 fn open_file(name: &str, text: &str) -> (FixtureProject, Workbench, ProjectId) {
@@ -119,12 +119,27 @@ fn edits_made_while_a_reparse_runs_are_caught_up_with_too() {
 fn deleting_text_is_highlighted_after_the_reparse() {
     let (_fixture, mut workbench, project) = open_file("main.ts", "// let a = 1;\n");
 
-    run(&mut workbench, project, [Command::Delete(genea_core::CaretMove::Right)]);
-    run(&mut workbench, project, [Command::Delete(genea_core::CaretMove::Right)]);
-    run(&mut workbench, project, [Command::Delete(genea_core::CaretMove::Right)]);
+    run(&mut workbench, project, [Command::Delete(Right)]);
+    run(&mut workbench, project, [Command::Delete(Right)]);
+    run(&mut workbench, project, [Command::Delete(Right)]);
     workbench.settle().unwrap();
 
     assert_highlighted(&spans(&workbench, project, 0), "let", Highlight::Keyword);
+}
+
+#[test]
+fn undo_and_redo_are_highlighted_after_the_reparse() {
+    let (_fixture, mut workbench, project) = open_file("main.ts", "let a = 1;\n");
+
+    // Undone before the reparse of the deletion lands: the text is back to
+    // what was parsed, but the shifted highlights lost `let`.
+    run(&mut workbench, project, [Command::Select(WordRight), Command::Delete(Left), Command::Undo]);
+    workbench.settle().unwrap();
+    assert_highlighted(&spans(&workbench, project, 0), "let", Highlight::Keyword);
+
+    run(&mut workbench, project, [Command::Redo, Command::InsertText("// ".into())]);
+    workbench.settle().unwrap();
+    assert_highlighted(&spans(&workbench, project, 0), "//  a = 1;", Highlight::Comment);
 }
 
 #[test]

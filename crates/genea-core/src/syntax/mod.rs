@@ -46,9 +46,10 @@ pub(crate) struct Syntax {
     tree: Option<Tree>,
     /// The last parse's highlights, shifted by the edits since.
     spans: Spans,
-    /// The buffer version that `tree` and `spans` are edited to.
+    /// Counts the edits: `tree` and `spans` are edited up to this one. Not
+    /// the buffer's version, which undo winds back.
     version: u64,
-    /// The buffer version the last parse was of.
+    /// The `version` the last parse was of.
     parsed_version: Option<u64>,
     /// The version the parse in flight is of, if one is.
     in_flight: Option<u64>,
@@ -76,7 +77,7 @@ pub(crate) struct Parsed {
 impl Syntax {
     /// The syntax for a file, or `None` if it isn't in a highlighted
     /// language or is too big.
-    pub(crate) fn for_file(path: &std::path::Path, text: &Rope, version: u64) -> Option<Self> {
+    pub(crate) fn for_file(path: &std::path::Path, text: &Rope) -> Option<Self> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         if text.len_bytes() > MAX_SYNTAX_BYTES {
             return None;
@@ -86,21 +87,21 @@ impl Syntax {
             language: Language::of_path(path)?,
             tree: None,
             spans: Spans::default(),
-            version,
+            version: 0,
             parsed_version: None,
             in_flight: None,
             edits_since_parse: Vec::new(),
         })
     }
 
-    /// Records an edit that made the buffer `version`: moves the tree and
-    /// the spans with the text.
-    pub(crate) fn edit(&mut self, edit: InputEdit, version: u64) {
+    /// Records an edit to the buffer: moves the tree and the spans with the
+    /// text.
+    pub(crate) fn edit(&mut self, edit: InputEdit) {
         if let Some(tree) = &mut self.tree {
             tree.edit(&edit);
         }
         self.spans.edit(&edit);
-        self.version = version;
+        self.version += 1;
         if self.in_flight.is_some() {
             self.edits_since_parse.push(edit);
         }

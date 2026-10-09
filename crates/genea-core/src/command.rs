@@ -32,6 +32,11 @@ pub enum Command {
     /// view rounds a click to the nearest cell boundary first. Cells past the
     /// end of a line or below the last line clamp to the text.
     PlaceCaret { line: usize, column: usize },
+    /// Retries the toolchain downloads that failed (a notice's Retry).
+    RetryToolchain,
+    /// Writes Genea's default versions as exact pins to `package.json` for
+    /// the roles the project doesn't pin (the unpinned notice's action).
+    PinToolchainDefaults,
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },
@@ -60,6 +65,14 @@ pub enum Command {
     Cut,
     /// ⌘V: types the system clipboard's text, replacing the selection.
     Paste,
+    /// ⌘Z: reverts the last undo step and restores the selections from
+    /// before it. Consecutive typing is one step until a pause of about a
+    /// second on the host clock, a caret jump, or a switch between typing
+    /// and deleting. Paste and Cut are steps of their own.
+    Undo,
+    /// ⌘⇧Z: makes the last undone step again and restores the selections
+    /// from after it. Any edit after an undo drops what could be redone.
+    Redo,
     /// ⌘S: writes the open file to disk in the background. `settle` (tests)
     /// or the change notification (the app) says when it is written.
     Save,
