@@ -57,6 +57,12 @@ imara-diff = { version = "0.2.0", default-features = false }
 # writes JSONL results (ticket #23).
 serde_json = "1.0.151"
 
+# The terminal (ticket #38): VT parsing, the grid and scrollback. Genea
+# runs the PTY itself (genea-host), so only the emulator is used.
+alacritty_terminal = { version = "0.26.0", default-features = false }
+# genea-host's real PTY: openpty, the controlling terminal, resizes, signals.
+libc = "0.2.190"
+
 # Host boundary (genea-host's RealHost). The system TLS stack, so no C crypto
 # library is built. It must be `native-tls`: in ureq 3.4.2,
 # `native-tls-no-default` alone leaves the backend out and every https

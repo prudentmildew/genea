@@ -49,6 +49,7 @@ use, and nothing else:
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
+| Terminal | `ProjectView::terminal` (`TerminalView`); `Command::ToggleTerminal`, `FocusTerminal`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | One shell per project (`src/terminal/`, below). |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
@@ -227,7 +228,8 @@ the whole text) leaves valid. The benchmark harness's `open-1mb` and
 
 ## The host boundary
 
-`genea_host::Host` provides `clock()`, `processes()`, `downloads()`,
+`genea_host::Host` provides `clock()`, `processes()`, `ptys()` (programs on
+pseudo-terminals: the terminal's shells), `downloads()`,
 `clipboard()` (below), `launch_environment()` (the variables Genea was
 started with; `SHELL` names the login shell), and `support_dir()`, Genea's application-support
 folder, where the core keeps its own files (recent projects, the toolchain
@@ -237,7 +239,9 @@ user's. `Downloads::fetch_with_length` also reports the response's
 `Content-Length`, for progress.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
-  idle wake-ups), `std::process`, and HTTP through `ureq` on the system TLS
+  idle wake-ups), `std::process`, `openpty` sessions (the program leads its
+  own session with the pty as its controlling terminal; `hang_up` sends
+  SIGHUP to its process group; `wait` reaps it with `waitpid`), and HTTP through `ureq` on the system TLS
   stack.
 - The clipboard is the one effect the core uses on the main thread (Cut,
   Copy and Paste are synchronous edits). The pasteboard lives in AppKit,
@@ -246,7 +250,12 @@ user's. `Downloads::fetch_with_length` also reports the response's
 - `genea_testkit::TestHost`: `ManualClock::advance` fires due timers;
   `ScriptedProcesses::script("tsc", |spec, io| …)` plays a program on a
   thread with real pipes (unscripted programs fail with `NotFound`) and
-  records every spawn; `ScriptedProcesses::script_shell("zsh", vars)` plays
+  records every spawn; `ScriptedPtys` (the **fake PTY**,
+  `TestHost::ptys()`) records every terminal started, each a `FakePty` the
+  test plays by hand: `output(bytes)` returns once Genea has read them (so
+  `settle()` after it shows them on the grid), `wait_for_input(text)` sees
+  what was typed, `exit(code)`, `wait_for_hang_up()`, `fail(kind)` for a
+  shell that can't start; `ScriptedProcesses::script_shell("zsh", vars)` plays
   a login shell with a real `/bin/sh` whose environment is exactly `vars`;
   `TestHost::set_launch_environment` sets the launch environment (by default
   only a `PATH`, with no `SHELL`, so no login shell runs);
@@ -262,7 +271,7 @@ user's. `Downloads::fetch_with_length` also reports the response's
   Bun and pnpm releases (indexes, checksums, archives; `*_with_bad_checksum`
   for a mismatch).
 
-A new kind of effect (a PTY, say) gets a trait in `genea-host`, an accessor on
+A new kind of effect (as `Ptys` was) gets a trait in `genea-host`, an accessor on
 `Host`, a real implementation in `genea-host/src/real.rs` and a scripted one
 in `genea-testkit/src/host.rs`. Keep the traits small and blocking: the core
 calls them from background threads.
@@ -313,6 +322,42 @@ PTY). `apply` sets `clear_env`, puts the project's variables first (the
 spec's own `env` entries win, e.g. `TERM`), and defaults `cwd` to the root.
 The slow lane `tests/environment_slow.rs` (`-- --ignored`) runs the real
 login shell.
+
+A process that must see the final environment waits for it:
+`Environment::is_ready` (no capture running) and `Toolchain::is_settled`
+(nothing reading, resolving or downloading), together
+`Project::environment_ready`. The terminal's shell starts through
+`Project::start_terminal_when_ready`, which the workbench calls after
+opening, after every command and after every background result.
+
+## The terminal
+
+`genea-core/src/terminal/` (ticket #38): one shell per project, the
+user's `$SHELL -l` in the project root with the project environment,
+`TERM=xterm-256color` and `COLORTERM=truecolor`, on a PTY from
+`host.ptys()`, emulated by `alacritty_terminal` (only its `Term` and the
+`vte` parser; Genea runs the PTY itself). Scrollback is 10,000 lines.
+
+- Threads: a reader thread reads the PTY and parses into the `Term` under a
+  mutex, at most 16 KB per lock hold; a writer thread writes input and
+  resizes. Answers the emulator writes back (`Event::PtyWrite`) go to the
+  writer; requests (title, OSC 52 copy) wait for an Apply.
+- The grid is copied into view state lazily (`Terminal::screen`, a
+  `RefCell`): only when view state is read after the emulator changed. The
+  reader wakes the main thread only once the last copy has been taken, so a
+  flood is copied at most once per read. The app reads at most once a frame
+  for background work (`App::pump` in genea-view).
+- `grid.rs` turns cells into `TerminalLine`s (text in grid columns, runs of
+  one `TerminalStyle`, inverse and hidden applied; ANSI 0–15 and the default
+  colours stay symbolic for the theme, 256-colour and 24-bit are RGB).
+  `input.rs` encodes keys, mouse reports (SGR, xterm, UTF-8), the wheel and
+  pastes for the modes the program set.
+- Synchronized updates (mode 2026) are applied as they arrive.
+- The view: `ui/terminal-pane.slint` and `src/terminal.rs` (a slot per
+  visible row, pushed only when it changed; the palette is
+  `Theme.terminal-palette`). The pane sits right of the editor; its width is
+  view-only state, dragged at the splitter. `terminalPosition: "bottom"`
+  isn't laid out yet.
 
 ## Tests
 

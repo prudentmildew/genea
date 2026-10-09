@@ -54,6 +54,22 @@ export global Theme {
     out property <color> link: root.dark ? #4493f8 : #0969da;
     out property <length> chrome-font-size: 12px;
 
+    // The terminal (ticket #38), indexed by `TermRun.fg-index` and
+    // `bg-index` (src/terminal.rs): its foreground, its background, then
+    // the 16 ANSI colours (black, red, green, yellow, blue, magenta, cyan,
+    // white, then the bright ones).
+    out property <[color]> terminal-palette: root.dark ? [
+        #e6edf3, #0d1117,
+        #484f58, #ff7b72, #3fb950, #d29922, #58a6ff, #bc8cff, #39c5cf, #b1bac4,
+        #6e7681, #ffa198, #56d364, #e3b341, #79c0ff, #d2a8ff, #56d4dd, #ffffff,
+    ] : [
+        #24292f, #ffffff,
+        #24292f, #cf222e, #116329, #4d2d00, #0969da, #8250df, #1b7c83, #6e7781,
+        #57606a, #a40e26, #1a7f37, #633c01, #218bff, #a475f9, #3192aa, #8c959f,
+    ];
+    // The block cursor, see-through so the character under it shows.
+    out property <color> terminal-cursor: root.dark ? #58a6ff80 : #1f6feb66;
+
     // Highlight colours, indexed by `Run.highlight`. The order is
     // `highlight_index` in src/surface.rs: 0 is plain text, then one entry per
     // `genea_core::Highlight`.

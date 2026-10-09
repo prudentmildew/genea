@@ -1,5 +1,6 @@
-//! The test host: a manual clock, scripted processes, scripted downloads
-//! backed by the local download fixture server, and a temp support folder.
+//! The test host: a manual clock, scripted processes, fake PTYs, scripted
+//! downloads backed by the local download fixture server, and a temp support
+//! folder.
 
 use std::{
     collections::HashMap,
@@ -16,11 +17,11 @@ use std::{
 };
 
 use genea_host::{
-    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, RealHost,
-    SharedHost, TimerCallback,
+    Child, Clipboard, Clock, DownloadError, Downloads, Exit, Host, ProcessControl, ProcessSpec, Processes, Ptys,
+    RealHost, SharedHost, TimerCallback,
 };
 
-use crate::{DownloadServer, FakeTools};
+use crate::{DownloadServer, FakeTools, ScriptedPtys};
 
 /// A host whose effects are scripted by the test.
 ///
@@ -39,6 +40,7 @@ pub struct TestHost {
 struct Inner {
     clock: ManualClock,
     processes: ScriptedProcesses,
+    ptys: ScriptedPtys,
     downloads: ScriptedDownloads,
     support: tempfile::TempDir,
     clipboard: TestClipboard,
@@ -50,6 +52,7 @@ impl Default for Inner {
         Inner {
             clock: ManualClock::default(),
             processes: ScriptedProcesses::default(),
+            ptys: ScriptedPtys::default(),
             downloads: ScriptedDownloads::default(),
             support: tempfile::Builder::new().prefix("genea-support-").tempdir().expect("create a temp dir"),
             clipboard: TestClipboard::default(),
@@ -74,6 +77,11 @@ impl TestHost {
 
     pub fn processes(&self) -> &ScriptedProcesses {
         &self.inner.processes
+    }
+
+    /// The fake PTYs: the terminal's shells, played by the test.
+    pub fn ptys(&self) -> &ScriptedPtys {
+        &self.inner.ptys
     }
 
     pub fn downloads(&self) -> &ScriptedDownloads {
@@ -122,6 +130,10 @@ impl Host for TestHost {
 
     fn processes(&self) -> &dyn Processes {
         &self.inner.processes
+    }
+
+    fn ptys(&self) -> &dyn Ptys {
+        &self.inner.ptys
     }
 
     fn downloads(&self) -> &dyn Downloads {

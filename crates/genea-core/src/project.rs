@@ -26,6 +26,7 @@ use crate::{
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     reading::{self, Contents, FirstScreen},
     syntax::ParseJob,
+    terminal::Terminal,
     toolchain::{LOCKFILES, Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
@@ -79,6 +80,8 @@ pub(crate) struct Project {
     pub(crate) environment: Option<Environment>,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
+    /// The terminal pane's shell (ticket #38).
+    pub(crate) terminal: Terminal,
 }
 
 impl Project {
@@ -105,6 +108,7 @@ impl Project {
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
             shown_hunk: None,
+            terminal: Terminal::new(id),
         }
     }
 
@@ -307,6 +311,23 @@ impl Project {
         environment.process_env(tools.map(|installed| installed.bin_dir.as_path()))
     }
 
+    /// Whether the environment for new processes is final for now: the
+    /// login-shell capture has landed and the toolchain has settled, so the
+    /// pinned tools are on PATH.
+    fn environment_ready(&self) -> bool {
+        self.environment.as_ref().is_some_and(Environment::is_ready)
+            && self.toolchain.as_ref().is_none_or(Toolchain::is_settled)
+    }
+
+    /// Starts the terminal's shell once the environment is ready. Called
+    /// after opening and after every background result.
+    pub(crate) fn start_terminal_when_ready(&mut self, host: &SharedHost, jobs: &Jobs) {
+        if self.terminal.is_waiting() && self.environment_ready() {
+            let env = self.process_env();
+            self.terminal.start(env, host.clone(), jobs);
+        }
+    }
+
     /// Reads the toolchain pins and starts the downloads, in the background.
     /// A folder without a root `package.json` has no toolchain. (Checking is
     /// one stat on the main thread, like `open_project`'s folder check.)
@@ -351,21 +372,38 @@ impl Project {
                     editor.replace_lines(lines, &text, now, self.viewport_rows);
                 }
             }
-            Command::OpenFile(path) => self.open_file(path, None, jobs),
-            Command::OpenFileAt { path, at } => self.open_file(path, Some(at), jobs),
             Command::OpenConfig => self.open_config(jobs),
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
             Command::ToggleFolder(path) => self.files.toggle(&path),
-            Command::SelectTab { .. }
-            | Command::FocusPane(_)
-            | Command::CloseTab { .. }
+            Command::SelectTab { .. } | Command::FocusPane(_) => {
+                self.terminal.unfocus();
+                self.tab_command(command, jobs)
+            }
+            Command::OpenFile(path) => {
+                self.terminal.unfocus();
+                self.open_file(path, None, jobs)
+            }
+            Command::OpenFileAt { path, at } => {
+                self.terminal.unfocus();
+                self.open_file(path, Some(at), jobs)
+            }
+            Command::CloseTab { .. }
             | Command::ResolveClose(_)
             | Command::SplitRight
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
+            Command::ToggleTerminal
+            | Command::FocusTerminal
+            | Command::SetTerminalSize { .. }
+            | Command::TerminalText(_)
+            | Command::TerminalPreedit(_)
+            | Command::TerminalKey(..)
+            | Command::ScrollTerminal { .. }
+            | Command::TerminalMouse { .. }
+            | Command::TerminalPaste => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
@@ -682,6 +720,7 @@ impl Project {
             config: self.config.clone(),
             problems: self.problems.items(),
             left_column: self.left_column,
+            terminal: self.terminal.view(),
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
         }
