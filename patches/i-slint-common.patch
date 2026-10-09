@@ -1,0 +1,36 @@
+--- a/sharedfontique.rs
++++ b/sharedfontique.rs
+@@ -17,8 +17,10 @@
+ /// When `shared` is true, the collection uses `Arc`-based internal sharing,
+ /// so that clones share the underlying data and mutations are visible across clones.
+ pub fn create_collection(shared: bool) -> Collection {
++    // GENEA PATCH (ADR 0004): no system-font scan. It costs ~25 ms warm and
++    // ~185 ms cold at startup. Genea registers its fonts explicitly below.
+     let mut collection =
+-        fontique::Collection::new(fontique::CollectionOptions { shared, system_fonts: true });
++        fontique::Collection::new(fontique::CollectionOptions { shared, system_fonts: false });
+     let mut source_cache =
+         if shared { fontique::SourceCache::new_shared() } else { fontique::SourceCache::default() };
+ 
+@@ -116,6 +118,21 @@
+         }
+     }
+ 
++    // GENEA PATCH (ADR 0004): with the scan off, register the editor font
++    // (Menlo) and its symbol fallback (Apple Symbols) explicitly. They become
++    // the generic families below, so every Text resolves through them.
++    // Apple Color Emoji is registered lazily by Genea, not here (spec #19).
++    #[cfg(target_os = "macos")]
++    for path in ["/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Apple Symbols.ttf"] {
++        register_path(
++            path.into(),
++            &mut collection,
++            &mut source_cache,
++            &mut default_fonts,
++            &mut chain_families,
++        );
++    }
++
+     if !chain_families.is_empty() {
+         for generic_family in [
+             fontique::GenericFamily::SansSerif,

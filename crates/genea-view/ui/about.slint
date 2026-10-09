@@ -1,0 +1,35 @@
+// The About dialog. Slint's royalty-free licence requires AboutSlint here
+// (ADR 0004); the packaging ticket adds the third-party licences.
+
+import { AboutSlint } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export component AboutWindow inherits Window {
+    in property <string> version;
+
+    title: "About Genea";
+    background: Theme.editor-background;
+    preferred-width: 360px;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: "Genea";
+            font-size: 22px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            color: Theme.chrome-foreground;
+        }
+
+        Text {
+            text: "Version " + root.version;
+            horizontal-alignment: center;
+            color: Theme.chrome-muted;
+        }
+
+        AboutSlint { }
+    }
+}

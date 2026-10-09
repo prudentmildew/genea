@@ -1,0 +1,11 @@
+[package]
+name = "genea-testkit"
+description = "Test support for core API tests: the test host and temp-dir fixture projects."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+genea-host.workspace = true
+tempfile.workspace = true
