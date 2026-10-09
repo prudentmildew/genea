@@ -142,6 +142,10 @@ pub enum Command {
     ScrollPane { pane: usize, rows: f64 },
 
     // The terminal pane (ticket #38).
+    /// Tells the core how many rows and columns of cells fit in the
+    /// terminal pane. The shell is told too (SIGWINCH), and the grid
+    /// reflows.
+    SetTerminalSize { rows: usize, columns: usize },
     /// Types text into the terminal: a key press or an IME commit.
     TerminalText(String),
     /// A key that isn't plain text, or one with ⌃ or ⌥ held: sent to the

@@ -11,6 +11,7 @@ use std::{path::Path, sync::mpsc, time::Duration};
 use genea_core::{
     Command, Modifiers, ProjectId, TerminalKey, TerminalStatus, TerminalView, ToolState, ToolView, Workbench,
 };
+use genea_host::PtySize;
 use genea_testkit::{FakePty, FixtureProject, TestHost};
 
 /// A project open on `host`, settled, with its terminal's fake PTY.
@@ -146,4 +147,74 @@ fn node_and_pnpm_in_the_terminal_are_the_pinned_versions_once_downloaded() {
     workbench.settle().unwrap();
 
     assert_eq!(screen(&workbench, project), ["v24.18.0", "11.13.0"]);
+}
+
+#[test]
+fn keys_are_sent_the_way_xterm_sends_them_in_the_programs_mode() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    let (ctrl, alt, shift) = (
+        Modifiers { ctrl: true, ..Modifiers::default() },
+        Modifiers { alt: true, ..Modifiers::default() },
+        Modifiers { shift: true, ..Modifiers::default() },
+    );
+
+    for (key, modifiers) in [
+        (TerminalKey::Up, Modifiers::default()),
+        (TerminalKey::Char('c'), ctrl),
+        (TerminalKey::Left, alt),
+        (TerminalKey::Right, shift),
+        (TerminalKey::Backspace, Modifiers::default()),
+        (TerminalKey::F(5), Modifiers::default()),
+    ] {
+        workbench.dispatch(project, Command::TerminalKey(key, modifiers));
+    }
+    assert_eq!(pty.wait_for_input("\x1b[15~"), "\x1b[A\x03\x1bb\x1b[1;2C\x7f\x1b[15~");
+
+    // A full-screen program turns on application cursor keys.
+    pty.output("\x1b[?1h");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::TerminalKey(TerminalKey::Up, Modifiers::default()));
+    assert!(pty.wait_for_input("\x1bOA").ends_with("\x1b[15~\x1bOA"));
+}
+
+#[test]
+fn the_terminal_takes_the_size_the_view_gives_it() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    assert_eq!(pty.size(), PtySize { rows: 24, columns: 80 });
+
+    workbench.dispatch(project, Command::SetTerminalSize { rows: 5, columns: 3 });
+    pty.wait_for_size(PtySize { rows: 5, columns: 3 });
+    pty.output("abcdef");
+    workbench.settle().unwrap();
+
+    let view = terminal(&workbench, project);
+    assert_eq!((view.rows, view.columns, view.lines.len()), (5, 3, 5));
+    // Lines wrap at the new width.
+    assert_eq!(screen(&workbench, project), ["abc", "def"]);
+}
+
+#[test]
+fn a_shell_started_after_a_resize_gets_the_new_size() {
+    let host = TestHost::new();
+    // The login shell never answers, so the terminal waits for it.
+    host.set_launch_environment([("SHELL", "/bin/zsh"), ("PATH", "/usr/bin:/bin")]);
+    host.processes().script("zsh", |_, io| {
+        while !io.killed() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        1
+    });
+    let fixture = fixture();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+
+    workbench.dispatch(project, Command::SetTerminalSize { rows: 40, columns: 120 });
+    host.clock().advance(genea_core::LOGIN_SHELL_TIMEOUT);
+    workbench.settle().unwrap();
+
+    assert_eq!(host.ptys().last().size(), PtySize { rows: 40, columns: 120 });
 }

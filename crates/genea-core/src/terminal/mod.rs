@@ -29,10 +29,7 @@ use alacritty_terminal::{
     Term,
     event::{Event, EventListener},
     grid::Dimensions,
-    term::{
-        Config,
-        cell::Flags,
-    },
+    term::{Config, TermMode, cell::Flags},
     vte::ansi::{CursorShape, Processor, Timeout},
 };
 use genea_host::{Exit, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
@@ -280,16 +277,37 @@ impl Terminal {
 
     /// A terminal command from the user.
     pub(crate) fn command(&mut self, command: Command) {
-        let Shell::Running(session) = &self.shell else { return };
-        let bytes = match command {
-            Command::TerminalText(text) => text.into_bytes(),
+        match command {
+            Command::SetTerminalSize { rows, columns } => self.resize(Size { rows: rows.max(1), columns: columns.max(2) }),
+            Command::TerminalText(text) => self.send(text.into_bytes()),
             Command::TerminalKey(key, modifiers) => {
-                let mode = *session.term.lock().unwrap().mode();
-                input::key(key, modifiers, mode)
+                if let Some(mode) = self.mode() {
+                    self.send(input::key(key, modifiers, mode));
+                }
             }
-            _ => return,
-        };
-        self.send(bytes);
+            _ => {}
+        }
+    }
+
+    /// The modes the running program has set.
+    fn mode(&self) -> Option<TermMode> {
+        let Shell::Running(session) = &self.shell else { return None };
+        Some(*session.term.lock().unwrap().mode())
+    }
+
+    fn resize(&mut self, size: Size) {
+        if size == self.size {
+            return;
+        }
+        self.size = size;
+        match &self.shell {
+            Shell::Running(session) => {
+                session.term.lock().unwrap().resize(size);
+                let _ = session.to_pty.send(ToPty::Resize(size.into()));
+                self.refresh();
+            }
+            _ => self.lines.resize_with(size.rows, || TerminalLine { text: String::new() }),
+        }
     }
 
     /// Sends input to the program.

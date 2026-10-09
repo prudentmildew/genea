@@ -295,7 +295,9 @@ impl Project {
             | Command::MoveTabToOtherSide { .. }
             | Command::CloseSplit
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
-            Command::TerminalText(_) | Command::TerminalKey(..) => self.terminal.command(command),
+            Command::SetTerminalSize { .. } | Command::TerminalText(_) | Command::TerminalKey(..) => {
+                self.terminal.command(command)
+            }
             Command::SetViewport { rows } => {
                 self.viewport_rows = rows.max(1.0);
                 if let Some(editor) = &mut self.editor {
