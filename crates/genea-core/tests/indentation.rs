@@ -229,3 +229,35 @@ fn tab_with_a_selection_indents_the_selected_lines_but_empty_ones() {
     let editor = workbench.project(project).unwrap().editor.unwrap();
     assert_eq!(editor.lines[1].selections, [5..7], "the selection stays on its text");
 }
+
+#[test]
+fn shift_tab_takes_one_level_off_each_caret_line() {
+    let fixture = FixtureProject::new()
+        .file(".oxfmtrc.json", r#"{ "tabWidth": 4 }"#)
+        .file("main.ts", "        a;\n      b;\n\tc;\n  d;\ne;\n");
+    let (fixture, mut workbench, project) = open(fixture, "main.ts");
+
+    run(
+        &mut workbench,
+        project,
+        [
+            Command::PlaceCaret { line: 0, column: 9 },
+            Command::ExtendSelection { line: 4, column: 1 },
+            Command::Outdent,
+        ],
+    );
+
+    // Spaces go back to the previous multiple of 4; a tab goes whole.
+    assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "    a;\n    b;\nc;\nd;\ne;\n");
+}
+
+#[test]
+fn shift_tab_without_a_selection_keeps_the_caret_on_its_text() {
+    let fixture = FixtureProject::new().file("main.ts", "    let a;\n");
+    let (fixture, mut workbench, project) = open(fixture, "main.ts");
+
+    run(&mut workbench, project, [Command::PlaceCaret { line: 0, column: 8 }, Command::Outdent]);
+
+    assert_eq!(saved(&fixture, &mut workbench, project, "main.ts"), "  let a;\n");
+    assert_eq!(workbench.project(project).unwrap().status.caret.unwrap(), "1:7");
+}

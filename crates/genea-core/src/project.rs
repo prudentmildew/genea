@@ -482,10 +482,14 @@ impl Project {
                     editor.new_line(indentation, now, self.viewport_rows);
                 }
             }
-            Command::Indent => {
+            Command::Indent | Command::Outdent => {
                 let indentation = self.focused_indentation();
                 if let Some(editor) = &mut self.editor {
-                    editor.indent(indentation, now, self.viewport_rows);
+                    if command == Command::Indent {
+                        editor.indent(indentation, now, self.viewport_rows);
+                    } else {
+                        editor.outdent(indentation, now, self.viewport_rows);
+                    }
                 }
             }
             Command::Copy => {

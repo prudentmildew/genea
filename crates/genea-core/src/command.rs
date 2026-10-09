@@ -120,6 +120,10 @@ pub enum Command {
     /// is what `.oxfmtrc.json` and `.editorconfig` resolve to (ticket #26),
     /// shown in `StatusBar::indentation`.
     Indent,
+    /// ⇧Tab: takes one level of indentation off each line the carets and
+    /// selections are on (a leading tab, or leading spaces back to the
+    /// previous multiple of the indentation's width).
+    Outdent,
     /// ⌘C: puts the selection on the system clipboard. Does nothing with
     /// nothing selected.
     Copy,

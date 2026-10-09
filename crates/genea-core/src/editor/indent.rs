@@ -44,6 +44,31 @@ impl Editor {
         }
     }
 
+    /// ⇧Tab: takes one level of indentation off every line the carets and
+    /// selections are on: a leading tab, or leading spaces back to the
+    /// previous multiple of the indentation's width. Carets and selections
+    /// stay on their text.
+    pub(crate) fn outdent(&mut self, indentation: Indentation, now: Instant, viewport_rows: f64) {
+        self.preedit.clear();
+        let edits = self
+            .caret_lines()
+            .into_iter()
+            .filter_map(|line| {
+                let chars = self.line_chars(line);
+                let removed = match chars.first() {
+                    Some('\t') => 1,
+                    _ => match chars.iter().take_while(|&&c| c == ' ').count() {
+                        0 => return None,
+                        spaces => (spaces - 1) % indentation.tab_width + 1,
+                    },
+                };
+                let start = self.text.line_to_char(line);
+                Some((start..start + removed, String::new()))
+            })
+            .collect();
+        self.edit_text(edits, EditKind::Other, now, viewport_rows);
+    }
+
     /// The lines the carets and selections are on. A selection that ends at
     /// the start of a line leaves that line out.
     pub(super) fn caret_lines(&self) -> BTreeSet<usize> {
