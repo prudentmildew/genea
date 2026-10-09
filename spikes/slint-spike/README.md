@@ -40,11 +40,13 @@ Slint has nothing like GPUI's foreground journal, so the spike keeps its own (`m
 
 ## Findings
 
-The verdict and full numbers are on the issue. `results/raw.json` is the unconstrained run (Apple M5, 60 Hz display). In short:
+The verdict and full numbers are on the issue. `results/raw.json` is the unconstrained run (Apple M5, 60 Hz display). `results/cold.json` is the same suite again, plus cold starts after `purge`. In short:
 
 - **Idle is on demand.** Slint's `CADisplayLink` pauses when nothing is dirty. With the caret blink off, idle is 0.00 % CPU and 0.5 wake-ups/s. The caret blink is the only wake-up source, but every blink redraws the whole window (the wgpu surface has no partial rendering): about 0.8 % CPU and ~10 wake-ups per blink.
 - **Keystroke → frame** p95 is 10.6 ms with the synchronous reparse, and 4.2 ms if the reparse were off the frame path. The Slint frame itself is p95 ~3.5 ms (draw ~2.5 ms).
 - **Scrolling** at 60 Hz: 0 % late. Per-frame work p95 is ~3.2 ms steady and ~5.3 ms fling, plus ≤ 0.5 ms view sync.
+- **Cold start** p95 is 963 ms (p50 861 ms), after `purge`. The binary is 22 MB, including prebuilt Skia.
 - **Warm start** p95 is 198 ms. `BackendSelector::select` takes ~50 ms (winit event loop and NSApplication). Window, wgpu and Skia setup up to the first frame tick take ~95 ms, and the first draw (fonts, shaping) ~21 ms.
 - **Idle memory** is 112 MB, 65 MB before the second frame: the same shape as GPUI. `footprint` attributes ~83 MB to graphics: ~47 MB GPU-private, 30 MB drawable IOSurfaces and 6 MB IOAccelerator. Setting the `CAMetalLayer` to two drawables (`SPIKE_TWO_DRAWABLES=1`) didn't change it.
 - **Licences**: `cargo deny check licenses` passes. Slint's crates are `GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0`, and only the royalty-free licence is allowed in `deny.toml`. `r-efi` has LGPL only as an OR alternative. There are no MPL exceptions. The prebuilt Skia binary is BSD-3 and includes ICU data (Unicode licence).
+- **Feel**: typing and trackpad scrolling, including momentum, felt native, the same as GPUI (the user's judgement).
