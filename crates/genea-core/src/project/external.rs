@@ -1,10 +1,13 @@
 //! Open files following external changes on disk (ticket #32; the
 //! comparison is in `crate::disk`).
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use super::Project;
-use crate::{editor::Editor, jobs::Jobs, watcher::FileChanges};
+use crate::{command::ConflictChoice, editor::Editor, jobs::Jobs, watcher::FileChanges};
 
 impl Project {
     /// The watcher reported changes: every open file among them (or every
@@ -19,6 +22,15 @@ impl Project {
             .collect();
         for path in changed {
             self.check_disk(path, jobs);
+        }
+    }
+
+    /// Answers an open file's conflict bar.
+    pub(super) fn resolve_conflict(&mut self, path: &Path, choice: ConflictChoice, now: Instant, jobs: &Jobs) {
+        let rows = self.viewport_rows;
+        if let Some(editor) = self.open_editor_mut(path) {
+            editor.resolve_conflict(choice, now, rows);
+            self.reparse_file(path, jobs);
         }
     }
 

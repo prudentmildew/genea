@@ -2,7 +2,7 @@
 //! (ticket #32): a clean buffer reloads, undoably; a dirty one shows a
 //! conflict bar; Genea's own saves are neither.
 
-use genea_core::{Command, EditorView, ProjectId, Workbench};
+use genea_core::{Command, ConflictChoice, EditorView, ProjectId, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 fn open(path: &str, text: &str) -> (FixtureProject, Workbench, ProjectId) {
@@ -70,4 +70,35 @@ fn a_buffer_with_unsaved_edits_shows_the_conflict_bar_and_keeps_them() {
     assert!(view.conflict);
     assert!(view.modified);
     assert_eq!(text(&workbench, project), ["mine let a = 1;", ""]);
+}
+
+/// Opens `main.ts`, types into it, then changes it on disk: the conflict
+/// bar is showing.
+fn conflict() -> (FixtureProject, Workbench, ProjectId) {
+    let (fixture, mut workbench, project) = open("main.ts", "let a = 1;\n");
+    run(&mut workbench, project, [Command::InsertText("mine ".into())]);
+    fixture.write("main.ts", "theirs\n");
+    workbench.settle().unwrap();
+    assert!(editor(&workbench, project).conflict);
+    (fixture, workbench, project)
+}
+
+fn resolve(choice: ConflictChoice) -> Command {
+    Command::ResolveConflict { path: "main.ts".into(), choice }
+}
+
+#[test]
+fn reload_in_the_conflict_bar_takes_the_disk_and_undo_brings_my_edits_back() {
+    let (_fixture, mut workbench, project) = conflict();
+
+    run(&mut workbench, project, [resolve(ConflictChoice::Reload)]);
+
+    let view = editor(&workbench, project);
+    assert!(!view.conflict);
+    assert!(!view.modified);
+    assert_eq!(text(&workbench, project), ["theirs", ""]);
+
+    run(&mut workbench, project, [Command::Undo]);
+    assert_eq!(text(&workbench, project), ["mine let a = 1;", ""]);
+    assert!(editor(&workbench, project).modified);
 }

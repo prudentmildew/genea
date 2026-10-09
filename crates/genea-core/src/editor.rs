@@ -17,8 +17,8 @@ use tree_sitter::{InputEdit, Point};
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    command::CaretMove,
-    disk::{Checked, DiskCheck, DiskText, Splice},
+    command::{CaretMove, ConflictChoice},
+    disk::{self, Checked, DiskCheck, DiskText, Splice},
     history::{Change, Edit, EditKind, History, Selection},
     syntax::{Highlight, ParseJob, Parsed, Syntax},
     text::{self, LineEnding},
@@ -1017,6 +1017,24 @@ impl Editor {
             Some(_) => self.conflict = true,
         }
         true
+    }
+
+    /// Answers the conflict bar. Reload replaces the buffer with the disk's
+    /// text as one undo step.
+    pub(crate) fn resolve_conflict(&mut self, choice: ConflictChoice, now: Instant, viewport_rows: f64) {
+        if !self.conflict {
+            return;
+        }
+        match choice {
+            ConflictChoice::Reload => {
+                self.conflict = false;
+                match disk::splice(&self.text, &self.disk) {
+                    Some(splice) => self.reload(splice, now, viewport_rows),
+                    None => self.saved_version = self.version,
+                }
+            }
+            ConflictChoice::KeepMyEdits => {}
+        }
     }
 
     fn set_disk(&mut self, text: Rope) {

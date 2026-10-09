@@ -144,6 +144,21 @@ pub enum Command {
     CloseSplit,
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
+
+    /// Answers an open file's conflict bar (`EditorView::conflict`): its
+    /// file changed on disk while it had unsaved edits. The path is as in
+    /// `EditorView::path`.
+    ResolveConflict { path: PathBuf, choice: ConflictChoice },
+}
+
+/// What to do when an open file with unsaved edits changed on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictChoice {
+    /// Replace the buffer with the file on disk, as one undo step, so Undo
+    /// brings the unsaved edits back.
+    Reload,
+    /// Keep the buffer as it is; the next save overwrites the file on disk.
+    KeepMyEdits,
 }
 
 /// What to do with unsaved edits in a closing tab.
