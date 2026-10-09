@@ -245,17 +245,23 @@ impl FakeLsp {
     /// returns them all. Messages travel through pipes and threads, so a
     /// test that checks what Genea *sent* waits here; it fails after 10 s.
     pub fn wait_for(&self, method: &str, count: usize) -> Vec<Value> {
+        self.wait_until(method, |found| found.len() >= count)
+    }
+
+    /// Waits until the params of every `method` message so far satisfy
+    /// `done`, and returns them; fails after 10 s.
+    pub fn wait_until(&self, method: &str, done: impl Fn(&[Value]) -> bool) -> Vec<Value> {
         let deadline = Instant::now() + WAIT_TIMEOUT;
         let mut received = self.log.received.lock().unwrap();
         loop {
             let found: Vec<Value> =
                 received.iter().filter(|r| r.method == method).map(|r| r.params.clone()).collect();
-            if found.len() >= count {
+            if done(&found) {
                 return found;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                panic!("the fake language server got {} `{method}` messages, not {count}", found.len());
+                panic!("the fake language server's `{method}` messages never got there: {found:#?}");
             }
             received = self.log.changed.wait_timeout(received, left).unwrap().0;
         }

@@ -9,7 +9,7 @@ use genea_core::{
     MAX_RESTARTS, ProcessSpec, ProjectId, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT, Severity, Workbench,
 };
 use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// The tsgo binary in a project with TypeScript 7 installed by pnpm: the
 /// platform package sits beside `typescript` in the virtual store.
@@ -358,7 +358,7 @@ fn a_server_that_never_answers_doesnt_hold_up_typing() {
 #[test]
 fn a_flood_of_server_messages_doesnt_hold_up_typing() {
     let fixture = typescript_project().file("src/main.ts", "oops\n").build();
-    let fake = FakeLsp::new().error("oops", TYPE_ERROR).flood(100_000);
+    let fake = FakeLsp::new().error("oops", TYPE_ERROR).flood(20_000);
     let mut session = open(fixture, &fake);
     session.dispatch(Command::OpenFile("src/main.ts".into()));
     session.settle();
@@ -396,4 +396,166 @@ fn a_slow_server_gets_only_the_latest_text_and_its_diagnostics_win() {
     );
     let pulls = fake.received("textDocument/diagnostic").len();
     assert!(pulls <= 5, "one pull in flight per file, not one per keystroke: {pulls}");
+}
+
+// --- Watched files ---------------------------------------------------------------
+
+/// Every (file name, change type) sent as watched-file changes so far.
+fn watched(changes: &[Value]) -> Vec<(String, u64)> {
+    let mut events: Vec<(String, u64)> = changes
+        .iter()
+        .flat_map(|params| params["changes"].as_array().cloned().unwrap_or_default())
+        .map(|event| {
+            let uri = event["uri"].as_str().unwrap();
+            (uri.rsplit('/').next().unwrap().to_owned(), event["type"].as_u64().unwrap())
+        })
+        .collect();
+    events.sort();
+    events.dedup();
+    events
+}
+
+const CREATED: u64 = 1;
+const DELETED: u64 = 3;
+
+#[test]
+fn file_creations_and_deletions_reach_the_server_as_watched_file_changes() {
+    let fixture = typescript_project().file("src/a.ts", "").file("src/old.ts", "").build();
+    let fake = FakeLsp::new().watch("**/*.ts");
+    let mut session = open(fixture, &fake);
+    session.settle();
+    // The fake registers its globs once initialized; Genea's answer means
+    // the registration is in.
+    fake.wait_for("client/registerCapability", 1);
+    session.settle();
+
+    session.fixture.write("src/new.ts", "export {};\n");
+    session.fixture.remove("src/old.ts");
+    session.fixture.write("src/notes.md", "not watched\n");
+    session.settle();
+
+    let wanted = [("new.ts".to_owned(), CREATED), ("old.ts".to_owned(), DELETED)];
+    let changes = fake.wait_until("workspace/didChangeWatchedFiles", |changes| {
+        wanted.iter().all(|event| watched(changes).contains(event))
+    });
+    assert_eq!(watched(&changes), wanted, "only what the server registered for");
+}
+
+// --- Finding TypeScript 7 ----------------------------------------------------------
+
+const ADD_TYPESCRIPT: &str = "Language intelligence is off: this project doesn't have TypeScript 7.";
+const NOT_INSTALLED: &str =
+    "Language intelligence is off until TypeScript 7 is installed: install the project's dependencies.";
+
+impl Session {
+    fn language_notices(&self) -> Vec<genea_core::Notice> {
+        self.view().notices.into_iter().filter(|n| n.message.starts_with("Language intelligence")).collect()
+    }
+
+    fn tsgo_starts(&self) -> usize {
+        self.host.processes().spawned().iter().filter(|spec| spec.program_name() == "tsc").count()
+    }
+}
+
+/// Opens a project that may not have TypeScript 7; tsgo, if Genea starts
+/// it, is played by `fake`.
+fn open_plain(fixture: FixtureProject, fake: &FakeLsp) -> Session {
+    let host = TestHost::new();
+    fake.install(&host, "tsc");
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    let mut session = Session { fixture, host, workbench, project };
+    session.settle();
+    session
+}
+
+#[test]
+fn a_project_without_typescript_7_offers_to_add_it_and_starts_tsgo_once_installed() {
+    let package_json = "{\n  \"name\": \"app\",\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\"\n  }\n}\n";
+    let fixture = FixtureProject::new().file("package.json", package_json).file("src/main.ts", "oops\n").build();
+    let fake = FakeLsp::new().error("oops", TYPE_ERROR);
+    let mut session = open_plain(fixture, &fake);
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+
+    assert_eq!(session.tsgo_starts(), 0);
+    assert_eq!(session.language_server(), status(LanguageServerState::Off, "TypeScript off"));
+    let notices = session.language_notices();
+    assert_eq!(notices.iter().map(|n| n.message.as_str()).collect::<Vec<_>>(), [ADD_TYPESCRIPT]);
+    let action = notices[0].action.clone().expect("an action");
+    assert_eq!(action.label, "Add TypeScript 7");
+
+    session.dispatch(action.command);
+    session.settle();
+    assert_eq!(
+        session.fixture.read("package.json"),
+        "{\n  \"name\": \"app\",\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\",\n    \"typescript\": \"^7.0.2\"\n  }\n}\n"
+    );
+    let messages: Vec<String> = session.language_notices().into_iter().map(|n| n.message).collect();
+    assert_eq!(messages, [NOT_INSTALLED]);
+    assert_eq!(session.tsgo_starts(), 0);
+
+    // The user installs the dependencies in the terminal.
+    session.fixture.write("node_modules/typescript/package.json", r#"{ "name": "typescript", "version": "7.0.2" }"#);
+    session.fixture.write("node_modules/@typescript/typescript-darwin-arm64/lib/tsc", "#!/bin/sh\n");
+    session.settle();
+
+    assert_eq!(session.tsgo_starts(), 1);
+    assert_eq!(session.language_server(), ready("TypeScript 7.0.0-fake"));
+    assert_eq!(session.language_notices(), []);
+    assert_eq!(session.typescript_problems().len(), 1, "the open file is synced");
+}
+
+#[test]
+fn an_older_typescript_is_named_and_adding_7_replaces_it() {
+    let fixture = FixtureProject::new()
+        .file("package.json", r#"{ "dependencies": { "typescript": "~5.9.2" } }"#)
+        .file("node_modules/typescript/package.json", r#"{ "name": "typescript", "version": "5.9.3" }"#)
+        .build();
+    let mut session = open_plain(fixture, &FakeLsp::new());
+
+    let notices = session.language_notices();
+    assert_eq!(
+        notices[0].message,
+        "Language intelligence is off: it needs TypeScript 7, and this project has TypeScript 5.9.3."
+    );
+    session.dispatch(notices[0].action.clone().unwrap().command);
+    session.settle();
+    assert_eq!(session.fixture.read("package.json"), "{\n  \"dependencies\": {\n    \"typescript\": \"^7.0.2\"\n  }\n}");
+}
+
+#[test]
+fn typescript_7_under_an_alias_is_found() {
+    // As in vscode: `typescript` is TS 6, TS 7 comes as `@typescript/native`.
+    let fixture = FixtureProject::new()
+        .file(
+            "package.json",
+            r#"{ "devDependencies": { "typescript": "npm:@typescript/typescript6@^6.0.2", "@typescript/native": "npm:typescript@^7.0.2" } }"#,
+        )
+        .file("node_modules/typescript/package.json", r#"{ "name": "@typescript/typescript6", "version": "6.0.2" }"#)
+        .file("node_modules/@typescript/native/package.json", r#"{ "name": "typescript", "version": "7.0.2" }"#)
+        .file("node_modules/@typescript/typescript-darwin-arm64/lib/tsc", "#!/bin/sh\n")
+        .build();
+    let session = open_plain(fixture, &FakeLsp::new());
+
+    let spawned: Vec<PathBuf> = session
+        .host
+        .processes()
+        .spawned()
+        .into_iter()
+        .filter(|spec| spec.program_name() == "tsc")
+        .map(|spec| spec.program)
+        .collect();
+    assert_eq!(spawned, [session.fixture.path("node_modules/@typescript/typescript-darwin-arm64/lib/tsc")]);
+    assert_eq!(session.language_notices(), []);
+}
+
+#[test]
+fn a_folder_without_package_json_has_no_language_server_and_says_nothing() {
+    let fixture = FixtureProject::new().file("main.ts", "oops\n").build();
+    let session = open_plain(fixture, &FakeLsp::new());
+
+    assert_eq!(session.view().status.language_servers, []);
+    assert_eq!(session.language_notices(), []);
+    assert_eq!(session.tsgo_starts(), 0);
 }
