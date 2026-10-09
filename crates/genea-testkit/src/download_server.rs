@@ -205,3 +205,46 @@ fn original_url(path: &str) -> String {
         None => path.to_owned(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Smoke tests of the server itself, over the real host's HTTP client.
+
+    use super::*;
+    use genea_host::{DownloadError, Host, RealHost};
+
+    #[test]
+    fn serves_published_files_over_real_http_with_their_length() {
+        let server = DownloadServer::start();
+        server.publish("https://example.test/a.txt", "hello");
+        let host = RealHost::new();
+
+        let mut body = Vec::new();
+        let mut length = None;
+        let url = server.local_url("https://example.test/a.txt");
+        let written = host.downloads().fetch_with_length(&url, &mut body, &mut |l| length = Some(l)).unwrap();
+
+        assert_eq!((written, body.as_slice(), length), (5, b"hello".as_slice(), Some(5)));
+        let missing = host.downloads().fetch(&server.local_url("https://example.test/b"), &mut Vec::new());
+        assert!(matches!(missing, Err(DownloadError::Status(404))), "{missing:?}");
+        assert_eq!(server.requests(), ["https://example.test/a.txt", "https://example.test/b"]);
+    }
+
+    #[test]
+    fn a_held_response_stops_halfway_until_released() {
+        let server = DownloadServer::start();
+        server.publish("https://example.test/big", vec![7u8; 1000]);
+        server.hold("https://example.test/big");
+        let url = server.local_url("https://example.test/big");
+        let fetch = std::thread::spawn(move || {
+            let mut body = Vec::new();
+            RealHost::new().downloads().fetch(&url, &mut body).map(|_| body)
+        });
+
+        server.wait_held("https://example.test/big");
+        assert!(!fetch.is_finished());
+        server.release("https://example.test/big");
+
+        assert_eq!(fetch.join().unwrap().unwrap(), vec![7u8; 1000]);
+    }
+}

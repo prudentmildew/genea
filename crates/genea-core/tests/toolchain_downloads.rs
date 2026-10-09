@@ -507,6 +507,42 @@ fn a_folder_without_package_json_has_no_toolchain() {
 }
 
 #[test]
+fn a_package_json_that_isnt_json_shows_a_notice_and_downloads_nothing() {
+    let host = TestHost::new();
+    host.tools().node(DEFAULT_NODE);
+    host.tools().pnpm(DEFAULT_PNPM);
+    let fixture = project("{ \"name\": ");
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.notices.len(), 1);
+    assert!(view.notices[0].message.starts_with("Couldn't read package.json"), "{:?}", view.notices);
+    assert_eq!(view.notices[0].action, None);
+    assert!(installed(&host).is_empty());
+}
+
+#[test]
+fn a_pin_that_isnt_a_version_shows_a_notice_without_retry() {
+    let host = TestHost::new();
+    host.tools().pnpm("12.10.1");
+    let fixture = project(&pins("node", "latest-ish", "pnpm@12.10.1"));
+    let mut workbench = Workbench::new(host.shared());
+
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.toolchain.runtime.unwrap().state, ToolState::Failed);
+    assert_eq!(view.toolchain.package_manager, ready("pnpm", "12.10.1"));
+    assert_eq!(view.notices.len(), 1);
+    assert!(view.notices[0].message.contains("\"latest-ish\", which isn't a version"), "{:?}", view.notices);
+    assert_eq!(view.notices[0].action, None);
+}
+
+#[test]
 fn a_foreign_package_manager_is_off_and_nothing_is_downloaded_for_it() {
     let host = TestHost::new();
     host.tools().node("24.18.0");

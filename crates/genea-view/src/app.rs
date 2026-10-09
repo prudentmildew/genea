@@ -209,6 +209,14 @@ fn wire(controller: &WindowController) {
     });
     window.on_open_file(move || with_app(move |app| app.pick_file(key)));
     window.on_show_about(|| with_app(App::show_about));
+    window.on_notice_action(move || {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            if let Some(command) = controller.notice_action.clone() {
+                controller.dispatch(&mut app.workbench, command);
+            }
+        });
+    });
 
     window.on_scrolled(move |delta_y| {
         let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;

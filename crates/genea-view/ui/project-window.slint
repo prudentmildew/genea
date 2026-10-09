@@ -13,6 +13,8 @@ export component ProjectWindow inherits Window {
     in property <string> tab-title;
     in property <string> status-caret;
     in property <string> status-notice;
+    in property <string> status-notice-action;
+    in property <string> status-toolchain;
 
     in property <[Line]> lines <=> surface.lines;
     in property <length> offset-y <=> surface.offset-y;
@@ -26,6 +28,8 @@ export component ProjectWindow inherits Window {
     callback open-folder();
     callback open-file();
     callback show-about();
+    // The status-bar notice's button.
+    callback notice-action();
 
     // Editor input.
     callback scrolled <=> surface.scrolled;
@@ -113,6 +117,11 @@ export component ProjectWindow inherits Window {
 
         StatusBar {
             notice: root.status-notice;
+            notice-action: root.status-notice-action;
+            notice-action-clicked => {
+                root.notice-action();
+            }
+            toolchain: root.status-toolchain;
             caret: root.status-caret;
         }
     }

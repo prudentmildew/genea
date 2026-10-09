@@ -439,4 +439,30 @@ mod tests {
         assert_eq!(status("https://example.test/missing"), 404);
         assert_eq!(host.downloads().requests().len(), 3);
     }
+
+    #[test]
+    fn unscripted_downloads_go_to_the_fixture_server_once_it_runs() {
+        let host = TestHost::new();
+        host.downloads().serve("https://example.test/scripted", "table");
+        host.download_server().publish("https://example.test/served", "server");
+        host.download_server().publish("https://example.test/scripted", "shadowed");
+
+        let fetch = |url| {
+            let mut sink = Vec::new();
+            Host::downloads(&host).fetch(url, &mut sink).map(|_| String::from_utf8(sink).unwrap())
+        };
+        assert_eq!(fetch("https://example.test/scripted").unwrap(), "table");
+        assert_eq!(fetch("https://example.test/served").unwrap(), "server");
+        assert!(matches!(fetch("https://example.test/missing"), Err(DownloadError::Status(404))));
+        assert_eq!(host.download_server().requests(), ["https://example.test/served", "https://example.test/missing"]);
+    }
+
+    #[test]
+    fn the_support_folder_is_a_temp_dir_shared_by_clones() {
+        let host = TestHost::new();
+        let clone = host.clone();
+        assert!(host.support_dir().is_dir());
+        assert_eq!(Host::support_dir(&clone), host.support_dir());
+        assert_ne!(TestHost::new().support_dir(), host.support_dir());
+    }
 }

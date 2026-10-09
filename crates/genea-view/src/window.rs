@@ -19,13 +19,15 @@ pub struct WindowController {
     surface: Surface,
     /// A window-level message, e.g. why a folder couldn't be opened.
     pub notice: Option<String>,
+    /// The command behind the shown notice's button, if it has one.
+    pub notice_action: Option<Command>,
 }
 
 impl WindowController {
     pub fn new(key: WindowKey) -> Result<Self, slint::PlatformError> {
         let window = ProjectWindow::new()?;
         let surface = Surface::new(&window);
-        Ok(WindowController { key, window, project: None, surface, notice: None })
+        Ok(WindowController { key, window, project: None, surface, notice: None, notice_action: None })
     }
 
     pub fn show(&self) {
@@ -62,6 +64,9 @@ impl WindowController {
             window.set_has_editor(false);
             window.set_status_caret("".into());
             window.set_status_notice(self.notice.clone().unwrap_or_default().into());
+            window.set_status_notice_action("".into());
+            window.set_status_toolchain("".into());
+            self.notice_action = None;
             self.surface.sync(window, None);
             return;
         };
@@ -78,6 +83,10 @@ impl WindowController {
         window.set_tab_title(editor.map(|e| e.title.clone()).unwrap_or_default().into());
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
+        let action = view.notices.last().and_then(|n| n.action.clone());
+        window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
+        self.notice_action = action.map(|a| a.command);
+        window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
         self.surface.sync(window, editor);
     }
 }
