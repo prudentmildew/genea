@@ -486,12 +486,13 @@ impl Editor {
         for (_, range, text) in merged.iter().rev() {
             if !range.is_empty() {
                 changes.push(Change::Remove { at: range.start, text: self.text.slice(range.clone()).to_string() });
-                self.text.remove(range.clone());
             }
             if !text.is_empty() {
-                self.text.insert(range.start, text);
                 changes.push(Change::Insert { at: range.start, text: text.clone() });
             }
+        }
+        for change in &changes {
+            change.apply(&mut self.text);
         }
         if !changes.is_empty() {
             self.new_version();

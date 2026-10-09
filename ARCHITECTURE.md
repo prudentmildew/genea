@@ -73,6 +73,13 @@ use, and nothing else:
   `Project::open_editor(_mut)`, e.g. in an Apply whose file may have lost
   the focus meanwhile. `ProjectView::editor` is the focused file;
   `ProjectView::panes` lists each side's tabs and editor.
+- **Carets** (`src/editor.rs`, ticket #52): an editor has one or more
+  carets, each with its own selection, in the order they were added; the
+  last is the primary (the one scrolled to and shown in the status bar).
+  Every edit goes through `Editor::replace`, which applies it at every caret
+  as one undo edit; a new edit command should too. A tab's `Cursor` holds
+  the whole caret list. `EditorView::caret` is the primary,
+  `EditorView::carets` every caret on the visible lines.
 
 ## The host boundary
 
@@ -167,7 +174,9 @@ chrome, native menus via muda (Slint's `MenuBar`).
 - `src/surface.rs`: the editor surface, a ring of line slots (line L in slot
   L % slots) with a per-slot diff, plus base-line rebasing for `f32`
   precision.
-- `src/keys.rs`: the keymap (WebStorm macOS). `src/dialogs.rs`: native
+- `src/keys.rs`: the keymap (WebStorm macOS), plus `CloneCaretGesture`
+  (press ⌥ twice and hold, then ↑/↓). Secondary carets ride in each line
+  slot (`Line.carets`), so they share its diff. `src/dialogs.rs`: native
   NSOpenPanels.
 - Keys and text reach the surface through a hidden, focused `TextInput`
   (ADR 0004) whose `key-pressed` accepts every key; IME commits and the

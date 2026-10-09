@@ -56,7 +56,7 @@ pub(crate) enum Change {
 }
 
 impl Change {
-    fn apply(&self, rope: &mut Rope) {
+    pub(crate) fn apply(&self, rope: &mut Rope) {
         match self {
             Change::Insert { at, text } => rope.insert(*at, text),
             Change::Remove { at, text } => rope.remove(*at..*at + text.chars().count()),
