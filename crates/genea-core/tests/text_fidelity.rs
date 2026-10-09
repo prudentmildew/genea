@@ -109,3 +109,33 @@ fn a_valid_utf8_file_is_editable() {
     assert!(!editor.read_only);
     assert_eq!(editor.lines[0].text, "let café = 1;");
 }
+
+/// The start of a PNG: binary, with NUL bytes early on.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x10\x00\x00\x00\x10\x08\x06\x00\x00\x00";
+
+#[test]
+fn a_binary_file_shows_a_notice_instead_of_an_editor() {
+    let (_fixture, workbench, project) = open("logo.png", PNG);
+
+    let view = view(&workbench, project);
+    assert_eq!(view.editor, None);
+    let notice = &view.notices.last().expect("a notice explains why").message;
+    assert!(notice.contains("logo.png") && notice.contains("binary"), "{notice}");
+}
+
+#[test]
+fn opening_a_binary_file_leaves_the_open_file_in_the_editor() {
+    let fixture = FixtureProject::new().file("main.ts", "let a = 1;\n").file("logo.png", PNG).build();
+    let mut workbench = Workbench::new(TestHost::new().shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.dispatch(project, Command::OpenFile("main.ts".into()));
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::InsertText("x".into()));
+
+    workbench.dispatch(project, Command::OpenFile("logo.png".into()));
+    workbench.settle().unwrap();
+
+    let editor = view(&workbench, project).editor.expect("the text file stays open");
+    assert_eq!(editor.title, "main.ts");
+    assert_eq!(editor.lines[0].text, "xlet a = 1;", "its unsaved edit is kept");
+}

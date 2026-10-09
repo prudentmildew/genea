@@ -186,7 +186,8 @@ impl Project {
     }
 
     /// Reads the file in the background. The current editor stays until the
-    /// new file is read; a failed read leaves it and adds a notice.
+    /// new file is read; a failed read or a binary file leaves it and adds a
+    /// notice. A file that isn't valid UTF-8 opens read-only.
     fn open_file(&mut self, path: PathBuf, jobs: &Jobs) {
         let absolute = self.root.join(&path);
         let shown = absolute.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| absolute.clone());
@@ -208,6 +209,9 @@ impl Project {
                         });
                         project.editor = Some(Editor::new(shown, Rope::from_str(&text)).read_only());
                     }
+                    Ok(Decoded::Binary) => project.notices.push(Notice {
+                        message: format!("{} is a binary file, so Genea doesn't open it in the editor.", shown.display()),
+                    }),
                     Err(error) => project
                         .notices
                         .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()) }),
