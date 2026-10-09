@@ -21,6 +21,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::{
     AboutWindow, dialogs,
     keys::{self, Modifiers},
+    pasteboard::Pasteboard,
     window::{WindowController, WindowKey},
 };
 
@@ -49,15 +50,10 @@ pub fn with_app(f: impl FnOnce(&mut App) + 'static) {
     });
 }
 
-/// Like [`with_app`] for callbacks that must answer now; `None` if busy.
-fn try_with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
-    APP.with(|cell| cell.try_borrow_mut().ok().and_then(|mut app| app.as_mut().map(f)))
-}
-
 /// Creates the app with one empty window, then opens `folder` and `file`
 /// from the command line, if given.
 pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint::PlatformError> {
-    let mut workbench = Workbench::new(RealHost::shared());
+    let mut workbench = Workbench::new(Arc::new(RealHost::new().with_clipboard(Pasteboard)));
     let scheduled = Arc::new(AtomicBool::new(false));
     workbench.set_notifier(move || {
         // Coalesce: one pump per event-loop turn is enough.
@@ -214,16 +210,51 @@ fn wire(controller: &WindowController) {
         let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;
         with_app(move |app| app.dispatch(key, Command::ScrollBy { rows }));
     });
-    window.on_pressed(move |x, y| {
+    window.on_pressed(move |x, y, shift| {
         with_app(move |app| {
             let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
-            controller.press(&mut app.workbench, x, y);
+            controller.press(&mut app.workbench, x, y, shift);
         });
     });
-    window.on_key(move |text, shift, cmd, alt, ctrl| {
-        let Some(command) = keys::command_for(&text, Modifiers { shift, cmd, alt, ctrl }) else { return false };
-        try_with_app(|app| app.dispatch(key, command)).is_some()
+    window.on_dragged(move |x, y| {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.drag(&mut app.workbench, x, y);
+        });
     });
+    window.on_double_clicked(move |x, y| {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.double_click(&mut app.workbench, x, y);
+        });
+    });
+    // Edits apply synchronously, in order: with_app only defers a key if
+    // the app is busy, and then to the very next event-loop turn.
+    window.on_key(move |text, shift, cmd, alt, ctrl| {
+        if let Some(command) = keys::command_for(&text, Modifiers { shift, cmd, alt, ctrl }) {
+            with_app(move |app| app.dispatch(key, command));
+        }
+    });
+    window.on_committed(move |text| {
+        let text = text.to_string();
+        with_app(move |app| app.dispatch(key, Command::InsertText(text)));
+    });
+    window.on_preedit_changed(move |text| {
+        let text = text.to_string();
+        with_app(move |app| app.dispatch(key, Command::SetPreedit(text)));
+    });
+    // Menu items that are one command each.
+    let menu = move |command: Command| {
+        move || {
+            let command = command.clone();
+            with_app(move |app| app.dispatch(key, command));
+        }
+    };
+    window.on_save(menu(Command::Save));
+    window.on_cut(menu(Command::Cut));
+    window.on_copy(menu(Command::Copy));
+    window.on_paste(menu(Command::Paste));
+    window.on_select_all(menu(Command::SelectAll));
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));

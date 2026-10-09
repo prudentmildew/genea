@@ -8,12 +8,12 @@
 //! - no timers. Scrolling and caret moves repaint because input changed
 //!   something, never on a schedule.
 
-use std::rc::Rc;
+use std::{ops::Range, rc::Rc};
 
 use genea_core::EditorView;
 use slint::{Color, Model, ModelRc, VecModel};
 
-use crate::{Line, ProjectWindow, Run};
+use crate::{Line, ProjectWindow, Run, Span};
 
 /// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
 /// ui/theme.slint.
@@ -31,6 +31,9 @@ struct SlotState {
     index: usize,
     base: usize,
     text: String,
+    selections: Vec<Range<usize>>,
+    /// The cell width the selections were laid out with.
+    char_width: f32,
 }
 
 pub struct Surface {
@@ -66,6 +69,13 @@ impl Surface {
         (line, column)
     }
 
+    /// The grid cell a point is inside, for picking the word under it.
+    pub fn cell_under(&self, window: &ProjectWindow, x: f32, y: f32) -> (usize, usize) {
+        let (line, _) = self.cell_at(window, x, y);
+        let char_width = window.get_char_width().max(1.0);
+        (line, ((x - window.get_text_left()) / char_width).floor().max(0.0) as usize)
+    }
+
     pub fn sync(&mut self, window: &ProjectWindow, editor: Option<&EditorView>) {
         let slot_count = self.rows.max(1.0).ceil() as usize + 1;
         if self.lines.row_count() != slot_count {
@@ -73,6 +83,7 @@ impl Surface {
             self.slots = (0..slot_count).map(|_| None).collect();
         }
 
+        let char_width = window.get_char_width();
         let mut wanted: Vec<Option<SlotState>> = (0..slot_count).map(|_| None).collect();
         if let Some(editor) = editor {
             let first = editor.lines.first().map_or(0, |l| l.index);
@@ -80,8 +91,13 @@ impl Surface {
                 self.base = first;
             }
             for line in &editor.lines {
-                wanted[line.index % slot_count] =
-                    Some(SlotState { index: line.index, base: self.base, text: line.text.clone() });
+                wanted[line.index % slot_count] = Some(SlotState {
+                    index: line.index,
+                    base: self.base,
+                    text: line.text.clone(),
+                    selections: line.selections.clone(),
+                    char_width,
+                });
             }
             self.scroll_top = editor.scroll_top;
         }
@@ -104,6 +120,16 @@ impl Surface {
                             color: Color::from_argb_encoded(0xff00_0000 | FOREGROUND),
                         }]))
                     },
+                    selections: if s.selections.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(
+                            s.selections
+                                .iter()
+                                .map(|r| Span { x: r.start as f32 * char_width, width: r.len() as f32 * char_width })
+                                .collect::<Vec<_>>(),
+                        ))
+                    },
                 },
             };
             self.lines.set_row_data(slot, row);
@@ -113,7 +139,11 @@ impl Surface {
         let base = self.base as f64;
         window.set_offset_y(-((self.scroll_top - base) * LINE_HEIGHT as f64) as f32);
         if let Some(editor) = editor {
-            window.set_caret_x(editor.caret.column as f32 * window.get_char_width());
+            // While composing, the caret is drawn after the preedit.
+            let preedit = editor.preedit.map_or(0, |p| p.width);
+            window.set_compose_x(editor.caret.column as f32 * char_width);
+            window.set_preedit_width(preedit as f32 * char_width);
+            window.set_caret_x((editor.caret.column + preedit) as f32 * char_width);
             window.set_caret_y(((editor.caret.line as f64 - base) * LINE_HEIGHT as f64) as f32);
         }
     }
