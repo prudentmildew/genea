@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use genea_core::{ChangeItem, ChangeKind, Command, LARGE_FILE_BYTES, ProjectId, Workbench};
+use genea_core::{ChangeItem, ChangeKind, Command, LARGE_FILE_BYTES, ProjectId, ToolchainPickerKind, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 /// Opens a project with these files and waits for the first snapshot.
@@ -378,6 +378,34 @@ fn binary_and_large_files_are_listed_without_a_diff_and_revert_still_restores_th
     assert_eq!(changes(&workbench, project), []);
     assert_eq!(std::fs::read(fixture.path("image.png")).unwrap(), image);
     assert_eq!(fixture.read("big.ts"), large);
+}
+
+#[test]
+fn a_toolchain_pin_written_by_genea_is_not_listed() {
+    let host = TestHost::new();
+    host.tools().node("24.18.0");
+    host.tools().node("26.11.1");
+    host.tools().pnpm("12.10.1");
+    let package_json = r#"{
+  "name": "app",
+  "devEngines": { "runtime": { "name": "node", "version": "24.18.0" } },
+  "packageManager": "pnpm@12.10.1"
+}
+"#;
+    let fixture = FixtureProject::new().file("package.json", package_json).build();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::OpenToolchainPicker(ToolchainPickerKind::Runtime));
+    workbench.settle().unwrap();
+    let picker = workbench.project(project).unwrap().toolchain_picker.unwrap();
+    let option = picker.options.iter().find(|o| o.version == "26.11.1").unwrap();
+    workbench.dispatch(project, option.command.clone());
+    workbench.settle().unwrap();
+
+    assert!(fixture.read("package.json").contains("26.11.1"));
+    assert_eq!(changes(&workbench, project), []);
 }
 
 fn editor_text(workbench: &Workbench, project: ProjectId) -> Vec<String> {

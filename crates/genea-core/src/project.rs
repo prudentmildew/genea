@@ -275,7 +275,8 @@ impl Project {
         if !self.root.join("package.json").exists() {
             return;
         }
-        let toolchain = self.toolchain.insert(Toolchain::new(self.id, self.root.clone(), context));
+        let own_writes = self.review.own_writes();
+        let toolchain = self.toolchain.insert(Toolchain::new(self.id, self.root.clone(), context, own_writes));
         toolchain.load(jobs);
     }
 
