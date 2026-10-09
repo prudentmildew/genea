@@ -16,7 +16,7 @@
 //!
 //! ## Extending the boundary
 //!
-//! A new kind of effect (a PTY, say) gets its own trait here, an accessor on
+//! A new kind of effect (as [`Ptys`] was) gets its own trait here, an accessor on
 //! [`Host`], a real implementation in [`real`] and a scripted one in
 //! `genea-testkit`. Keep the traits small and blocking: the core calls them
 //! from background threads, never from the main thread.
