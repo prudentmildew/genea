@@ -31,7 +31,9 @@ struct SlotState {
     text: String,
     selections: Vec<Range<usize>>,
     highlights: Vec<HighlightSpan>,
-    /// The cell width the runs and selections were laid out with.
+    /// Display columns of the carets on the line other than the primary.
+    carets: Vec<usize>,
+    /// The cell width the runs, selections and carets were laid out with.
     char_width: f32,
 }
 
@@ -102,6 +104,12 @@ impl Surface {
                     text: line.text.clone(),
                     selections: line.selections.clone(),
                     highlights: line.highlights.clone(),
+                    carets: editor
+                        .carets
+                        .iter()
+                        .filter(|c| c.line == line.index && **c != editor.caret)
+                        .map(|c| c.column)
+                        .collect(),
                     char_width,
                 });
             }
@@ -130,6 +138,13 @@ impl Surface {
                                 .iter()
                                 .map(|r| Span { x: r.start as f32 * char_width, width: r.len() as f32 * char_width })
                                 .collect::<Vec<_>>(),
+                        ))
+                    },
+                    carets: if s.carets.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        ModelRc::new(VecModel::from(
+                            s.carets.iter().map(|&column| column as f32 * char_width).collect::<Vec<_>>(),
                         ))
                     },
                 },

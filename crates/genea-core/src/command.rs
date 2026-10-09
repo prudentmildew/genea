@@ -40,6 +40,30 @@ pub enum Command {
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },
+    /// ⌥-click: adds a caret at a grid cell (placed like
+    /// [`PlaceCaret`](Self::PlaceCaret)) and makes it the primary one. On a
+    /// caret that is already there, removes it instead, unless it is the
+    /// only one. Typing, deleting and pasting then apply at every caret.
+    AddCaret { line: usize, column: usize },
+    /// ⌃G: with nothing selected, selects the word at the caret; then adds
+    /// a caret selecting the next occurrence of the selection (wrapping
+    /// around to the top), as the primary. A word selected by ⌃G only
+    /// matches whole words.
+    SelectNextOccurrence,
+    /// ⌃⇧G: removes the caret added last, making the one before it primary.
+    UnselectLastOccurrence,
+    /// ⌃⌘G: selects every occurrence of the selection, or of the word at
+    /// the caret (whole words), with a caret at each.
+    SelectAllOccurrences,
+    /// Adds a caret on the line above the primary caret, at the same
+    /// column (or the line's end), as the new primary. If the caret before
+    /// the primary is on that line, so the primary was cloned below it,
+    /// removes the primary instead.
+    CloneCaretAbove,
+    /// Like [`CloneCaretAbove`](Self::CloneCaretAbove), on the line below.
+    CloneCaretBelow,
+    /// Esc: drops every caret but the primary, which keeps its selection.
+    CollapseCarets,
     /// Double-click: selects the word (or punctuation or space run) at a
     /// grid cell.
     SelectWord { line: usize, column: usize },

@@ -143,6 +143,20 @@ fn undo_and_redo_are_highlighted_after_the_reparse() {
 }
 
 #[test]
+fn typing_at_several_carets_moves_and_then_reparses_every_line() {
+    let (_fixture, mut workbench, project) = open_file("main.ts", "let a = 1;\nlet b = 2;\n");
+
+    run(&mut workbench, project, [Command::AddCaret { line: 1, column: 0 }, Command::InsertText("// ".into())]);
+    // Before the reparse lands, both keywords moved right with their text.
+    assert!(columns(&workbench, project, 0).contains(&(3..6, Highlight::Keyword)));
+    assert!(columns(&workbench, project, 1).contains(&(3..6, Highlight::Keyword)));
+
+    workbench.settle().unwrap();
+    assert_highlighted(&spans(&workbench, project, 0), "// let a = 1;", Highlight::Comment);
+    assert_highlighted(&spans(&workbench, project, 1), "// let b = 2;", Highlight::Comment);
+}
+
+#[test]
 fn spans_are_in_display_columns_past_tabs_and_wide_characters() {
     let (_fixture, workbench, project) = open_file("main.ts", "\tlet s = \"日本\"; // x\n");
 
