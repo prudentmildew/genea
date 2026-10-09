@@ -181,7 +181,6 @@ impl WindowController {
     }
 
     /// The mouse over the terminal's grid. A ⌘-click opens a link.
-    #[allow(clippy::too_many_arguments)]
     pub fn terminal_mouse(&mut self, workbench: &mut Workbench, kind: i32, button: i32, x: f32, y: f32, modifiers: Modifiers) {
         let (line, column) = self.terminal.cell_at(&self.window, x, y);
         if modifiers.cmd {
