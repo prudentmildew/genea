@@ -56,6 +56,9 @@ impl WindowController {
             workbench.project(id)
         });
 
+        let update = workbench.update_notice().map(|notice| notice.message).unwrap_or_default();
+        window.set_status_update(update.into());
+
         let Some(view) = project else {
             window.set_window_title("Genea".into());
             window.set_has_project(false);

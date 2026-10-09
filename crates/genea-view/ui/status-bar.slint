@@ -6,6 +6,10 @@ import { Theme } from "theme.slint";
 export component StatusBar inherits Rectangle {
     in property <string> notice;
     in property <string> caret;
+    // The update notice ("Genea 0.2.0 is available"), or empty.
+    in property <string> update;
+
+    callback update-clicked();
 
     height: 22px;
     background: Theme.chrome-background;
@@ -28,6 +32,20 @@ export component StatusBar inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
+        }
+
+        if root.update != "": Text {
+            text: root.update;
+            color: Theme.link;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.update-clicked();
+                }
+            }
         }
 
         Text {

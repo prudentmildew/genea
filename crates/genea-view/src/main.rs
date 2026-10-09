@@ -11,11 +11,13 @@
 //! - `app`: the workbench, the windows, callback wiring, the notifier;
 //! - `window`: one project window's view-state → Slint sync;
 //! - `surface`: the editor surface's ring of line slots;
-//! - `keys`: the keymap; `dialogs`: native Open panels.
+//! - `keys`: the keymap; `dialogs`: native Open panels; `links`: opening
+//!   web links in the browser.
 
 mod app;
 mod dialogs;
 mod keys;
+mod links;
 mod surface;
 mod window;
 

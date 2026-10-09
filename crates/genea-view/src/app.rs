@@ -14,12 +14,12 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{Command, Workbench};
+use genea_core::{Command, UpdateCheck, Workbench};
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, dialogs,
+    AboutWindow, dialogs, links,
     keys::{self, Modifiers},
     window::{WindowController, WindowKey},
 };
@@ -85,8 +85,19 @@ pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint
                 app.dispatch(key, Command::OpenFile(file));
             }
         }
+        // The core waits a little and checks in the background (#64).
+        if let Some(state_file) = application_support().map(|dir| dir.join("update-check.json")) {
+            let current_version = env!("CARGO_PKG_VERSION").into();
+            app.workbench.start_update_checks(UpdateCheck { current_version, state_file });
+        }
     });
     Ok(())
+}
+
+/// Genea's folder in `~/Library/Application Support`.
+fn application_support() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join("Library/Application Support/Genea"))
 }
 
 impl App {
@@ -192,6 +203,13 @@ impl App {
         }
     }
 
+    /// Opens the update notice's release page in the browser.
+    fn open_update(&mut self) {
+        if let Some(notice) = self.workbench.update_notice() {
+            links::open_url(&notice.url);
+        }
+    }
+
     fn pick_file(&mut self, key: WindowKey) {
         let Some(project) = self.controller(key).and_then(|c| c.project) else { return };
         let Some(root) = self.workbench.project(project).map(|view| view.root) else { return };
@@ -209,6 +227,7 @@ fn wire(controller: &WindowController) {
     });
     window.on_open_file(move || with_app(move |app| app.pick_file(key)));
     window.on_show_about(|| with_app(App::show_about));
+    window.on_open_update(|| with_app(App::open_update));
 
     window.on_scrolled(move |delta_y| {
         let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;
