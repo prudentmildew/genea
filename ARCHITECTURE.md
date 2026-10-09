@@ -49,7 +49,7 @@ use, and nothing else:
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
-| Terminal | `ProjectView::terminal` (`TerminalView`); `Command::ToggleTerminal`, `FocusTerminal`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | One shell per project (`src/terminal/`, below). |
+| Terminal | `ProjectView::terminal` (`TerminalView`: `tabs`, `active`, then the active tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` (the active tab); `NewTerminalTab`, `SelectTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink` | Tabs of shells (`src/terminal/`, below). |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
@@ -311,17 +311,32 @@ opening, after every command and after every background result.
 
 ## The terminal
 
-`genea-core/src/terminal/` (ticket #38): one shell per project, the
-user's `$SHELL -l` in the project root with the project environment,
-`TERM=xterm-256color` and `COLORTERM=truecolor`, on a PTY from
+`genea-core/src/terminal/` (tickets #38, #39): a pane of tabs
+(`Terminal`, holding the size, focus and preedit they share), each a
+`Tab` running the user's `$SHELL -l` in the project root with the project
+environment, `TERM=xterm-256color` and `COLORTERM=truecolor`, on a PTY from
 `host.ptys()`, emulated by `alacritty_terminal` (only its `Term` and the
 `vte` parser; Genea runs the PTY itself). Scrollback is 10,000 lines.
 
-- Threads: a reader thread reads the PTY and parses into the `Term` under a
-  mutex, at most 16 KB per lock hold; a writer thread writes input and
+- Tabs: every start of a shell gets a new session number from the pane;
+  background results (started, output, exited) find their tab by it, so
+  a closed or restarted tab's results are dropped. Closing a tab drops its
+  session, which hangs up the shell; closing the last collapses the pane,
+  and showing it again opens a new tab. All tabs take the pane's size.
+  A script tab (#40) can be a `Tab` with its own command and `directory`.
+- Links (`links.rs`): `path:line[:col]` references (the last path part
+  has an extension; `file://` paths too; not after another `:`, so URLs
+  and addresses aren't) are found when a grid is copied, across rows that
+  were wrapped, into `TerminalLine::links` (grid columns, the path as
+  printed, a 0-based `TextPosition`). `OpenTerminalLink { line, column }`
+  resolves the one under the cell against the tab's `directory` (lexically,
+  no disk access) and opens it like `OpenFileAt`, relative to the root if
+  it is inside it.
+- Threads (per tab): a reader thread reads the PTY and parses into the
+  `Term` under a mutex, at most 16 KB per lock hold; a writer thread writes input and
   resizes. Answers the emulator writes back (`Event::PtyWrite`) go to the
   writer; requests (title, OSC 52 copy) wait for an Apply.
-- The grid is copied into view state lazily (`Terminal::screen`, a
+- The grid is copied into view state lazily (`Tab::screen`, a
   `RefCell`): only when view state is read after the emulator changed. The
   reader wakes the main thread only once the last copy has been taken, so a
   flood is copied at most once per read. The app reads at most once a frame
@@ -332,11 +347,15 @@ user's `$SHELL -l` in the project root with the project environment,
   `input.rs` encodes keys, mouse reports (SGR, xterm, UTF-8), the wheel and
   pastes for the modes the program set.
 - Synchronized updates (mode 2026) are applied as they arrive.
-- The view: `ui/terminal-pane.slint` and `src/terminal.rs` (a slot per
-  visible row, pushed only when it changed; the palette is
-  `Theme.terminal-palette`). The pane sits right of the editor; its width is
-  view-only state, dragged at the splitter. `terminalPosition: "bottom"`
-  isn't laid out yet.
+- The view: `ui/terminal-pane.slint` and `src/terminal.rs` (a tab strip
+  with close buttons and +, pushed when the tabs change; a slot per visible
+  row, pushed only when it changed, with references underlined; the palette
+  is `Theme.terminal-palette`). The pane sits right of the editor area, or
+  below it (and the left column) with `terminalPosition: "bottom"`, placed
+  by hand in `project-window.slint`; its width and height are view-only
+  state, dragged at the splitter. ⌘T is View › New Terminal Tab; with the
+  terminal focused, ⌘W and ⌘⇧[ / ⌘⇧] act on its tabs. ⌘-click opens an
+  OSC 8 hyperlink in the browser, else dispatches `OpenTerminalLink`.
 
 ## Tests
 

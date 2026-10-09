@@ -150,8 +150,9 @@ fn find_links(rows: &[Row], lines: &mut [TerminalLine]) {
         }
         for found in links::find(&text) {
             for (index, row) in rows[first..=last].iter().enumerate() {
-                let start = starts[index];
-                let bytes = found.bytes.start.max(start) - start..found.bytes.end.min(start + row.text.len()).max(start) - start;
+                // The part of the reference in this row, in its own text.
+                let (start, end) = (starts[index], starts[index] + row.text.len());
+                let bytes = found.bytes.start.clamp(start, end) - start..found.bytes.end.clamp(start, end) - start;
                 if bytes.is_empty() {
                     continue;
                 }

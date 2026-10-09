@@ -1,6 +1,7 @@
-//! The terminal pane's Rust half (ticket #38): maps the core's
-//! `TerminalView` onto the pane's row slots in `ui/terminal-pane.slint`,
-//! and turns the pane's keys and mouse into commands.
+//! The terminal pane's Rust half (tickets #38, #39): maps the core's
+//! `TerminalView` onto the pane's tab strip and row slots in
+//! `ui/terminal-pane.slint`, and turns the pane's keys and mouse into
+//! commands.
 //!
 //! Repaint rules as for the editor surface (ADR 0004): each row's last
 //! state is cached and only changed rows are pushed, so an idle terminal
@@ -10,12 +11,15 @@ use std::rc::Rc;
 
 use genea_core::{
     Command, Modifiers as TermModifiers, MouseAction, MouseButton, TerminalColor, TerminalKey, TerminalLine,
-    TerminalRun, TerminalStatus, TerminalView, grid_pieces,
+    TerminalRun, TerminalStatus, TerminalTabView, TerminalView, grid_pieces,
 };
 use slint::{Color, Model, ModelRc, SharedString, VecModel, platform::Key};
 use unicode_width::UnicodeWidthStr;
 
-use crate::{ProjectWindow, TermCursor, TermRow, TermRun as SlintRun, fonts, keys::Modifiers, surface::LINE_HEIGHT};
+use crate::{
+    ProjectWindow, TermCursor, TermLink, TermRow, TermRun as SlintRun, TermTab, fonts, keys::Modifiers,
+    surface::LINE_HEIGHT,
+};
 
 pub struct TerminalSurface {
     rows: Rc<VecModel<TermRow>>,
@@ -29,13 +33,23 @@ pub struct TerminalSurface {
     held: Option<MouseButton>,
     /// Scroll-wheel distance not yet a whole row.
     scroll_rest: f32,
+    /// The tabs and the active one as last pushed.
+    tabs: Option<(Vec<TerminalTabView>, usize)>,
 }
 
 impl TerminalSurface {
     pub fn new(window: &ProjectWindow) -> Self {
         let rows = Rc::new(VecModel::default());
         window.set_terminal_rows(ModelRc::from(rows.clone()));
-        TerminalSurface { rows, slots: Vec::new(), size: None, lines: Vec::new(), held: None, scroll_rest: 0.0 }
+        TerminalSurface {
+            rows,
+            slots: Vec::new(),
+            size: None,
+            lines: Vec::new(),
+            held: None,
+            scroll_rest: 0.0,
+            tabs: None,
+        }
     }
 
     /// The grid's size in cells, if it changed since the last call.
@@ -100,7 +114,23 @@ impl TerminalSurface {
     pub fn sync(&mut self, window: &ProjectWindow, view: &TerminalView) {
         window.set_terminal_visible(view.visible);
         window.set_terminal_focused(view.focused);
-        window.set_terminal_title(view.title.as_str().into());
+        if self.tabs.as_ref().is_none_or(|(tabs, active)| *tabs != view.tabs || *active != view.active) {
+            for tab in &view.tabs {
+                fonts::prepare(&tab.title);
+            }
+            let tabs: Vec<TermTab> = view
+                .tabs
+                .iter()
+                .enumerate()
+                .map(|(index, tab)| TermTab {
+                    title: tab.title.as_str().into(),
+                    active: index == view.active,
+                    ended: matches!(tab.status, TerminalStatus::Exited { .. } | TerminalStatus::Failed(_)),
+                })
+                .collect();
+            window.set_terminal_tabs(ModelRc::new(VecModel::from(tabs)));
+            self.tabs = Some((view.tabs.clone(), view.active));
+        }
         window.set_terminal_message(message(&view.status).into());
         window.set_terminal_mouse_reporting(view.mouse_reporting);
 
@@ -120,6 +150,15 @@ impl TerminalSurface {
                     ModelRc::default()
                 } else {
                     ModelRc::new(VecModel::from(runs(&line.runs, char_width)))
+                },
+                links: if line.links.is_empty() {
+                    ModelRc::default()
+                } else {
+                    let links = line.links.iter().map(|link| TermLink {
+                        x: link.columns.start as f32 * char_width,
+                        width: link.columns.len() as f32 * char_width,
+                    });
+                    ModelRc::new(VecModel::from_iter(links))
                 },
             };
             self.rows.set_row_data(index, row);
