@@ -437,6 +437,40 @@ pub struct StatusBar {
     /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
     /// language intelligence.
     pub large_file: Option<String>,
+    /// The project's language servers (tsgo now; Oxlint and Oxfmt later),
+    /// one item each. Empty for a folder without a root `package.json`.
+    pub language_servers: Vec<LanguageServerStatus>,
+}
+
+/// A language server's status-bar item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanguageServerStatus {
+    /// What the user calls it: `TypeScript`.
+    pub name: String,
+    pub state: LanguageServerState,
+    /// What the item says, e.g. `TypeScript 7.0.2`, `TypeScript starting…`
+    /// or `TypeScript stopped`.
+    pub label: String,
+}
+
+/// Where a language server is. "Restart language server"
+/// (`Command::RestartLanguageServer`) works in every state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanguageServerState {
+    /// Started, not initialized yet.
+    Starting,
+    Ready,
+    /// It hasn't answered `initialize` for a while (`START_TIMEOUT`). It
+    /// keeps running and is used as soon as it answers.
+    NotResponding,
+    /// It crashed and starts again in a moment.
+    Restarting,
+    /// It crashed too often (3 restarts in 5 minutes): it stays stopped
+    /// until "Restart language server". A notice says why.
+    Failed,
+    /// Language intelligence is off: the project has no TypeScript 7 in
+    /// `node_modules`. A notice says what to do.
+    Off,
 }
 
 /// A message for the user.

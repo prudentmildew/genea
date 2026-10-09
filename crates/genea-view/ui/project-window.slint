@@ -62,6 +62,9 @@ export component ProjectWindow inherits Window {
     in property <string> status-large-file;
     // The focused file's rest is still being read.
     in property <bool> status-loading;
+    // The language servers' status-bar item (ticket #42).
+    in property <string> status-language-server;
+    in property <bool> status-language-server-alert;
 
     // The toolchain picker (ticket #37), shown while `picker-visible`.
     in property <bool> picker-visible;
@@ -126,6 +129,7 @@ export component ProjectWindow inherits Window {
     callback select-all();
     callback reload-environment();
     callback install-dependencies();
+    callback restart-language-server();
     // The Code menu's structural editing items (ticket #25).
     callback structural(StructuralAction);
     // Toolchain commands (ticket #37).
@@ -285,6 +289,14 @@ export component ProjectWindow inherits Window {
                 title: "Install Dependencies";
                 activated => {
                     root.install-dependencies();
+                }
+            }
+
+            // Stops and starts tsgo, also after it failed (#42).
+            MenuItem {
+                title: "Restart Language Server";
+                activated => {
+                    root.restart-language-server();
                 }
             }
 
@@ -785,6 +797,11 @@ export component ProjectWindow inherits Window {
             update: root.status-update;
             large-file: root.status-large-file;
             loading: root.status-loading;
+            language-server: root.status-language-server;
+            language-server-alert: root.status-language-server-alert;
+            restart-language-server => {
+                root.restart-language-server();
+            }
             update-clicked => {
                 root.open-update();
             }

@@ -528,6 +528,7 @@ fn wire(controller: &WindowController) {
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
     window.on_install_dependencies(menu(Command::InstallDependencies));
+    window.on_restart_language_server(menu(Command::RestartLanguageServer));
     window.on_terminal_tab_clicked(move |index| {
         let Ok(index) = usize::try_from(index) else { return };
         with_app(move |app| {

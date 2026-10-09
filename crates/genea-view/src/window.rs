@@ -14,9 +14,9 @@ use std::{
 };
 
 use genea_core::{
-    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView, LeftColumnView,
-    MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId, SearchFile, SearchView, Severity, TextPosition,
-    Theme as ConfigTheme, ToolchainOption, Workbench,
+    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
+    LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
+    SearchFile, SearchView, Severity, TextPosition, Theme as ConfigTheme, ToolchainOption, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -366,6 +366,13 @@ impl WindowController {
         window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
         window.set_status_branch(view.status.branch.clone().unwrap_or_default().into());
         window.set_status_large_file(view.status.large_file.clone().unwrap_or_default().into());
+        let servers = &view.status.language_servers;
+        let labels: Vec<&str> = servers.iter().map(|s| s.label.as_str()).collect();
+        window.set_status_language_server(labels.join("  ").into());
+        let alert = |s: &LanguageServerStatus| {
+            matches!(s.state, LanguageServerState::Failed | LanguageServerState::NotResponding)
+        };
+        window.set_status_language_server_alert(servers.iter().any(alert));
         window.set_status_loading(editor.is_some_and(|e| e.loading));
 
         let picker = view.toolchain_picker.as_ref();

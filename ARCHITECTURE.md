@@ -409,6 +409,67 @@ ended until it is run again.
   view-only state, dragged at the splitter. `terminalPosition: "bottom"`
   isn't laid out yet.
 
+## Language servers
+
+`genea-core/src/lsp/` (ticket #42, ADR 0002) is the LSP client:
+hand-rolled JSON-RPC over stdio with `gen-lsp-types` (LSP 3.18) for the
+message types. `project/language.rs` is a project's side of it.
+
+- **tsgo**: the platform package's `lib/tsc`
+  (`@typescript/typescript-darwin-arm64`, beside the `typescript` package,
+  which may be in pnpm's store or under an alias like vscode's
+  `@typescript/native`), found in the background when the project opens
+  and again when `package.json` or the top of `node_modules` changes. It
+  runs as `tsc --lsp --stdio` in the project environment, one per project,
+  with the root as its only workspace folder, and stops when the project
+  closes (`shutdown`, `exit`, then a kill after `STOP_TIMEOUT`). Without
+  TypeScript 7 a notice offers `Command::AddTypeScript`.
+- **Threads** (`lsp/connection.rs`): a starter that spawns the process and
+  then reads its output, a writer, and a stderr drain. Nothing on the main
+  thread waits on a server: a document's text is queued as a rope clone and
+  serialised by the writer, and a queued `didChange` is replaced by a newer
+  one. Server requests (`client/registerCapability`,
+  `workspace/configuration`, refreshes) are answered on the reader thread;
+  log and progress chatter is dropped there. Every request holds a busy
+  token until its answer is applied, so `settle` waits for answers.
+- **Documents** (`LanguageServer::sync`, after every command and every
+  Apply): open first-class-language files that are fully read and not large
+  (`Editor::is_large`) are opened on the server, sent whole on every change
+  (with their own version counter: undo moves `Editor::version` back) and
+  closed with their tab. Positions are in the encoding the server picked
+  (Genea offers UTF-8 first; `lsp/text.rs` converts).
+- **Diagnostics** are pulled (`textDocument/diagnostic`, one request in
+  flight per file; push is turned off with `disablePushDiagnostics`, though
+  pushed ones are taken too). A change re-pulls every open file (TypeScript
+  diagnostics depend on other files), and so does
+  `workspace/diagnostic/refresh`. They land in Problems as
+  `ProblemSource::TypeScript`, per file; information and hints are left out.
+  A file's diagnostics go when it closes, every file's when the server dies.
+- **Watched files**: Genea advertises dynamic registration for
+  `didChangeWatchedFiles`, so tsgo runs no watcher; the globs it registers
+  (`lsp/watch.rs`, case-insensitive: tsgo lowercases paths) are matched in
+  the background against the project watcher's batches, each path sent as
+  created, changed or deleted (`FileChanges::created`).
+- **Lifecycle** (`LanguageServer`): starting, ready, not responding (no
+  answer to `initialize` within `START_TIMEOUT` of the open or a start; it
+  keeps running), restarting (`RESTART_DELAY` after a crash), failed (more
+  than `MAX_RESTARTS` within `RESTART_WINDOW`), off. All on the host clock.
+  `StatusBar::language_servers` shows it; `Command::RestartLanguageServer`
+  starts afresh from any state. A generation counter drops events and
+  timers of an earlier process.
+- **Adding a request** (completion, hover, …): a `Pending` variant, sent
+  with `LanguageServer::request` while ready, answered in
+  `LanguageServer::event`. Oxlint and Oxfmt are more `LanguageServer`s with
+  their own `ServerSpec`.
+
+Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
+the test host as `tsc`: scripted per test to report markers, crash, stay
+silent, delay or flood, and asked afterwards what reached it. As a binary
+(`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
+tsgo in the harness's `typing-silent-lsp`. The slow lane
+`tests/language_server_slow.rs` (`-- --ignored`) installs TypeScript 7 with
+pnpm and checks real diagnostics.
+
 ## Tests
 
 Behaviour is tested only through the core API (spec #19, Testing Decisions).
