@@ -264,6 +264,12 @@ pub enum Command {
     /// shows the tab to its right, else the one to its left; closing the
     /// last tab collapses the pane, and showing it again opens a new one.
     CloseTerminalTab(usize),
+    /// ⌘-click on the active tab's cell at `line` and `column` (0-based
+    /// visible row and grid column): if a `path:line:col` reference
+    /// (`TerminalLine::links`) covers it, opens that file at that place,
+    /// like `OpenFileAt`, resolving a relative path against the tab's
+    /// directory. The editor takes the focus.
+    OpenTerminalLink { line: usize, column: usize },
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.

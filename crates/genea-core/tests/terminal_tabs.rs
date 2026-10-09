@@ -137,3 +137,31 @@ fn closing_the_last_tab_collapses_the_pane_and_showing_it_again_starts_a_new_she
     assert_eq!(screen(&workbench, project), ["fresh"]);
     assert!(terminal(&workbench, project).focused);
 }
+
+/// Twenty lines of `let lineN = N;`.
+fn app_ts() -> String {
+    (1..=20).map(|n| format!("let line{n} = {n};\n")).collect()
+}
+
+/// The open file's title and the caret as the status bar shows it.
+fn opened(workbench: &Workbench, project: ProjectId) -> Option<(String, String)> {
+    let view = workbench.project(project).unwrap();
+    Some((view.editor?.title, view.status.caret?))
+}
+
+#[test]
+fn clicking_a_path_line_column_in_the_output_opens_the_file_there() {
+    let host = TestHost::new();
+    let fixture = FixtureProject::new().file("src/app.ts", &app_ts()).build();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+    workbench.dispatch(project, Command::FocusTerminal);
+    pty.output("$ tsc\r\nerror at src/app.ts:12:5 - Cannot find name 'x'.");
+    workbench.settle().unwrap();
+
+    // A click on the "a" of "app.ts".
+    workbench.dispatch(project, Command::OpenTerminalLink { line: 1, column: 13 });
+    workbench.settle().unwrap();
+
+    assert_eq!(opened(&workbench, project), Some(("app.ts".into(), "12:5".into())));
+    assert!(!terminal(&workbench, project).focused);
+}

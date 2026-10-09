@@ -352,6 +352,12 @@ impl Project {
                 self.terminal.unfocus();
                 self.open_file(path, Some(at), jobs)
             }
+            Command::OpenTerminalLink { line, column } => {
+                if let Some((path, at)) = self.terminal.file_link_at(line, column) {
+                    self.terminal.unfocus();
+                    self.open_file(path, Some(at), jobs)
+                }
+            }
             Command::CloseTab { .. }
             | Command::ResolveClose(_)
             | Command::SplitRight

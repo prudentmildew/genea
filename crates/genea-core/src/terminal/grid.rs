@@ -15,7 +15,8 @@ use alacritty_terminal::{
     vte::ansi::{Color, CursorShape, NamedColor},
 };
 
-use crate::view::{TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStyle};
+use super::links;
+use crate::view::{TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStyle};
 
 /// What the terminal shows, as the user sees it.
 pub(super) struct Screen {
@@ -102,7 +103,7 @@ impl Row {
             self.cells.iter().take_while(|cell| cell.column < self.text_end).last().map_or(0, |cell| cell.bytes.end);
         let end = self.text_end.max(self.paint_end);
         let mut runs: Vec<TerminalRun> = Vec::new();
-        for cell in self.cells.into_iter().take_while(|cell| cell.column < end) {
+        for cell in self.cells.iter().take_while(|cell| cell.column < end) {
             let text = &self.text[cell.bytes.clone()];
             match runs.last_mut() {
                 Some(run) if run.style == cell.style && run.columns.end == cell.column => {
@@ -112,13 +113,22 @@ impl Row {
                 _ => runs.push(TerminalRun {
                     columns: cell.column..cell.column + cell.width,
                     text: text.to_owned(),
-                    style: cell.style,
+                    style: cell.style.clone(),
                 }),
             }
         }
         let mut text = self.text;
         text.truncate(text_bytes);
-        TerminalLine { text, runs }
+        let links = links::find(&text)
+            .into_iter()
+            .filter_map(|found| {
+                let first = self.cells.iter().find(|cell| cell.bytes.end > found.bytes.start)?;
+                let last = self.cells.iter().rev().find(|cell| cell.bytes.start < found.bytes.end)?;
+                let columns = first.column..last.column + last.width;
+                Some(TerminalFileLink { columns, path: found.path, at: found.at })
+            })
+            .collect();
+        TerminalLine { text, runs, links }
     }
 }
 

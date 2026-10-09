@@ -22,7 +22,7 @@ use std::{
     cell::{Ref, RefCell},
     ffi::OsStr,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -42,6 +42,7 @@ use genea_host::{Exit, Host, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
 
 mod grid;
 mod input;
+mod links;
 
 use grid::Screen;
 
@@ -49,6 +50,7 @@ use crate::{
     command::{Command, Modifiers, TerminalKey},
     environment::ProcessEnv,
     jobs::Jobs,
+    problems::TextPosition,
     view::{TerminalLine, TerminalStatus, TerminalTabView, TerminalView},
     workbench::{Core, ProjectId},
 };
@@ -388,6 +390,17 @@ impl Terminal {
             }
             _ => {}
         }
+    }
+
+    /// The file and place a reference at the active tab's cell points to:
+    /// relative to the project root if it is inside it, else absolute.
+    pub(crate) fn file_link_at(&self, line: usize, column: usize) -> Option<(PathBuf, TextPosition)> {
+        let tab = self.active_tab()?;
+        let screen = tab.screen();
+        let link = screen.lines.get(line)?.links.iter().find(|link| link.columns.contains(&column))?;
+        let path = normalize(&tab.directory.join(&link.path));
+        let path = path.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or(path);
+        Some((path, link.at))
     }
 
     /// Closes a tab; dropping its session hangs up the shell.
@@ -755,6 +768,21 @@ impl Screen {
     }
 }
 
+/// `path` with `.` and `..` worked out, without touching the disk.
+fn normalize(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normal.pop();
+            }
+            component => normal.push(component),
+        }
+    }
+    normal
+}
+
 fn blank_line() -> TerminalLine {
-    TerminalLine { text: String::new(), runs: Vec::new() }
+    TerminalLine { text: String::new(), runs: Vec::new(), links: Vec::new() }
 }
