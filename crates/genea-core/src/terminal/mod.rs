@@ -37,7 +37,10 @@ use alacritty_terminal::{
 };
 use genea_host::{Exit, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
 
+mod input;
+
 use crate::{
+    command::Command,
     environment::ProcessEnv,
     jobs::Jobs,
     view::{TerminalCursor, TerminalLine, TerminalStatus, TerminalView},
@@ -273,6 +276,29 @@ impl Terminal {
         session.dirty.store(false, Ordering::SeqCst);
         let term = session.term.lock().unwrap();
         (self.lines, self.cursor) = snapshot(&term);
+    }
+
+    /// A terminal command from the user.
+    pub(crate) fn command(&mut self, command: Command) {
+        let Shell::Running(session) = &self.shell else { return };
+        let bytes = match command {
+            Command::TerminalText(text) => text.into_bytes(),
+            Command::TerminalKey(key, modifiers) => {
+                let mode = *session.term.lock().unwrap().mode();
+                input::key(key, modifiers, mode)
+            }
+            _ => return,
+        };
+        self.send(bytes);
+    }
+
+    /// Sends input to the program.
+    fn send(&self, bytes: Vec<u8>) {
+        if let Shell::Running(session) = &self.shell
+            && !bytes.is_empty()
+        {
+            let _ = session.to_pty.send(ToPty::Input(bytes));
+        }
     }
 
     pub(crate) fn view(&self) -> TerminalView {

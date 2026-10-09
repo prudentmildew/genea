@@ -6,9 +6,11 @@
 //! `settle()` after it shows it on the grid; `wait_for_input` sees what the
 //! user typed.
 
-use std::path::Path;
+use std::{path::Path, sync::mpsc, time::Duration};
 
-use genea_core::{ProjectId, TerminalView, Workbench};
+use genea_core::{
+    Command, Modifiers, ProjectId, TerminalKey, TerminalStatus, TerminalView, ToolState, ToolView, Workbench,
+};
 use genea_testkit::{FakePty, FixtureProject, TestHost};
 
 /// A project open on `host`, settled, with its terminal's fake PTY.
@@ -75,4 +77,73 @@ fn what_the_shell_prints_shows_on_the_grid() {
     assert_eq!(screen(&workbench, project), ["hello", "world"]);
     let cursor = terminal(&workbench, project).cursor.unwrap();
     assert_eq!((cursor.line, cursor.column), (1, 5));
+}
+
+/// Plays the shell for one command line: runs it with `/bin/sh` in the
+/// terminal's environment and folder, and prints its output on the PTY.
+fn shell_runs(pty: &FakePty, command: &str) {
+    let spec = pty.spec();
+    let mut sh = std::process::Command::new("/bin/sh");
+    sh.arg("-c").arg(command).env_clear().envs(spec.env.iter().map(|(k, v)| (k, v)));
+    if let Some(cwd) = &spec.cwd {
+        sh.current_dir(cwd);
+    }
+    let out = sh.output().unwrap();
+    pty.output(String::from_utf8_lossy(&out.stdout).replace('\n', "\r\n"));
+}
+
+/// Types a command line into the terminal, as the user would.
+fn type_line(workbench: &mut Workbench, project: ProjectId, line: &str) {
+    workbench.dispatch(project, Command::TerminalText(line.into()));
+    workbench.dispatch(project, Command::TerminalKey(TerminalKey::Enter, Modifiers::default()));
+}
+
+#[test]
+fn node_and_pnpm_in_the_terminal_are_the_pinned_versions_once_downloaded() {
+    let host = TestHost::new();
+    let node = host.tools().node("24.18.0");
+    host.tools().pnpm("11.13.0");
+    host.download_server().hold(&node);
+    let package_json = r#"{
+  "name": "app",
+  "devEngines": { "runtime": { "name": "node", "version": "24.18.0" } },
+  "packageManager": "pnpm@11.13.0"
+}
+"#;
+    let fixture = FixtureProject::new().file("package.json", package_json).build();
+    let mut workbench = Workbench::new(host.shared());
+    let (notify, notified) = mpsc::channel();
+    workbench.set_notifier(move || {
+        let _ = notify.send(());
+    });
+    let project = workbench.open_project(fixture.root()).unwrap();
+
+    // The shell waits for the pinned tools, so they are on its PATH.
+    loop {
+        workbench.pump();
+        let runtime = workbench.project(project).unwrap().toolchain.runtime;
+        if matches!(runtime, Some(ToolView { state: ToolState::Downloading { .. }, .. })) {
+            break;
+        }
+        notified.recv_timeout(Duration::from_secs(10)).expect("Node never started downloading");
+    }
+    host.download_server().wait_held(&node);
+    workbench.pump();
+    assert!(host.ptys().spawned().is_empty());
+    assert_eq!(terminal(&workbench, project).status, TerminalStatus::Starting);
+
+    host.download_server().release(&node);
+    workbench.settle().unwrap();
+    let pty = host.ptys().last();
+    assert_eq!(terminal(&workbench, project).status, TerminalStatus::Running);
+
+    type_line(&mut workbench, project, "node -v");
+    pty.wait_for_input("node -v\r");
+    shell_runs(&pty, "node -v");
+    type_line(&mut workbench, project, "pnpm -v");
+    pty.wait_for_input("pnpm -v\r");
+    shell_runs(&pty, "pnpm -v");
+    workbench.settle().unwrap();
+
+    assert_eq!(screen(&workbench, project), ["v24.18.0", "11.13.0"]);
 }

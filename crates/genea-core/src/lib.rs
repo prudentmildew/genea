@@ -40,7 +40,7 @@ mod view;
 mod watcher;
 mod workbench;
 
-pub use command::{CaretMove, Command};
+pub use command::{CaretMove, Command, Modifiers, TerminalKey};
 pub use config::{Config, TerminalPosition, Theme};
 pub use command::CloseChoice;
 pub use editor::MAX_VISIBLE_COLUMNS;

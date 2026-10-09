@@ -140,6 +140,46 @@ pub enum Command {
     CloseSplit,
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
+
+    // The terminal pane (ticket #38).
+    /// Types text into the terminal: a key press or an IME commit.
+    TerminalText(String),
+    /// A key that isn't plain text, or one with ⌃ or ⌥ held: sent to the
+    /// program the way xterm sends it.
+    TerminalKey(TerminalKey, Modifiers),
+}
+
+/// A key for the terminal that [`Command::TerminalText`] can't carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalKey {
+    Enter,
+    Backspace,
+    Tab,
+    Escape,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+    /// F1 to F12.
+    F(u8),
+    /// A character key with ⌃ or ⌥ held (⌃C is `Char('c')` with `ctrl`).
+    Char(char),
+}
+
+/// Modifier keys held with a terminal key or mouse event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    /// ⌥, which the terminal treats as Meta.
+    pub alt: bool,
+    /// ⌃.
+    pub ctrl: bool,
 }
 
 /// What to do with unsaved edits in a closing tab.
