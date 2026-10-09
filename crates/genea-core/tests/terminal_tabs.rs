@@ -165,3 +165,60 @@ fn clicking_a_path_line_column_in_the_output_opens_the_file_there() {
     assert_eq!(opened(&workbench, project), Some(("app.ts".into(), "12:5".into())));
     assert!(!terminal(&workbench, project).focused);
 }
+
+/// Each row's links as (columns, path, 1-based line:column).
+fn links(workbench: &Workbench, project: ProjectId) -> Vec<Vec<(std::ops::Range<usize>, String, String)>> {
+    let view = terminal(workbench, project);
+    let mut rows: Vec<_> = view
+        .lines
+        .into_iter()
+        .map(|line| {
+            let links = line.links.into_iter();
+            links
+                .map(|link| {
+                    let at = format!("{}:{}", link.at.line + 1, link.at.column + 1);
+                    (link.columns, link.path.display().to_string(), at)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    while rows.last().is_some_and(Vec::is_empty) {
+        rows.pop();
+    }
+    rows
+}
+
+fn link(columns: std::ops::Range<usize>, path: &str, at: &str) -> (std::ops::Range<usize>, String, String) {
+    (columns, path.into(), at.into())
+}
+
+#[test]
+fn references_as_tools_print_them_are_links_and_urls_and_times_are_not() {
+    let host = TestHost::new();
+    let fixture = fixture();
+    let (mut workbench, project, pty) = open(&host, &fixture);
+
+    pty.output(concat!(
+        "src/app.ts:12:5 - error TS2304\r\n",
+        "  ╭─[./src/app.ts:3:1]\r\n",
+        "    at main (/work/app/src/app.ts:7:12)\r\n",
+        "    at file:///work/app/src/app.ts:8:2\r\n",
+        "  ❯ src/app.test.ts:40\r\n",
+        "全 .env:2:1\r\n",
+        "Local: http://localhost:5173/src/app.ts:3 at 12:30:45 on 127.0.0.1:80 v1.2:3\r\n",
+    ));
+    workbench.settle().unwrap();
+
+    assert_eq!(
+        links(&workbench, project),
+        [
+            vec![link(0..15, "src/app.ts", "12:5")],
+            vec![link(5..21, "./src/app.ts", "3:1")],
+            vec![link(13..38, "/work/app/src/app.ts", "7:12")],
+            vec![link(7..38, "/work/app/src/app.ts", "8:2")],
+            vec![link(4..22, "src/app.test.ts", "40:1")],
+            // After a wide character, in grid columns.
+            vec![link(3..11, ".env", "2:1")],
+        ]
+    );
+}

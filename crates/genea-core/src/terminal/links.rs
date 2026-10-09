@@ -23,7 +23,7 @@ pub(super) struct Found {
     pub(super) at: TextPosition,
 }
 
-const FILE_URL: &str = "file://";
+const FILE_URL: &str = "file:";
 
 /// Every reference in `text`, left to right.
 pub(super) fn find(text: &str) -> Vec<Found> {
@@ -35,11 +35,12 @@ pub(super) fn find(text: &str) -> Vec<Found> {
         rest = end;
         let path = &text[start..end];
         let before = &text[..start];
-        // `file:///abs/app.ts:3`, but no other URL's path.
-        let start = match before.strip_suffix(FILE_URL) {
-            Some(prefix) if path.starts_with('/') => prefix.len(),
+        // `file:///abs/app.ts:3` (the slashes are path characters), but no
+        // other URL's path.
+        let (start, path) = match before.strip_suffix(FILE_URL) {
+            Some(prefix) if path.starts_with("///") => (prefix.len(), &path[2..]),
             _ if before.ends_with(':') => continue,
-            _ => start,
+            _ => (start, path),
         };
         if !has_extension(path) {
             continue;
