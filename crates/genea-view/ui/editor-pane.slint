@@ -1,0 +1,176 @@
+// One side of the editor area (ticket #31): a tab strip over an editor
+// surface. A project window has one, or two side by side after a split.
+// Rust (src/window.rs) sets every property from the core's PaneView.
+
+import { Theme } from "theme.slint";
+import { EditorSurface, Line } from "editor-surface.slint";
+
+// A tab in the strip.
+export struct TabEntry {
+    title: string,
+    // The file has unsaved edits.
+    modified: bool,
+    active: bool,
+}
+
+// Where the surface's lines, caret and preedit are, placed by Rust.
+export struct SurfaceGeometry {
+    offset-y: length,
+    caret-x: length,
+    caret-y: length,
+    compose-x: length,
+    preedit-width: length,
+}
+
+export component EditorPane inherits Rectangle {
+    in property <[TabEntry]> tabs;
+    // This side has the keyboard focus: its active tab is marked.
+    in property <bool> focused;
+    in property <bool> has-editor;
+    in property <bool> can-split;
+    in property <[Line]> lines <=> surface.lines;
+    in property <SurfaceGeometry> geometry;
+
+    out property <length> char-width: surface.char-width;
+    out property <length> viewport-height: surface.viewport-height;
+    out property <length> text-left: surface.text-left;
+
+    callback tab-clicked(index: int);
+    callback tab-closed(index: int);
+    callback tab-moved(index: int);
+    callback split-right();
+
+    callback scrolled <=> surface.scrolled;
+    callback pressed <=> surface.pressed;
+    callback dragged <=> surface.dragged;
+    callback double-clicked <=> surface.double-clicked;
+    callback key <=> surface.key;
+    callback committed <=> surface.committed;
+    callback preedit-changed <=> surface.preedit-changed;
+
+    public function refocus() {
+        surface.refocus();
+    }
+
+    background: Theme.editor-background;
+    forward-focus: surface;
+
+    VerticalLayout {
+        Rectangle {
+            height: 28px;
+            background: Theme.chrome-background;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.chrome-border;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+
+                for tab[index] in root.tabs: ContextMenuArea {
+                    Menu {
+                        MenuItem {
+                            title: "Close Tab";
+                            activated => {
+                                root.tab-closed(index);
+                            }
+                        }
+
+                        MenuItem {
+                            title: "Move to Other Side";
+                            activated => {
+                                root.tab-moved(index);
+                            }
+                        }
+
+                        MenuItem {
+                            title: "Split Right";
+                            enabled: root.can-split && tab.active && root.focused;
+                            activated => {
+                                root.split-right();
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        background: tab.active ? Theme.editor-background : Theme.chrome-background;
+
+                        Rectangle {
+                            x: parent.width - 1px;
+                            width: 1px;
+                            background: Theme.chrome-border;
+                        }
+
+                        // The focused side's active tab.
+                        Rectangle {
+                            y: 0px;
+                            height: 2px;
+                            background: Theme.caret;
+                            visible: tab.active && root.focused;
+                        }
+
+                        select := TouchArea {
+                            clicked => {
+                                root.tab-clicked(index);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 6px;
+                            spacing: 6px;
+
+                            Text {
+                                text: tab.title;
+                                color: tab.active ? Theme.chrome-foreground : Theme.chrome-muted;
+                                vertical-alignment: center;
+                            }
+
+                            // A dot marks unsaved edits; it turns into the
+                            // close button under the pointer.
+                            Rectangle {
+                                width: 16px;
+
+                                close := TouchArea {
+                                    clicked => {
+                                        root.tab-closed(index);
+                                    }
+                                }
+
+                                Text {
+                                    text: close.has-hover || (select.has-hover && !tab.modified) ? "×" : tab.modified ? "●" : "";
+                                    color: close.has-hover ? Theme.chrome-foreground : Theme.chrome-muted;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+
+            surface := EditorSurface {
+                caret-visible: root.has-editor;
+                offset-y: root.geometry.offset-y;
+                caret-x: root.geometry.caret-x;
+                caret-y: root.geometry.caret-y;
+                compose-x: root.geometry.compose-x;
+                preedit-width: root.geometry.preedit-width;
+            }
+
+            if !root.has-editor: Text {
+                text: "Open a file with File › Open File…";
+                color: Theme.chrome-muted;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
