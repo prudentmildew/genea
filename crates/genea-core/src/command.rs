@@ -35,6 +35,11 @@ pub enum Command {
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },
+    /// ⌥-click: adds a caret at a grid cell (placed like
+    /// [`PlaceCaret`](Self::PlaceCaret)) and makes it the primary one. On a
+    /// caret that is already there, removes it instead, unless it is the
+    /// only one. Typing, deleting and pasting then apply at every caret.
+    AddCaret { line: usize, column: usize },
     /// Double-click: selects the word (or punctuation or space run) at a
     /// grid cell.
     SelectWord { line: usize, column: usize },

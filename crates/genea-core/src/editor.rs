@@ -1,10 +1,14 @@
-//! One open file on the editor surface: its text, selection, scroll position
+//! One open file on the editor surface: its text, carets, scroll position
 //! and saved state.
 //!
-//! Every edit goes through `insert` or `delete`, which give the buffer a
-//! fresh version (compared with the saved one for `modified`) and record
-//! the change in the undo history. Multi-caret and syntax build on those
-//! two (tickets #52, #24).
+//! Every edit goes through `replace`, which applies it at every caret, gives
+//! the buffer a fresh version (compared with the saved one for `modified`)
+//! and records it in the undo history as one edit. Syntax builds on that
+//! (ticket #24).
+//!
+//! The editor has one or more carets (ticket #52), each with its own
+//! selection. They are kept in the order they were added; the last one is
+//! the primary, which the view scrolls to and the status bar reports.
 
 use std::{ops::Range, path::PathBuf, time::Instant};
 
@@ -25,10 +29,10 @@ const TAB_WIDTH: usize = 4;
 /// a minified file can't make every sync copy and shape megabytes.
 pub const MAX_VISIBLE_COLUMNS: usize = 1000;
 
-pub(crate) struct Editor {
-    path: PathBuf,
-    text: Rope,
-    /// Char index into `text`: where the caret is, the moving end of the
+/// One caret and its selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Cursor {
+    /// Char index into the text: where the caret is, the moving end of the
     /// selection.
     caret: usize,
     /// Char index of the selection's fixed end; equal to `caret` when
@@ -36,12 +40,47 @@ pub(crate) struct Editor {
     anchor: usize,
     /// The display column Up and Down aim for, kept across short lines.
     /// Set by the first vertical move; cleared by every other move.
-    goal_column: Option<usize>,
+    goal: Option<usize>,
+}
+
+impl Cursor {
+    fn at(position: usize) -> Self {
+        Cursor { caret: position, anchor: position, goal: None }
+    }
+
+    fn selecting(anchor: usize, caret: usize) -> Self {
+        Cursor { caret, anchor, goal: None }
+    }
+
+    /// The selection as an ordered char range.
+    fn range(self) -> Range<usize> {
+        self.anchor.min(self.caret)..self.anchor.max(self.caret)
+    }
+
+    fn is_empty(self) -> bool {
+        self.anchor == self.caret
+    }
+
+    fn collapse(&mut self) {
+        self.anchor = self.caret;
+    }
+
+    fn selection(self) -> Selection {
+        Selection { anchor: self.anchor, caret: self.caret }
+    }
+}
+
+pub(crate) struct Editor {
+    path: PathBuf,
+    text: Rope,
+    /// Never empty. In the order the carets were added; the last is the
+    /// primary. No two overlap (see `merge_cursors`).
+    cursors: Vec<Cursor>,
     /// First visible row; fractional while scrolling smoothly.
     scroll_top: f64,
     /// Every line break typed or pasted is converted to this.
     line_ending: LineEnding,
-    /// The IME's marked text, drawn at the caret; never in `text`.
+    /// The IME's marked text, drawn at the primary caret; never in `text`.
     preedit: String,
     /// Identifies the text: every edit gives it a fresh one, and undo and
     /// redo restore the one the text had then.
@@ -67,9 +106,7 @@ impl Editor {
         Editor {
             path,
             text,
-            caret: 0,
-            anchor: 0,
-            goal_column: None,
+            cursors: vec![Cursor::at(0)],
             scroll_top: 0.0,
             line_ending,
             preedit: String::new(),
@@ -80,73 +117,114 @@ impl Editor {
         }
     }
 
-    /// Moves the caret. With `extend`, the selection's anchor stays put, so
-    /// the selection grows or shrinks; without, the selection collapses.
+    fn primary(&self) -> Cursor {
+        *self.cursors.last().expect("an editor always has a caret")
+    }
+
+    /// Keeps only the primary caret.
+    fn set_cursor(&mut self, cursor: Cursor) {
+        self.cursors = vec![cursor];
+    }
+
+    /// Moves every caret. With `extend`, each selection's anchor stays put,
+    /// so the selection grows or shrinks; without, the selections collapse.
     pub(crate) fn move_caret(&mut self, movement: CaretMove, extend: bool, viewport_rows: f64) {
-        let (start, end) = self.selection();
+        let page = (viewport_rows.floor() as usize).max(1) as f64;
         match movement {
-            CaretMove::Left if !extend && start != end => (self.caret, self.goal_column) = (start, None),
-            CaretMove::Right if !extend && start != end => (self.caret, self.goal_column) = (end, None),
-            _ => self.move_head(movement, viewport_rows),
+            CaretMove::PageUp => self.scroll_by(-page, viewport_rows),
+            CaretMove::PageDown => self.scroll_by(page, viewport_rows),
+            _ => {}
         }
-        if !extend {
-            self.anchor = self.caret;
+        for i in 0..self.cursors.len() {
+            let mut cursor = self.cursors[i];
+            let range = cursor.range();
+            match movement {
+                CaretMove::Left if !extend && !range.is_empty() => (cursor.caret, cursor.goal) = (range.start, None),
+                CaretMove::Right if !extend && !range.is_empty() => (cursor.caret, cursor.goal) = (range.end, None),
+                _ => self.move_head(&mut cursor, movement, viewport_rows),
+            }
+            if !extend {
+                cursor.collapse();
+            }
+            self.cursors[i] = cursor;
         }
+        self.merge_cursors();
         self.reveal_caret(viewport_rows);
     }
 
     pub(crate) fn select_all(&mut self, viewport_rows: f64) {
-        self.anchor = 0;
-        self.caret = self.text.len_chars();
-        self.goal_column = None;
+        self.set_cursor(Cursor::selecting(0, self.text.len_chars()));
         self.reveal_caret(viewport_rows);
     }
 
-    /// Moves the caret alone, leaving the anchor where it was.
-    fn move_head(&mut self, movement: CaretMove, viewport_rows: f64) {
-        let (line, column) = self.caret_line_column();
+    /// Moves a caret alone, leaving its anchor where it was.
+    fn move_head(&self, cursor: &mut Cursor, movement: CaretMove, viewport_rows: f64) {
+        let (line, column) = self.line_column(cursor.caret);
         let last_line = self.text.len_lines() - 1;
         let page = (viewport_rows.floor() as usize).max(1);
+        let mut set = |line: usize, char_column: usize| {
+            cursor.caret = self.text.line_to_char(line) + char_column;
+            cursor.goal = None;
+        };
         match movement {
-            CaretMove::Left if column > 0 => self.set_caret(line, column - 1),
-            CaretMove::Left if line > 0 => self.set_caret(line - 1, self.line_len(line - 1)),
+            CaretMove::Left if column > 0 => set(line, column - 1),
+            CaretMove::Left if line > 0 => set(line - 1, self.line_len(line - 1)),
             CaretMove::Left => {}
-            CaretMove::Right if column < self.line_len(line) => self.set_caret(line, column + 1),
-            CaretMove::Right if line < last_line => self.set_caret(line + 1, 0),
+            CaretMove::Right if column < self.line_len(line) => set(line, column + 1),
+            CaretMove::Right if line < last_line => set(line + 1, 0),
             CaretMove::Right => {}
-            CaretMove::WordLeft if column > 0 => self.set_caret(line, text::word_start(&self.line_chars(line), column)),
+            CaretMove::WordLeft if column > 0 => set(line, text::word_start(&self.line_chars(line), column)),
             CaretMove::WordRight if column < self.line_len(line) => {
-                self.set_caret(line, text::word_end(&self.line_chars(line), column))
+                set(line, text::word_end(&self.line_chars(line), column))
             }
-            CaretMove::WordLeft => self.move_head(CaretMove::Left, viewport_rows),
-            CaretMove::WordRight => self.move_head(CaretMove::Right, viewport_rows),
-            CaretMove::Up => self.move_vertically(line.saturating_sub(1)),
-            CaretMove::Down => self.move_vertically((line + 1).min(last_line)),
-            CaretMove::PageUp => {
-                self.scroll_by(-(page as f64), viewport_rows);
-                self.move_vertically(line.saturating_sub(page));
-            }
-            CaretMove::PageDown => {
-                self.scroll_by(page as f64, viewport_rows);
-                self.move_vertically((line + page).min(last_line));
-            }
-            CaretMove::LineStart => self.set_caret(line, 0),
-            CaretMove::LineEnd => self.set_caret(line, self.line_len(line)),
-            CaretMove::DocumentStart => self.set_caret(0, 0),
-            CaretMove::DocumentEnd => self.set_caret(last_line, self.line_len(last_line)),
+            CaretMove::WordLeft => self.move_head(cursor, CaretMove::Left, viewport_rows),
+            CaretMove::WordRight => self.move_head(cursor, CaretMove::Right, viewport_rows),
+            CaretMove::Up => self.move_vertically(cursor, line.saturating_sub(1)),
+            CaretMove::Down => self.move_vertically(cursor, (line + 1).min(last_line)),
+            CaretMove::PageUp => self.move_vertically(cursor, line.saturating_sub(page)),
+            CaretMove::PageDown => self.move_vertically(cursor, (line + page).min(last_line)),
+            CaretMove::LineStart => set(line, 0),
+            CaretMove::LineEnd => set(line, self.line_len(line)),
+            CaretMove::DocumentStart => set(0, 0),
+            CaretMove::DocumentEnd => set(last_line, self.line_len(last_line)),
         }
     }
 
-    /// Puts the caret at the last text position at or before a grid cell.
-    /// With `extend`, the selection's anchor stays put.
+    /// Puts the caret at the last text position at or before a grid cell,
+    /// dropping any other carets. With `extend`, the primary selection's
+    /// anchor stays put.
     pub(crate) fn place_caret(&mut self, line: usize, column: usize, extend: bool, viewport_rows: f64) {
-        let line = line.min(self.text.len_lines() - 1);
-        let char_column = self.char_column_at(line, column);
-        self.set_caret(line, char_column);
+        let position = self.position_at(line, column);
+        let mut cursor = self.primary();
+        cursor.caret = position;
+        cursor.goal = None;
         if !extend {
-            self.anchor = self.caret;
+            cursor.collapse();
         }
+        self.set_cursor(cursor);
         self.reveal_caret(viewport_rows);
+    }
+
+    /// ⌥-click: adds a caret at a grid cell as the new primary, or removes
+    /// the caret that is already there (unless it is the only one).
+    pub(crate) fn add_caret(&mut self, line: usize, column: usize, viewport_rows: f64) {
+        let position = self.position_at(line, column);
+        let existing = self.cursors.iter().position(|c| c.is_empty() && c.caret == position);
+        match existing {
+            Some(i) if self.cursors.len() > 1 => {
+                self.cursors.remove(i);
+            }
+            Some(_) => {}
+            None => self.cursors.push(Cursor::at(position)),
+        }
+        self.merge_cursors();
+        self.reveal_caret(viewport_rows);
+    }
+
+    /// The text position at or before a grid cell, clamped to the text.
+    fn position_at(&self, line: usize, column: usize) -> usize {
+        let line = line.min(self.text.len_lines() - 1);
+        self.text.line_to_char(line) + self.char_column_at(line, column)
     }
 
     /// Selects the run of one character class at a grid cell, with the
@@ -166,9 +244,7 @@ impl Editor {
             None => (0, 0),
         };
         let line_start = self.text.line_to_char(line);
-        self.anchor = line_start + start;
-        self.caret = line_start + end;
-        self.goal_column = None;
+        self.set_cursor(Cursor::selecting(line_start + start, line_start + end));
         self.reveal_caret(viewport_rows);
     }
 
@@ -176,9 +252,8 @@ impl Editor {
     /// of the next line.
     pub(crate) fn select_line(&mut self, line: usize, viewport_rows: f64) {
         let line = line.min(self.text.len_lines() - 1);
-        self.anchor = self.text.line_to_char(line);
-        self.caret = self.anchor + self.text.line(line).len_chars();
-        self.goal_column = None;
+        let start = self.text.line_to_char(line);
+        self.set_cursor(Cursor::selecting(start, start + self.text.line(line).len_chars()));
         self.reveal_caret(viewport_rows);
     }
 
@@ -194,82 +269,155 @@ impl Editor {
         }
     }
 
-    /// Inserts `text` at the caret, replacing the selection, and puts the
-    /// caret after it. Line breaks become the file's line ending. `now` is
-    /// the host clock's time, for grouping undo steps.
+    /// Inserts `text` at every caret, replacing the selections, and puts
+    /// each caret after it. Line breaks become the file's line ending. `now`
+    /// is the host clock's time, for grouping undo steps.
     pub(crate) fn insert(&mut self, text: &str, kind: EditKind, now: Instant, viewport_rows: f64) {
         self.preedit.clear();
-        if text.is_empty() && self.anchor == self.caret {
+        if text.is_empty() && self.cursors.iter().all(|c| c.is_empty()) {
             return;
         }
         let text = self.line_ending.normalize(text);
-        let (before, version_before) = (self.selection_state(), self.version);
-        let mut changes: Vec<Change> = self.delete_selection().into_iter().collect();
-        if !text.is_empty() {
-            self.text.insert(self.caret, &text);
-            self.new_version();
-            changes.push(Change::Insert { at: self.caret, text: text.clone() });
-        }
-        self.caret += text.chars().count();
-        self.anchor = self.caret;
-        self.goal_column = None;
-        self.reveal_caret(viewport_rows);
-        self.record(kind, now, changes, before, version_before);
+        let edits = (0..self.cursors.len()).map(|i| (i, self.cursors[i].range(), text.clone())).collect();
+        self.replace(edits, kind, now, viewport_rows);
     }
 
     pub(crate) fn set_preedit(&mut self, text: String) {
         self.preedit = text;
     }
 
-    /// Deletes the selection, or the text the movement would pass over.
+    /// Deletes each caret's selection, or the text its movement would pass
+    /// over.
     pub(crate) fn delete(&mut self, movement: CaretMove, kind: EditKind, now: Instant, viewport_rows: f64) {
-        let (before, version_before) = (self.selection_state(), self.version);
-        if self.anchor == self.caret {
-            self.move_head(movement, viewport_rows);
+        let edits = (0..self.cursors.len())
+            .map(|i| {
+                let mut cursor = self.cursors[i];
+                if cursor.is_empty() {
+                    self.move_head(&mut cursor, movement, viewport_rows);
+                }
+                (i, cursor.range(), String::new())
+            })
+            .collect();
+        self.replace(edits, kind, now, viewport_rows);
+    }
+
+    /// Replaces text at the carets as one edit: each entry is a caret (by
+    /// index), the range it replaces and what goes there. Overlapping ranges
+    /// merge. Each caret ends up collapsed after its replacement.
+    fn replace(&mut self, mut edits: Vec<(usize, Range<usize>, String)>, kind: EditKind, now: Instant, rows: f64) {
+        let (before, version_before) = (self.selections(), self.version);
+        edits.sort_by_key(|(_, range, _)| (range.start, range.end));
+        let mut merged: Vec<(usize, Range<usize>, String)> = Vec::with_capacity(edits.len());
+        for (i, range, text) in edits {
+            match merged.last_mut() {
+                Some((last_i, last, last_text)) if range.start < last.end => {
+                    last.end = last.end.max(range.end);
+                    *last_i = (*last_i).max(i);
+                    if last_text.is_empty() {
+                        *last_text = text;
+                    }
+                }
+                _ => merged.push((i, range, text)),
+            }
         }
-        let changes = self.delete_selection().into_iter().collect();
-        self.goal_column = None;
-        self.reveal_caret(viewport_rows);
+
+        // From the end backwards, so each change's indices are those of the
+        // text as it was before the edit.
+        let mut changes = Vec::new();
+        for (_, range, text) in merged.iter().rev() {
+            if !range.is_empty() {
+                changes.push(Change::Remove { at: range.start, text: self.text.slice(range.clone()).to_string() });
+                self.text.remove(range.clone());
+            }
+            if !text.is_empty() {
+                self.text.insert(range.start, text);
+                changes.push(Change::Insert { at: range.start, text: text.clone() });
+            }
+        }
+        if !changes.is_empty() {
+            self.new_version();
+        }
+
+        let mut shift = 0isize;
+        let mut carets: Vec<(usize, usize)> = merged
+            .iter()
+            .map(|(i, range, text)| {
+                let inserted = text.chars().count();
+                let start = range.start.saturating_add_signed(shift);
+                shift += inserted as isize - range.len() as isize;
+                (*i, start + inserted)
+            })
+            .collect();
+        carets.sort_by_key(|(i, _)| *i);
+        self.cursors = carets.into_iter().map(|(_, caret)| Cursor::at(caret)).collect();
+        self.merge_cursors();
+        self.reveal_caret(rows);
         self.record(kind, now, changes, before, version_before);
     }
 
-    /// Removes the selected text and collapses the selection where it was.
-    fn delete_selection(&mut self) -> Option<Change> {
-        let (start, end) = self.selection();
-        let removed = (start != end).then(|| {
-            let text = self.text.slice(start..end).to_string();
-            self.text.remove(start..end);
-            self.new_version();
-            Change::Remove { at: start, text }
-        });
-        self.caret = start;
-        self.anchor = start;
-        removed
+    /// Merges carets whose selections overlap, or that sit at the same
+    /// place, keeping the later-added one's direction and order.
+    fn merge_cursors(&mut self) {
+        if self.cursors.len() < 2 {
+            return;
+        }
+        let mut order: Vec<usize> = (0..self.cursors.len()).collect();
+        order.sort_by_key(|&i| (self.cursors[i].range().start, self.cursors[i].range().end));
+        let mut groups: Vec<(Range<usize>, usize)> = Vec::with_capacity(order.len());
+        for i in order {
+            let range = self.cursors[i].range();
+            match groups.last_mut() {
+                Some((group, kept))
+                    if range.start < group.end
+                        || range.start == group.start
+                        || (range.is_empty() && range.start == group.end) =>
+                {
+                    group.end = group.end.max(range.end);
+                    *kept = (*kept).max(i);
+                }
+                _ => groups.push((range, i)),
+            }
+        }
+        if groups.len() == self.cursors.len() {
+            return;
+        }
+        groups.sort_by_key(|(_, kept)| *kept);
+        self.cursors = groups
+            .into_iter()
+            .map(|(range, kept)| {
+                let cursor = self.cursors[kept];
+                if cursor.range() == range {
+                    cursor
+                } else if cursor.caret < cursor.anchor {
+                    Cursor::selecting(range.end, range.start)
+                } else {
+                    Cursor::selecting(range.start, range.end)
+                }
+            })
+            .collect();
     }
 
-    /// ⌘Z: reverts the last undo step and restores the selection from
-    /// before it.
+    /// ⌘Z: reverts the last undo step and restores the carets from before
+    /// it.
     pub(crate) fn undo(&mut self, viewport_rows: f64) {
         self.preedit.clear();
         if let Some(restored) = self.history.undo(&mut self.text) {
-            self.restore(restored.selection, restored.version, viewport_rows);
+            self.restore(restored.selections, restored.version, viewport_rows);
         }
     }
 
-    /// ⌘⇧Z: makes the last undone step again and restores the selection
-    /// from after it.
+    /// ⌘⇧Z: makes the last undone step again and restores the carets from
+    /// after it.
     pub(crate) fn redo(&mut self, viewport_rows: f64) {
         self.preedit.clear();
         if let Some(restored) = self.history.redo(&mut self.text) {
-            self.restore(restored.selection, restored.version, viewport_rows);
+            self.restore(restored.selections, restored.version, viewport_rows);
         }
     }
 
-    fn restore(&mut self, selection: Selection, version: u64, viewport_rows: f64) {
-        self.anchor = selection.anchor;
-        self.caret = selection.caret;
+    fn restore(&mut self, selections: Vec<Selection>, version: u64, viewport_rows: f64) {
+        self.cursors = selections.into_iter().map(|s| Cursor::selecting(s.anchor, s.caret)).collect();
         self.version = version;
-        self.goal_column = None;
         self.reveal_caret(viewport_rows);
     }
 
@@ -278,18 +426,18 @@ impl Editor {
         self.version = self.last_version;
     }
 
-    fn selection_state(&self) -> Selection {
-        Selection { anchor: self.anchor, caret: self.caret }
+    fn selections(&self) -> Vec<Selection> {
+        self.cursors.iter().map(|c| c.selection()).collect()
     }
 
     /// Adds an edit's changes to the undo history.
-    fn record(&mut self, kind: EditKind, at: Instant, changes: Vec<Change>, before: Selection, version_before: u64) {
+    fn record(&mut self, kind: EditKind, at: Instant, changes: Vec<Change>, before: Vec<Selection>, version_before: u64) {
         self.history.record(Edit {
             kind,
             at,
             changes,
             before,
-            after: self.selection_state(),
+            after: self.selections(),
             version_before,
             version_after: self.version,
         });
@@ -297,13 +445,8 @@ impl Editor {
 
     /// The selected text, or `None` with nothing selected.
     pub(crate) fn selected_text(&self) -> Option<String> {
-        let (start, end) = self.selection();
-        (start != end).then(|| self.text.slice(start..end).to_string())
-    }
-
-    /// The selection as an ordered char range.
-    fn selection(&self) -> (usize, usize) {
-        (self.anchor.min(self.caret), self.anchor.max(self.caret))
+        let range = self.primary().range();
+        (!range.is_empty()).then(|| self.text.slice(range).to_string())
     }
 
     /// Scrolls by `rows`, keeping the last line at the bottom of the
@@ -313,9 +456,9 @@ impl Editor {
         self.scroll_top = (self.scroll_top + rows).clamp(0.0, max);
     }
 
-    /// Scrolls just enough to show the caret's whole row.
+    /// Scrolls just enough to show the primary caret's whole row.
     fn reveal_caret(&mut self, viewport_rows: f64) {
-        let line = self.text.char_to_line(self.caret) as f64;
+        let line = self.text.char_to_line(self.primary().caret) as f64;
         if line < self.scroll_top {
             self.scroll_top = line;
         } else if line + 1.0 > self.scroll_top + viewport_rows {
@@ -324,28 +467,26 @@ impl Editor {
         self.scroll_by(0.0, viewport_rows);
     }
 
-    fn move_vertically(&mut self, target_line: usize) {
-        let goal = self.goal_column.unwrap_or_else(|| self.caret_display_column());
-        let char_column = self.char_column_at(target_line, goal);
-        self.caret = self.text.line_to_char(target_line) + char_column;
-        self.goal_column = Some(goal);
+    fn move_vertically(&self, cursor: &mut Cursor, target_line: usize) {
+        let goal = cursor.goal.unwrap_or_else(|| self.display_column(cursor.caret));
+        cursor.caret = self.text.line_to_char(target_line) + self.char_column_at(target_line, goal);
+        cursor.goal = Some(goal);
     }
 
-    /// Moves the caret to a (line, char column) and forgets the goal column.
-    fn set_caret(&mut self, line: usize, char_column: usize) {
-        self.caret = self.text.line_to_char(line) + char_column;
-        self.goal_column = None;
+    /// A position as (line, char column).
+    fn line_column(&self, position: usize) -> (usize, usize) {
+        let line = self.text.char_to_line(position);
+        (line, position - self.text.line_to_char(line))
     }
 
-    /// The caret as (line, char column).
-    fn caret_line_column(&self) -> (usize, usize) {
-        let line = self.text.char_to_line(self.caret);
-        (line, self.caret - self.text.line_to_char(line))
-    }
-
-    fn caret_display_column(&self) -> usize {
-        let (line, column) = self.caret_line_column();
+    /// A position's display column.
+    fn display_column(&self, position: usize) -> usize {
+        let (line, column) = self.line_column(position);
         display_columns(self.text.line(line).chars().take(column))
+    }
+
+    fn caret_at(&self, position: usize) -> Caret {
+        Caret { line: self.text.char_to_line(position), column: self.display_column(position) }
     }
 
     /// A line's chars, without its line ending.
@@ -379,14 +520,26 @@ impl Editor {
         let line_count = self.text.len_lines();
         let first = (self.scroll_top.floor() as usize).min(line_count);
         let end = ((self.scroll_top + viewport_rows).ceil() as usize).min(line_count);
+        let mut ranges: Vec<Range<usize>> =
+            self.cursors.iter().map(|c| c.range()).filter(|r| !r.is_empty()).collect();
+        ranges.sort_by_key(|r| r.start);
         let lines = (first..end)
             .map(|index| VisibleLine {
                 index,
                 text: self.grid_text(index),
-                selections: self.selected_columns(index).into_iter().collect(),
+                selections: self.selected_columns(index, &ranges),
             })
             .collect();
-        let caret = Caret { line: self.text.char_to_line(self.caret), column: self.caret_display_column() };
+        let caret = self.caret_at(self.primary().caret);
+        let mut positions: Vec<usize> = self.cursors.iter().map(|c| c.caret).collect();
+        positions.sort_unstable();
+        let visible_from = self.text.line_to_char(first);
+        let visible_to = if end < line_count { self.text.line_to_char(end) } else { self.text.len_chars() + 1 };
+        let carets = positions
+            .into_iter()
+            .filter(|p| (visible_from..visible_to).contains(p))
+            .map(|p| self.caret_at(p))
+            .collect();
         let preedit = (!self.preedit.is_empty()).then(|| Preedit {
             line: caret.line,
             column: caret.column,
@@ -401,30 +554,36 @@ impl Editor {
             scroll_top: self.scroll_top,
             lines,
             caret,
+            carets,
             preedit,
         }
     }
 
-    /// The display columns of `line` the selection covers, if any.
-    fn selected_columns(&self, line: usize) -> Option<Range<usize>> {
-        let (start, end) = self.selection();
+    /// The display columns of `line` that the selections (sorted, not
+    /// overlapping) cover, left to right.
+    fn selected_columns(&self, line: usize, ranges: &[Range<usize>]) -> Vec<Range<usize>> {
         let line_start = self.text.line_to_char(line);
         let text_end = line_start + self.line_len(line);
         let next_line = line_start + self.text.line(line).len_chars();
-        if start == end || end <= line_start || start >= next_line {
-            return None;
-        }
+        let first = ranges.partition_point(|r| r.end <= line_start);
         let columns = |to: usize| display_columns(self.text.slice(line_start..to).chars());
-        let from = columns(start.max(line_start));
-        let to = columns(end.min(text_end)) + usize::from(end > text_end);
-        Some(from..to)
+        ranges[first..]
+            .iter()
+            .take_while(|r| r.start < next_line)
+            .map(|r| {
+                let from = columns(r.start.max(line_start));
+                let to = columns(r.end.min(text_end)) + usize::from(r.end > text_end);
+                from..to
+            })
+            .collect()
     }
 
     /// A line as laid out on the grid: tabs expanded, no line ending, cut
-    /// at [`MAX_VISIBLE_COLUMNS`], with the preedit spliced in at the caret.
+    /// at [`MAX_VISIBLE_COLUMNS`], with the preedit spliced in at the
+    /// primary caret.
     fn grid_text(&self, line: usize) -> String {
         let chars = self.text.line(line).chars();
-        let (caret_line, caret_column) = self.caret_line_column();
+        let (caret_line, caret_column) = self.line_column(self.primary().caret);
         let chars: Box<dyn Iterator<Item = char>> = if line == caret_line && !self.preedit.is_empty() {
             Box::new(chars.clone().take(caret_column).chain(self.preedit.chars()).chain(chars.skip(caret_column)))
         } else {

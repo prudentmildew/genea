@@ -87,6 +87,11 @@ impl Project {
                     editor.place_caret(line, column, true, self.viewport_rows);
                 }
             }
+            Command::AddCaret { line, column } => {
+                if let Some(editor) = &mut self.editor {
+                    editor.add_caret(line, column, self.viewport_rows);
+                }
+            }
             Command::SelectWord { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.select_word(line, column, self.viewport_rows);

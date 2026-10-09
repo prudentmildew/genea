@@ -2,7 +2,7 @@
 //! Editing core; ticket #22).
 //!
 //! A transaction is one undo step: the changes one or more edits made, the
-//! selection before and after them, and the buffer versions on either side
+//! selections before and after them, and the buffer versions on either side
 //! (so undoing back to the saved text shows the file as saved again).
 //! Consecutive edits of the same kind group into one transaction until a
 //! pause of [`GROUP_PAUSE`] on the host clock, a caret jump (the edit starts
@@ -18,8 +18,9 @@ use ropey::Rope;
 /// A pause in typing at least this long starts a new undo step.
 pub(crate) const GROUP_PAUSE: Duration = Duration::from_secs(1);
 
-/// The selection as char indices: `caret` moves, `anchor` stays. Equal
-/// when nothing is selected. Multi-caret (#52) turns this into a list.
+/// One selection as char indices: `caret` moves, `anchor` stays. Equal
+/// when nothing is selected. Edits record every caret's selection, in the
+/// order the carets were added (the last is the primary).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Selection {
     pub(crate) anchor: usize,
@@ -76,8 +77,8 @@ pub(crate) struct Edit {
     /// On the host clock.
     pub(crate) at: Instant,
     pub(crate) changes: Vec<Change>,
-    pub(crate) before: Selection,
-    pub(crate) after: Selection,
+    pub(crate) before: Vec<Selection>,
+    pub(crate) after: Vec<Selection>,
     pub(crate) version_before: u64,
     pub(crate) version_after: u64,
 }
@@ -89,8 +90,8 @@ struct Transaction {
     last_edit: Instant,
     /// In the order they were made.
     changes: Vec<Change>,
-    before: Selection,
-    after: Selection,
+    before: Vec<Selection>,
+    after: Vec<Selection>,
     version_before: u64,
     version_after: u64,
 }
@@ -122,7 +123,7 @@ impl Transaction {
 
 /// Where the buffer is after an undo or redo.
 pub(crate) struct Restored {
-    pub(crate) selection: Selection,
+    pub(crate) selections: Vec<Selection>,
     pub(crate) version: u64,
 }
 
@@ -146,7 +147,7 @@ impl History {
             edit.kind != EditKind::Other
                 && edit.kind == last.kind
                 && edit.at.saturating_duration_since(last.last_edit) < GROUP_PAUSE
-                && edit.before.is_empty()
+                && edit.before.iter().all(|s| s.is_empty())
                 && edit.before == last.after
                 && edit.version_before == last.version_after
         };
@@ -184,7 +185,7 @@ impl History {
         for change in transaction.changes.iter().rev() {
             change.inverse().apply(text);
         }
-        let restored = Restored { selection: transaction.before, version: transaction.version_before };
+        let restored = Restored { selections: transaction.before.clone(), version: transaction.version_before };
         self.redo.push(transaction);
         self.sealed = true;
         Some(restored)
@@ -196,7 +197,7 @@ impl History {
         for change in &transaction.changes {
             change.apply(text);
         }
-        let restored = Restored { selection: transaction.after, version: transaction.version_after };
+        let restored = Restored { selections: transaction.after.clone(), version: transaction.version_after };
         self.undo.push(transaction);
         self.sealed = true;
         Some(restored)
