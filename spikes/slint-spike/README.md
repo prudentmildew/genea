@@ -1,5 +1,7 @@
 # Slint spike (PROTOTYPE, throwaway)
 
+> **Branch `prototype/slint-ime`** extends this spike for **Can Genea's Slint editor surface take marked text?** (prudentmildew/genea#17). See [IME bridge](#ime-bridge-genea17) below.
+
 Answers **Does Slint meet Genea's budgets?** (prudentmildew/genea#15). It lives only on the `prototype/slint-spike` branch and is never merged. The verdict is recorded on the issue.
 
 It's the GPUI spike (branch `prototype/gpui-spike`) ported to Slint `1.18.1`, using the winit backend and the Skia renderer, which draws to Metal through wgpu 30. It has the same ropey buffer, tree-sitter TypeScript highlighting of the visible lines, one cursor, pixel scrolling and blinking caret. The editor surface is Genea's own (`ui/editor.slint`), not Slint's `TextEdit`. Each highlight run is one Slint `Text`, laid out by Rust on a Menlo monospace grid. Lines sit in a ring of slots (`slot = line % slots`), so scrolling only replaces the slots of lines coming into view. `syntax.rs`, `sys.rs`, `synth.rs`, `suite.rs` and the fixtures are the GPUI spike's, unchanged.
@@ -50,3 +52,19 @@ The verdict and full numbers are on the issue. `results/raw.json` is the unconst
 - **Idle memory** is 112 MB, 65 MB before the second frame: the same shape as GPUI. `footprint` attributes ~83 MB to graphics: ~47 MB GPU-private, 30 MB drawable IOSurfaces and 6 MB IOAccelerator. Setting the `CAMetalLayer` to two drawables (`SPIKE_TWO_DRAWABLES=1`) didn't change it.
 - **Licences**: `cargo deny check licenses` passes. Slint's crates are `GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0`, and only the royalty-free licence is allowed in `deny.toml`. `r-efi` has LGPL only as an OR alternative. There are no MPL exceptions. The prebuilt Skia binary is BSD-3 and includes ICU data (Unicode licence).
 - **Feel**: typing and trackpad scrolling, including momentum, felt native, the same as GPUI (the user's judgement).
+
+## IME bridge (genea#17)
+
+The editor's `FocusScope` is replaced by `ime`, a transparent, focused `TextInput` kept at the composition start (`ui/editor.slint`). Genea reads its `preedit-text`, splices it into the caret line's runs and draws it in blue with an underline (`splice_preedit` in `editor.rs`), and inserts each commit into the rope. After each commit the `TextInput`'s text is emptied. Its `key-pressed` accepts every key, so its own shortcuts (undo, select-all, arrows) never run. Grid columns now use `unicode-width`.
+
+```sh
+SPIKE_IME_LOG=1 ./target/release/slint-spike path/to/file.ts   # key/IME events on stderr and in the status bar
+```
+
+Findings (Norwegian layout, events synthesized with `osascript`):
+
+- **Dead keys work.** ´e → é, ¨u → ü, ¨a → ä, ´ space → ´, ⇧´ space → `` ` ``, ⇧¨ space → ^, ⌥¨ space → ~. Each arrives as winit `Preedit` and then `Commit`.
+- **Without the bridge they break.** The original spike (`FocusScope`, IME never enabled) types a space for ⇧´ space and a plain e for ´e.
+- **Re-focus once the window exists.** The `TextInput` takes focus before the winit window exists, and Slint drops the IME enable request then. A zero-delay timer re-focuses it once the event loop runs.
+- **winit only reports composition when there is marked text.** Plain typing still arrives as key presses, so the keystroke benchmark path is unchanged for ASCII.
+- **Not tested (out of v1 scope):** CJK, the emoji picker, press-and-hold. winit 0.30's `insertText:` ignores the replacement range, so press-and-hold may insert "eé" no matter what Slint does.

@@ -3967,6 +3967,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-javascript",
  "tree-sitter-typescript",
+ "unicode-width",
 ]
 
 [[package]]

@@ -1,5 +1,8 @@
 //! PROTOTYPE: throwaway Slint validation spike for "Does Slint meet Genea's
-//! budgets?" (prudentmildew/genea#15). Not Genea code; never merge.
+//! budgets?" (prudentmildew/genea#15), extended for "Can Genea's Slint editor
+//! surface take marked text?" (prudentmildew/genea#17). Not Genea code; never merge.
+//!
+//!   SPIKE_IME_LOG=1 slint-spike [FILE]      also print every key/IME event to stderr
 //!
 //!   slint-spike [FILE]                      open FILE to judge typing/scrolling feel
 //!   slint-spike bench <NAME> [--out FILE]   run one in-process benchmark
@@ -99,14 +102,23 @@ fn run_app(file: PathBuf, bench: Option<(String, Option<PathBuf>)>) {
             slint::private_unstable_api::re_exports::EventResult::Reject
         }
     });
+    window.on_committed(|text| app::with(|editor, window| editor.commit(&text, window)));
+    window.on_preedit_changed(|text| app::with(|editor, window| editor.set_preedit(&text, window)));
     window.on_scrolled(|delta_y| app::with(|editor, window| editor.scroll_by(-delta_y, window)));
     window.on_viewport_changed(|| app::with(|editor, window| editor.sync(window)));
 
     window.window().on_winit_window_event(|_, event| {
-        if let slint::winit_030::winit::event::WindowEvent::KeyboardInput { event, .. } = event
-            && event.state.is_pressed()
+        use slint::winit_030::winit::event::{Ime, WindowEvent};
+        match event {
+            WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => metrics::mark_key(),
+            // With the IME enabled, typed characters arrive as commits, not key presses.
+            WindowEvent::Ime(Ime::Commit(_)) => metrics::mark_key(),
+            _ => {}
+        }
+        if std::env::var_os("SPIKE_IME_LOG").is_some()
+            && let WindowEvent::Ime(ime) = event
         {
-            metrics::mark_key();
+            eprintln!("winit: {ime:?}");
         }
         slint::winit_030::EventResult::Propagate
     });
@@ -161,6 +173,13 @@ fn run_app(file: PathBuf, bench: Option<(String, Option<PathBuf>)>) {
     window.show().unwrap();
     trace("shown");
     window.window().with_winit_window(|w| w.focus_window());
+    // The winit window only exists once the event loop runs.
+    let w = window.as_weak();
+    Timer::single_shot(Duration::ZERO, move || {
+        if let Some(w) = w.upgrade() {
+            w.invoke_refocus();
+        }
+    });
     if std::env::var_os("SPIKE_TWO_DRAWABLES").is_some() {
         // Experiment: wgpu asks for 3 window-sized drawables; try 2.
         let w = window.as_weak();

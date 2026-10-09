@@ -2,6 +2,11 @@
 // Slint's TextEdit: one Text item per highlight run, laid out by the Rust side
 // on a monospace grid. Lines live in a ring of slots (slot = line % slots), so
 // scrolling only replaces the slots of lines that come into view.
+//
+// IME spike (prudentmildew/genea#17): keys and IME composition reach Genea
+// through `ime`, a transparent TextInput kept at the composition start. Genea
+// reads its preedit, draws it inline itself and takes every commit into its own
+// buffer; the TextInput's own text is emptied after each commit.
 
 export struct Run {
     x: length,
@@ -16,11 +21,11 @@ export struct Line {
 }
 
 export component EditorWindow inherits Window {
-    title: "Slint spike (PROTOTYPE)";
+    title: "Slint IME spike (PROTOTYPE)";
     preferred-width: 1200px;
     preferred-height: 800px;
     background: #fafafa;
-    forward-focus: keys;
+    forward-focus: ime;
 
     in property <[Line]> lines;
     // The line container's offset: -(scroll_top - base_line * line_height).
@@ -28,6 +33,11 @@ export component EditorWindow inherits Window {
     in property <length> caret-x;
     in property <length> caret-y;
     in property <bool> caret-visible: true;
+    // Where the composition starts (the TextInput sits here) and how wide the
+    // preedit Genea draws is, for its underline.
+    in property <length> compose-x;
+    in property <length> preedit-width;
+    in property <string> status;
 
     // Advance of one Menlo 13px cell, measured by Slint's own shaper.
     out property <length> char-width: probe.preferred-width / 100;
@@ -36,6 +46,15 @@ export component EditorWindow inherits Window {
     callback key-pressed(KeyEvent) -> EventResult;
     callback scrolled(length);
     callback viewport-changed();
+    callback committed(string);
+    callback preedit-changed(string);
+
+    // The TextInput takes focus before the native window exists, and Slint
+    // drops the IME enable request then; re-focusing once the loop runs resends it.
+    public function refocus() {
+        ime.clear-focus();
+        ime.focus();
+    }
 
     changed viewport-height => { root.viewport-changed(); }
 
@@ -47,11 +66,9 @@ export component EditorWindow inherits Window {
     }
 
     body := Rectangle {
+        height: root.height - 24px;
+        y: 0px;
         clip: true;
-
-        keys := FocusScope {
-            key-pressed(event) => { return root.key-pressed(event); }
-        }
 
         Rectangle {
             y: root.offset-y;
@@ -84,13 +101,50 @@ export component EditorWindow inherits Window {
                 }
             }
 
+            ime := TextInput {
+                x: 64px + root.compose-x;
+                y: root.caret-y;
+                width: 1px;
+                height: 20px;
+                vertical-alignment: center;
+                font-family: "Menlo";
+                font-size: 13px;
+                color: transparent;
+                selection-background-color: transparent;
+                selection-foreground-color: transparent;
+                text-cursor-width: 0px;
+                single-line: true;
+                // Genea owns every key, so the TextInput's own shortcuts
+                // (undo, select-all, arrows) never run.
+                key-pressed(event) => {
+                    root.key-pressed(event);
+                    return accept;
+                }
+                edited => {
+                    if (self.text != "") {
+                        root.committed(self.text);
+                        self.text = "";
+                    }
+                }
+                changed preedit-text => { root.preedit-changed(self.preedit-text); }
+            }
+
+            Rectangle {
+                x: 64px + root.compose-x;
+                y: root.caret-y + 17px;
+                width: root.preedit-width;
+                height: 1px;
+                background: #1f6feb;
+                visible: root.preedit-width > 0px;
+            }
+
             Rectangle {
                 x: 64px + root.caret-x;
                 y: root.caret-y;
                 width: 2px;
                 height: 20px;
                 background: #1f6feb;
-                visible: root.caret-visible && keys.has-focus;
+                visible: root.caret-visible && ime.has-focus;
             }
         }
 
@@ -99,6 +153,21 @@ export component EditorWindow inherits Window {
                 root.scrolled(event.delta-y);
                 return accept;
             }
+        }
+    }
+
+    Rectangle {
+        y: root.height - 24px;
+        height: 24px;
+        background: #eaeef2;
+
+        Text {
+            x: 8px;
+            vertical-alignment: center;
+            text: root.status;
+            color: #24292f;
+            font-family: "Menlo";
+            font-size: 12px;
         }
     }
 }

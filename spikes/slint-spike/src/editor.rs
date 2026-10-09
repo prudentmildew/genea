@@ -2,6 +2,10 @@
 //! of the visible lines, one cursor, pixel scrolling, a blinking caret. The
 //! view is `ui/editor.slint`: one Slint `Text` per highlight run on a
 //! monospace grid, lines kept in a ring of slots.
+//!
+//! IME spike (#17): commits arrive through `commit`, the live composition
+//! through `set_preedit`. The preedit is never in the rope; `sync` splices it
+//! into the caret line's runs and the caret moves to its end.
 
 use std::{
     ops::Range,
@@ -13,6 +17,7 @@ use std::{
 use ropey::Rope;
 use slint::{Color, Model, ModelRc, SharedString, VecModel, platform::Key};
 use tree_sitter::InputEdit;
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     EditorWindow, Line, Run, app,
@@ -55,6 +60,10 @@ pub struct Editor {
     pub generation: u64,
     /// When the view was last synced after new text was set.
     pub text_set_at: Option<Instant>,
+    /// The IME composition (marked text), shown at the cursor, not in the rope.
+    pub preedit: String,
+    /// The last few IME events, for the status line.
+    ime_log: Vec<String>,
     lines: Rc<VecModel<Line>>,
     slots: Vec<Option<SlotState>>,
     base: usize,
@@ -79,6 +88,8 @@ impl Editor {
             scroll_sync_log: Vec::new(),
             generation: 0,
             text_set_at: None,
+            preedit: String::new(),
+            ime_log: Vec::new(),
             lines,
             slots: Vec::new(),
             base: 0,
@@ -232,6 +243,34 @@ impl Editor {
         self.edit_log.push((started, edited, reparsed, Instant::now()));
     }
 
+    /// Text committed by the input method (also plain typing while the IME
+    /// is enabled: winit routes every inserted character through it).
+    pub fn commit(&mut self, text: &str, window: &EditorWindow) {
+        self.log_ime(format!("commit {text:?}"));
+        self.preedit.clear();
+        self.edit(self.cursor..self.cursor, text, window);
+    }
+
+    pub fn set_preedit(&mut self, text: &str, window: &EditorWindow) {
+        if text == self.preedit {
+            return;
+        }
+        self.log_ime(format!("preedit {text:?}"));
+        self.preedit = text.to_owned();
+        self.touch();
+        self.sync(window);
+    }
+
+    fn log_ime(&mut self, entry: String) {
+        if std::env::var_os("SPIKE_IME_LOG").is_some() {
+            eprintln!("ime: {entry}");
+        }
+        self.ime_log.push(entry);
+        if self.ime_log.len() > 4 {
+            self.ime_log.remove(0);
+        }
+    }
+
     fn move_vertically(&mut self, rows: isize, window: &EditorWindow) {
         let line = self.rope.char_to_line(self.cursor);
         let column = self.cursor - self.rope.line_to_char(line);
@@ -250,6 +289,7 @@ impl Editor {
         let text = event.text.as_str();
         let is = |key: Key| text == SharedString::from(key).as_str();
         let rows = (self.viewport_height / LINE_HEIGHT) as isize;
+        self.log_ime(format!("key {:?}{}", text, if event.modifiers.meta { " +cmd" } else { "" }));
         if event.modifiers.control || event.modifiers.meta {
             if text == "q" {
                 slint::quit_event_loop().ok();
@@ -321,12 +361,17 @@ impl Editor {
             .filter(|_| last > first)
             .map(|s| s.kinds(rope, byte_start..rope.line_to_byte(last)));
 
+        let cursor_line = rope.char_to_line(self.cursor);
+        let column = columns(rope.slice(rope.line_to_char(cursor_line)..self.cursor).chars());
+        let preedit_width = columns(self.preedit.chars());
         for slot in 0..n {
             let line = first + (slot + n - first % n) % n;
-            let state = (line < last).then(|| SlotState {
-                line,
-                base,
-                runs: runs(rope, line, rope.line_to_byte(line) - byte_start, kinds.as_deref()),
+            let state = (line < last).then(|| {
+                let mut runs = runs(rope, line, rope.line_to_byte(line) - byte_start, kinds.as_deref());
+                if line == cursor_line && !self.preedit.is_empty() {
+                    splice_preedit(&mut runs, column, &self.preedit, preedit_width);
+                }
+                SlotState { line, base, runs }
             });
             if self.slots[slot] == state {
                 continue;
@@ -353,16 +398,61 @@ impl Editor {
         }
 
         window.set_offset_y(-(self.scroll_top - base as f32 * LINE_HEIGHT));
-        let cursor_line = rope.char_to_line(self.cursor);
-        let column = columns(rope.slice(rope.line_to_char(cursor_line)..self.cursor).chars());
-        window.set_caret_x(column as f32 * self.char_width);
+        window.set_compose_x(column as f32 * self.char_width);
+        window.set_preedit_width(preedit_width as f32 * self.char_width);
+        window.set_caret_x((column + preedit_width) as f32 * self.char_width);
+        window.set_status(
+            format!(
+                "line {} col {}  |  preedit {:?}  |  {}",
+                cursor_line + 1,
+                column + 1,
+                self.preedit,
+                self.ime_log.join("  ·  ")
+            )
+            .into(),
+        );
         window.set_caret_y((cursor_line as f32 - base as f32) * LINE_HEIGHT);
         window.set_caret_visible(self.cursor_visible && !self.loading);
     }
 }
 
+/// Grid columns: tabs are 4, East Asian wide characters and emoji are 2.
 fn columns(chars: impl Iterator<Item = char>) -> usize {
-    chars.map(|c| if c == '\t' { 4 } else { 1 }).sum()
+    chars
+        .map(|c| if c == '\t' { 4 } else { c.width().unwrap_or(0) })
+        .sum()
+}
+
+const PREEDIT_COLOR: u32 = 0x1f6feb;
+
+/// Inserts the preedit into a line's runs at `at` (a column), splitting the run
+/// it falls in and shifting everything after it right by `width` columns.
+fn splice_preedit(runs: &mut Vec<(usize, String, u32)>, at: usize, preedit: &str, width: usize) {
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    for (col, text, rgb) in runs.drain(..) {
+        let end = col + columns(text.chars());
+        if end <= at {
+            out.push((col, text, rgb));
+        } else if col >= at {
+            out.push((col + width, text, rgb));
+        } else {
+            let mut c = col;
+            let split = text
+                .char_indices()
+                .find(|(_, ch)| {
+                    let hit = c >= at;
+                    c += columns(std::iter::once(*ch));
+                    hit
+                })
+                .map_or(text.len(), |(i, _)| i);
+            let (head, tail) = text.split_at(split);
+            let head_end = col + columns(head.chars());
+            out.push((col, head.to_owned(), rgb));
+            out.push((head_end + width, tail.to_owned(), rgb));
+        }
+    }
+    out.push((at, preedit.to_owned(), PREEDIT_COLOR));
+    *runs = out;
 }
 
 /// Highlight runs of one line as (column, text, rgb). Whitespace-only runs
