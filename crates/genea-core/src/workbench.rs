@@ -16,6 +16,7 @@ use crate::{
     project::Project,
     recent::RecentProjects,
     templates::{self, Creations, NewProject, ProjectCreation},
+    toolchain::ToolchainContext,
     update::{self, UpdateNotice},
     view::{ProjectView, WelcomeView},
 };
@@ -47,6 +48,8 @@ pub(crate) struct Core {
     /// The outside world: the clipboard now; the toolchain, LSP, undo and
     /// terminal tickets reach it only through this too.
     pub(crate) host: SharedHost,
+    /// The host and the shared toolchain store, for every project (#35).
+    pub(crate) toolchain: ToolchainContext,
     pub(crate) jobs: Jobs,
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
@@ -69,10 +72,11 @@ impl Workbench {
     pub fn new(host: SharedHost) -> Self {
         let (jobs, inbox) = jobs::channel();
         let recent = RecentProjects::load(host.support_dir());
+        let toolchain = ToolchainContext::new(host.clone());
         let creations = Creations::default();
         let (update_notice, alive) = (None, Arc::new(()));
         let core =
-            Core { host, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations, update_notice, alive };
+            Core { host, toolchain, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations, update_notice, alive };
         Workbench { core, inbox }
     }
 
@@ -110,7 +114,8 @@ impl Workbench {
         }
         let id = ProjectId(self.core.next_id);
         self.core.next_id += 1;
-        self.core.projects.insert(id, Project::new(id, root));
+        let project = self.core.projects.entry(id).or_insert(Project::new(id, root));
+        project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
         Ok(id)
     }
 

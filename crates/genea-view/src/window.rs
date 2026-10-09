@@ -25,6 +25,8 @@ pub struct WindowController {
     surface: Surface,
     /// A window-level message, e.g. why a folder couldn't be opened.
     pub notice: Option<String>,
+    /// The command behind the shown notice's button, if it has one.
+    pub notice_action: Option<Command>,
     /// When and on which line the last double-click was, to spot a third.
     last_double_click: Option<(Instant, usize)>,
 }
@@ -36,7 +38,15 @@ impl WindowController {
     pub fn new(key: WindowKey, project: ProjectId) -> Result<Self, slint::PlatformError> {
         let window = ProjectWindow::new()?;
         let surface = Surface::new(&window);
-        Ok(WindowController { key, window, project, surface, notice: None, last_double_click: None })
+        Ok(WindowController {
+            key,
+            window,
+            project,
+            surface,
+            notice: None,
+            notice_action: None,
+            last_double_click: None,
+        })
     }
 
     pub fn show(&self) {
@@ -131,6 +141,10 @@ impl WindowController {
         window.set_tab_modified(editor.is_some_and(|e| e.modified));
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
+        let action = view.notices.last().and_then(|n| n.action.clone());
+        window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
+        self.notice_action = action.map(|a| a.command);
+        window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
         self.surface.sync(window, editor);
     }
 }

@@ -14,6 +14,7 @@ use crate::{
     editor::Editor,
     history::EditKind,
     jobs::Jobs,
+    toolchain::{Toolchain, ToolchainContext},
     view::{Notice, ProjectView, StatusBar},
     workbench::ProjectId,
 };
@@ -29,6 +30,8 @@ pub(crate) struct Project {
     notices: Vec<Notice>,
     /// Bumped by every OpenFile, so a slow read can't replace a newer one.
     open_generation: u64,
+    /// The runtime and package manager (ticket #35); set by `start_toolchain`.
+    pub(crate) toolchain: Option<Toolchain>,
 }
 
 impl Project {
@@ -40,7 +43,19 @@ impl Project {
             viewport_rows: DEFAULT_VIEWPORT_ROWS,
             notices: Vec::new(),
             open_generation: 0,
+            toolchain: None,
         }
+    }
+
+    /// Reads the toolchain pins and starts the downloads, in the background.
+    /// A folder without a root `package.json` has no toolchain. (Checking is
+    /// one stat on the main thread, like `open_project`'s folder check.)
+    pub(crate) fn start_toolchain(&mut self, context: ToolchainContext, jobs: &Jobs) {
+        if !self.root.join("package.json").exists() {
+            return;
+        }
+        let toolchain = self.toolchain.insert(Toolchain::new(self.id, self.root.clone(), context));
+        toolchain.load(jobs);
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -80,6 +95,16 @@ impl Project {
             Command::PlaceCaret { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, false, self.viewport_rows);
+                }
+            }
+            Command::RetryToolchain => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.retry(jobs);
+                }
+            }
+            Command::PinToolchainDefaults => {
+                if let Some(toolchain) = &mut self.toolchain {
+                    toolchain.pin_defaults(jobs);
                 }
             }
             Command::ExtendSelection { line, column } => {
@@ -155,13 +180,17 @@ impl Project {
         let editor = self.editor.as_ref().map(|e| e.view(self.viewport_rows));
         let status = StatusBar {
             caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
+            toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
         };
+        let mut notices = self.notices.clone();
+        notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             editor,
             status,
-            notices: self.notices.clone(),
+            notices,
+            toolchain: self.toolchain.as_ref().map(Toolchain::view).unwrap_or_default(),
         }
     }
 
@@ -186,9 +215,10 @@ impl Project {
                             editor.saved(&snapshot);
                         }
                     }
-                    Err(error) => project
-                        .notices
-                        .push(Notice { message: format!("Couldn't save {}: {error}", snapshot.path.display()) }),
+                    Err(error) => project.notices.push(Notice {
+                        message: format!("Couldn't save {}: {error}", snapshot.path.display()),
+                        action: None,
+                    }),
                 }
             })
         });
@@ -213,7 +243,7 @@ impl Project {
                     Ok(text) => project.editor = Some(Editor::new(shown, text)),
                     Err(error) => project
                         .notices
-                        .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()) }),
+                        .push(Notice { message: format!("Couldn't open {}: {error}", shown.display()), action: None }),
                 }
             })
         });
