@@ -13,7 +13,10 @@ path = "src/main.rs"
 [dependencies]
 genea-core.workspace = true
 genea-host.workspace = true
-slint.workspace = true
+# raw-window-handle-06: to reach a window's NSWindow and bring it to the
+# front (Slint's `show` does nothing for a window that is already shown).
+slint = { workspace = true, features = ["raw-window-handle-06"] }
+raw-window-handle = "0.6.2"
 
 # Native Open panels. The same objc2 stack Slint's winit backend already
 # links, so these add features, not crates.
@@ -21,7 +24,7 @@ objc2 = "0.6.5"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
-    "std", "block2", "NSApplication", "NSOpenPanel", "NSPanel", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSWindow",
+    "std", "block2", "NSApplication", "NSOpenPanel", "NSPanel", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow",
 ] }
 
 [build-dependencies]

@@ -8,7 +8,6 @@ import { StatusBar } from "status-bar.slint";
 
 export component ProjectWindow inherits Window {
     in property <string> window-title: "Genea";
-    in property <bool> has-project;
     in property <bool> has-editor;
     in property <string> tab-title;
     in property <string> status-caret;
@@ -58,7 +57,6 @@ export component ProjectWindow inherits Window {
             // Temporary until the Files view (ticket #20 allows it).
             MenuItem {
                 title: "Open File…";
-                enabled: root.has-project;
                 activated => {
                     root.open-file();
                 }
@@ -103,7 +101,7 @@ export component ProjectWindow inherits Window {
             }
 
             if !root.has-editor: Text {
-                text: root.has-project ? "Open a file with File › Open File…" : "Open a project folder with File › Open… (⌘O)";
+                text: "Open a file with File › Open File…";
                 color: Theme.chrome-muted;
                 font-size: 13px;
                 horizontal-alignment: center;
