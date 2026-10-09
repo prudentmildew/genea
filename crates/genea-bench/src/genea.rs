@@ -133,6 +133,11 @@ impl Genea {
         self.send_with_timeout(&format!("scroll {px} {}", duration.as_millis()), duration + REPLY_TIMEOUT).map(drop)
     }
 
+    /// Asks for a window size in points.
+    pub fn resize(&mut self, width: f64, height: f64) -> Result<(), String> {
+        self.send(&format!("resize {width} {height}")).map(drop)
+    }
+
     /// The caret's line text and the caret's display column.
     pub fn caret_line(&mut self) -> Result<(String, usize, bool), String> {
         let v = self.send("caret-line")?;

@@ -18,6 +18,7 @@
 //! | `key CODE FLAGS` | posts a key down and up into Genea's own event queue |
 //! | `place-caret LINE COLUMN` | after the caret moved (0-based, like a click) |
 //! | `scroll PX MS` | scrolls PX points per presented frame for MS ms, bouncing at the ends |
+//! | `resize WIDTH HEIGHT` | after asking for a window size in points |
 //! | `caret-line` | the caret's line as the editor shows it, and the caret |
 //! | `quit` | exits |
 //!
@@ -43,7 +44,7 @@ use objc2::{ClassType, MainThreadMarker, msg_send, rc::Retained};
 use objc2_app_kit::{NSApplication, NSApplicationOcclusionState, NSEvent};
 use slint::ComponentHandle;
 
-use crate::{app, journal};
+use crate::{app, journal, surface::LINE_HEIGHT};
 
 /// Starts the reader thread. `main` calls it once the backend is up, while
 /// the journal is on.
@@ -97,6 +98,15 @@ fn handle(line: &str) {
         ["scroll", px, ms] => match (px.parse(), ms.parse()) {
             (Ok(px), Ok(ms)) => scroll(px, Duration::from_millis(ms)),
             _ => error("scroll: bad step or duration"),
+        },
+        ["resize", width, height] => match (width.parse(), height.parse()) {
+            (Ok(width), Ok(height)) => app::with_app(move |app| {
+                if let Some((controller, _)) = app.first_window() {
+                    controller.window.window().set_size(slint::LogicalSize::new(width, height));
+                }
+                reply(r#"{"ok":true}"#);
+            }),
+            _ => error("resize: bad width or height"),
         },
         ["caret-line"] => app::with_app(|app| {
             let Some((controller, workbench)) = app.first_window() else { return error("no project window") };
@@ -153,26 +163,40 @@ fn scroll(px: f32, duration: Duration) {
     let until = Instant::now() + duration;
     let direction = Rc::new(Cell::new(1.0f32));
     let steps = Rc::new(Cell::new(0u32));
+    let answered = Rc::new(Cell::new(false));
     let step = {
         let (direction, steps) = (direction.clone(), steps.clone());
         move || {
             let Some(window) = window.upgrade() else { return };
-            let before = scroll_top();
+            let before = scroll_top().unwrap_or_default();
             window.invoke_scrolled(0, -px * direction.get());
-            if scroll_top() == before {
+            // At an end the core clamps, and a step that moves less than a
+            // pixel draws no frame, which would end the chain: turn around.
+            let moved = (scroll_top().unwrap_or_default() - before).abs() * f64::from(LINE_HEIGHT);
+            if moved < 1.0 {
                 direction.set(-direction.get());
                 window.invoke_scrolled(0, -px * direction.get());
             }
             steps.set(steps.get() + 1);
         }
     };
+    let finish = {
+        let (steps, answered) = (steps.clone(), answered.clone());
+        move || {
+            if !answered.replace(true) {
+                reply(&format!(r#"{{"steps":{}}}"#, steps.get()));
+            }
+        }
+    };
     let step = Rc::new(step);
     (*step)();
+    // If frames stop coming (nothing left to scroll), answer anyway.
+    let fallback = finish.clone();
+    slint::Timer::single_shot(duration + Duration::from_millis(500), fallback);
     journal::after_every_frame(move || {
         if Instant::now() >= until {
-            let steps = steps.get();
             // Answer from the event loop, not from inside the renderer.
-            slint::Timer::single_shot(Duration::ZERO, move || reply(&format!(r#"{{"steps":{steps}}}"#)));
+            slint::Timer::single_shot(Duration::ZERO, finish.clone());
             return false;
         }
         let next = step.clone();

@@ -36,7 +36,8 @@ missed or a scenario couldn't run, 2 for a usage error. A skipped budget
 ## What it measures
 
 Every scenario launches Genea on the Typical workspace with
-`packages/web/src/index.ts` open, in its 1200×800 pt window.
+`packages/web/src/index.ts` open, at its default window size; the idle budget
+runs resize it to 1200×800 pt once it shows.
 
 | Scenario | Budgets |
 | --- | --- |
@@ -75,7 +76,7 @@ them, window events from outside, each sync of view state into Slint, the
 first sync with file content, and the window becoming visible. It also opens
 a control channel on stdin/stdout (`crates/genea-view/src/remote.rs`): the
 harness sends primitive commands (`wait-content`, `key`, `place-caret`,
-`scroll`, `caret-line`, `info`, `journal`, `quit`) and reads one JSON line
+`scroll`, `resize`, `caret-line`, `info`, `journal`, `quit`) and reads one JSON line
 back per command.
 
 Keys are posted as CGEvent-backed `NSEvent`s into Genea's own event queue, so

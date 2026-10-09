@@ -112,7 +112,7 @@ fn genea(cx: &Context) -> Result<Value, String> {
 }
 
 fn can_purge() -> bool {
-    Command::new("sudo").args(["-n", "true"]).status().is_ok_and(|s| s.success())
+    Command::new("sudo").args(["-n", "true"]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
 /// Drops the file cache so binaries and libraries come from disk.
