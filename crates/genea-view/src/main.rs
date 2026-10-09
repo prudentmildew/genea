@@ -13,6 +13,7 @@
 //! - `window`: one project window's view-state → Slint sync;
 //! - `welcome`: the welcome window's sync;
 //! - `surface`: the editor surface's ring of line slots;
+//! - `fonts`: registers the emoji font the first time an emoji is shown;
 //! - `blink`: keeps the hidden TextInput from repainting on a timer;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
 //!   system clipboard behind the host's `Clipboard`; `links`: opening web
@@ -22,6 +23,7 @@ mod about;
 mod app;
 mod blink;
 mod dialogs;
+mod fonts;
 mod keys;
 mod links;
 mod pasteboard;

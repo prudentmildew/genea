@@ -10,6 +10,8 @@ export component StatusBar inherits Rectangle {
     // Toolchain download progress (ticket #35).
     in property <string> toolchain;
     in property <string> caret;
+    in property <string> encoding;
+    in property <string> line-ending;
     // The update notice ("Genea 0.2.0 is available"), or empty.
     in property <string> update;
 
@@ -77,6 +79,20 @@ export component StatusBar inherits Rectangle {
 
         Text {
             text: root.caret;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.line-ending;
+            color: Theme.chrome-foreground;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.encoding;
             color: Theme.chrome-foreground;
             font-size: Theme.chrome-font-size;
             vertical-alignment: center;

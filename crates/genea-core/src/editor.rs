@@ -50,6 +50,9 @@ pub(crate) struct Editor {
     last_version: u64,
     /// The version last written to disk (or read from it).
     saved_version: u64,
+    /// Edits and saves are refused: the file isn't valid UTF-8, so writing
+    /// the buffer back would change bytes the user never touched.
+    read_only: bool,
     history: History,
 }
 
@@ -76,8 +79,19 @@ impl Editor {
             version: 0,
             last_version: 0,
             saved_version: 0,
+            read_only: false,
             history: History::default(),
         }
+    }
+
+    /// The same editor, refusing edits and saves.
+    pub(crate) fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Moves the caret. With `extend`, the selection's anchor stays put, so
@@ -182,6 +196,11 @@ impl Editor {
         self.reveal_caret(viewport_rows);
     }
 
+    /// The file's line ending, kept for every line break typed.
+    pub(crate) fn line_ending(&self) -> LineEnding {
+        self.line_ending
+    }
+
     /// The buffer as it is now, for writing in the background.
     pub(crate) fn snapshot(&self) -> Snapshot {
         Snapshot { path: self.path.clone(), text: self.text.clone(), version: self.version }
@@ -199,7 +218,7 @@ impl Editor {
     /// the host clock's time, for grouping undo steps.
     pub(crate) fn insert(&mut self, text: &str, kind: EditKind, now: Instant, viewport_rows: f64) {
         self.preedit.clear();
-        if text.is_empty() && self.anchor == self.caret {
+        if self.read_only || (text.is_empty() && self.anchor == self.caret) {
             return;
         }
         let text = self.line_ending.normalize(text);
@@ -218,11 +237,17 @@ impl Editor {
     }
 
     pub(crate) fn set_preedit(&mut self, text: String) {
+        if self.read_only {
+            return;
+        }
         self.preedit = text;
     }
 
     /// Deletes the selection, or the text the movement would pass over.
     pub(crate) fn delete(&mut self, movement: CaretMove, kind: EditKind, now: Instant, viewport_rows: f64) {
+        if self.read_only {
+            return;
+        }
         let (before, version_before) = (self.selection_state(), self.version);
         if self.anchor == self.caret {
             self.move_head(movement, viewport_rows);
@@ -395,7 +420,7 @@ impl Editor {
         EditorView {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: self.path.clone(),
-            read_only: false,
+            read_only: self.read_only,
             modified: self.version != self.saved_version,
             line_count,
             scroll_top: self.scroll_top,
@@ -446,6 +471,62 @@ impl Editor {
             }
         }
         text
+    }
+}
+
+/// One tab's place in a file: where its caret and selection are and how far
+/// it is scrolled (ticket #31). An open file has one `Editor` however many
+/// tabs show it, so edits show in every tab; each tab keeps its own cursor,
+/// and the project swaps it in while that tab is focused or drawn.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Cursor {
+    caret: usize,
+    anchor: usize,
+    goal_column: Option<usize>,
+    scroll_top: f64,
+    preedit: String,
+}
+
+impl Editor {
+    /// The file, relative to the project root when it is inside it.
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// The buffer has edits that aren't on disk yet.
+    pub(crate) fn is_modified(&self) -> bool {
+        self.version != self.saved_version
+    }
+
+    pub(crate) fn cursor(&self) -> Cursor {
+        Cursor {
+            caret: self.caret,
+            anchor: self.anchor,
+            goal_column: self.goal_column,
+            scroll_top: self.scroll_top,
+            preedit: self.preedit.clone(),
+        }
+    }
+
+    /// Puts a tab's cursor back. The text may have changed under it in
+    /// another tab, so positions are clamped to the text.
+    pub(crate) fn set_cursor(&mut self, cursor: &Cursor, viewport_rows: f64) {
+        let len = self.text.len_chars();
+        self.caret = cursor.caret.min(len);
+        self.anchor = cursor.anchor.min(len);
+        self.goal_column = cursor.goal_column;
+        self.scroll_top = cursor.scroll_top;
+        self.preedit.clone_from(&cursor.preedit);
+        self.scroll_by(0.0, viewport_rows);
+    }
+}
+
+impl Cursor {
+    /// The same cursor without the IME's marked text, for a tab that loses
+    /// focus.
+    pub(crate) fn parked(mut self) -> Self {
+        self.preedit.clear();
+        self
     }
 }
 
