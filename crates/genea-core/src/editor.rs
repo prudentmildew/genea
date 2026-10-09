@@ -10,6 +10,8 @@
 //! selection. They are kept in the order they were added; the last one is
 //! the primary, which the view scrolls to and the status bar reports.
 
+mod structural;
+
 use std::{ops::Range, path::PathBuf, time::Instant};
 
 use ropey::Rope;
@@ -494,30 +496,50 @@ impl Editor {
     /// Replaces text at the carets as one edit: each entry is a caret (by
     /// index), the range it replaces and what goes there. Overlapping ranges
     /// merge. Each caret ends up collapsed after its replacement.
-    fn replace(&mut self, mut edits: Vec<(usize, Range<usize>, String)>, kind: EditKind, now: Instant, rows: f64) {
+    fn replace(&mut self, edits: Vec<(usize, Range<usize>, String)>, kind: EditKind, now: Instant, rows: f64) {
+        let edits = edits
+            .into_iter()
+            .map(|(i, range, text)| {
+                let end = text.chars().count();
+                (i, range, text, end)
+            })
+            .collect();
+        self.replace_placing(edits, kind, now, rows);
+    }
+
+    /// Like `replace`, except that each caret ends up the given number of
+    /// chars into its replacement rather than after it.
+    fn replace_placing(
+        &mut self,
+        mut edits: Vec<(usize, Range<usize>, String, usize)>,
+        kind: EditKind,
+        now: Instant,
+        rows: f64,
+    ) {
         if self.read_only {
             return;
         }
         let (before, version_before) = (self.selections(), self.version);
-        edits.sort_by_key(|(_, range, _)| (range.start, range.end));
-        let mut merged: Vec<(usize, Range<usize>, String)> = Vec::with_capacity(edits.len());
-        for (i, range, text) in edits {
+        edits.sort_by_key(|(_, range, _, _)| (range.start, range.end));
+        let mut merged: Vec<(usize, Range<usize>, String, usize)> = Vec::with_capacity(edits.len());
+        for (i, range, text, offset) in edits {
             match merged.last_mut() {
-                Some((last_i, last, last_text)) if range.start < last.end => {
+                Some((last_i, last, last_text, last_offset)) if range.start < last.end => {
                     last.end = last.end.max(range.end);
                     *last_i = (*last_i).max(i);
                     if last_text.is_empty() {
                         *last_text = text;
+                        *last_offset = offset;
                     }
                 }
-                _ => merged.push((i, range, text)),
+                _ => merged.push((i, range, text, offset)),
             }
         }
 
         // From the end backwards, so each change's indices are those of the
         // text as it was before the edit.
         let mut changes = Vec::new();
-        for (_, range, text) in merged.iter().rev() {
+        for (_, range, text, _) in merged.iter().rev() {
             if !range.is_empty() {
                 changes.push(Change::Remove { at: range.start, text: self.text.slice(range.clone()).to_string() });
             }
@@ -535,11 +557,11 @@ impl Editor {
         let mut shift = 0isize;
         let mut carets: Vec<(usize, usize)> = merged
             .iter()
-            .map(|(i, range, text)| {
+            .map(|(i, range, text, offset)| {
                 let inserted = text.chars().count();
                 let start = range.start.saturating_add_signed(shift);
                 shift += inserted as isize - range.len() as isize;
-                (*i, start + inserted)
+                (*i, start + offset)
             })
             .collect();
         carets.sort_by_key(|(i, _)| *i);

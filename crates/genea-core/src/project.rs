@@ -382,7 +382,7 @@ impl Project {
             }
             Command::NewLine => {
                 if let Some(editor) = &mut self.editor {
-                    editor.insert("\n", EditKind::Typing, now, self.viewport_rows);
+                    editor.new_line(now, self.viewport_rows);
                 }
             }
             Command::Copy => {
