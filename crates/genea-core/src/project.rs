@@ -12,6 +12,7 @@ use ropey::Rope;
 use crate::{
     command::{CaretMove, Command},
     editor::Editor,
+    history::EditKind,
     jobs::Jobs,
     view::{Notice, ProjectView, StatusBar},
     workbench::ProjectId,
@@ -47,6 +48,7 @@ impl Project {
     }
 
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
+        let now = host.clock().now();
         match command {
             Command::OpenFile(path) => self.open_file(path, jobs),
             Command::SetViewport { rows } => {
@@ -97,7 +99,7 @@ impl Project {
             }
             Command::InsertText(text) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.insert(&text, self.viewport_rows);
+                    editor.insert(&text, EditKind::Typing, now, self.viewport_rows);
                 }
             }
             Command::SetPreedit(text) => {
@@ -107,12 +109,12 @@ impl Project {
             }
             Command::Delete(movement) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.delete(movement, self.viewport_rows);
+                    editor.delete(movement, EditKind::Deleting, now, self.viewport_rows);
                 }
             }
             Command::NewLine => {
                 if let Some(editor) = &mut self.editor {
-                    editor.insert("\n", self.viewport_rows);
+                    editor.insert("\n", EditKind::Typing, now, self.viewport_rows);
                 }
             }
             Command::Copy => {
@@ -125,14 +127,24 @@ impl Project {
                     && let Some(text) = editor.selected_text()
                 {
                     host.clipboard().write_text(&text);
-                    editor.delete(CaretMove::Left, self.viewport_rows);
+                    editor.delete(CaretMove::Left, EditKind::Other, now, self.viewport_rows);
                 }
             }
             Command::Paste => {
                 if let Some(editor) = &mut self.editor
                     && let Some(text) = host.clipboard().read_text()
                 {
-                    editor.insert(&text, self.viewport_rows);
+                    editor.insert(&text, EditKind::Other, now, self.viewport_rows);
+                }
+            }
+            Command::Undo => {
+                if let Some(editor) = &mut self.editor {
+                    editor.undo(self.viewport_rows);
+                }
+            }
+            Command::Redo => {
+                if let Some(editor) = &mut self.editor {
+                    editor.redo(self.viewport_rows);
                 }
             }
             Command::Save => self.save(jobs),
