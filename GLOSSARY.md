@@ -43,6 +43,9 @@ _Avoid_: staging, commit (those are git concepts)
 
 **Genea budget**: A hard performance limit on something Genea itself owns (startup, input, rendering, navigation, memory), measured at p95 on the reference machine. Missing one blocks a release.
 
+**Start floor**: How long a bare winit window, with nothing drawn, takes to become visible on the same machine, warm or cold. The start-time Genea budgets are margins above it, because AppKit and WindowServer alone use up most of any fixed figure.
+_Avoid_: baseline (that's the review baseline)
+
 **End-to-end target**: A performance goal that includes the TypeScript language server, which Genea doesn't control. Guides decisions; doesn't block releases.
 _Avoid_: budget (for these)
 
