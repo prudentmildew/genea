@@ -14,14 +14,17 @@ use std::{
 
 use genea_core::{
     CloseChoice, Command, FileRow, FileRowKind, LeftColumnView, PaneView, ProblemItem, ProjectId, Severity,
-    Theme as ConfigTheme, Workbench,
+    Theme as ConfigTheme, ToolchainOption, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::{FileEntry, LeftView, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts, surface::Surface};
+use crate::{
+    FileEntry, LeftView, PickerRow, ProblemRow, ProjectWindow, TabEntry, Theme, app::with_app, dialogs, fonts,
+    surface::Surface,
+};
 
 /// Identifies a window for the lifetime of the app (callbacks capture it).
 pub type WindowKey = u64;
@@ -54,6 +57,12 @@ pub struct WindowController {
     /// The button went down with ⌥ (adding a caret), so a drag doesn't
     /// select.
     option_press: bool,
+    /// The toolchain picker is showing.
+    picker_open: bool,
+    /// The picker's options as last pushed, so a click maps to the option
+    /// the user saw and an unchanged list isn't pushed again.
+    picker_options: Vec<ToolchainOption>,
+    picker_rows: Rc<VecModel<PickerRow>>,
 }
 
 /// A press this soon after a double-click on the same line is a triple-click.
@@ -66,6 +75,8 @@ impl WindowController {
         let surfaces = [Surface::new(&window, 0), Surface::new(&window, 1)];
         let problem_rows = Rc::new(VecModel::default());
         window.set_problems(ModelRc::from(problem_rows.clone()));
+        let picker_rows = Rc::new(VecModel::default());
+        window.set_picker_options(ModelRc::from(picker_rows.clone()));
         let file_rows = Rc::new(VecModel::default());
         window.set_files(ModelRc::from(file_rows.clone()));
         Ok(WindowController {
@@ -84,6 +95,9 @@ impl WindowController {
             files: Arc::from([]),
             file_rows,
             option_press: false,
+            picker_open: false,
+            picker_options: Vec::new(),
+            picker_rows,
         })
     }
 
@@ -256,6 +270,28 @@ impl WindowController {
         self.notice_action = action.map(|a| a.command);
         window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
 
+        let picker = view.toolchain_picker.as_ref();
+        window.set_picker_visible(picker.is_some());
+        if let Some(picker) = picker {
+            window.set_picker_title(picker.title.as_str().into());
+            window.set_picker_message(picker.message.clone().unwrap_or_default().into());
+            window.set_picker_loading(picker.loading);
+        }
+        let options = picker.map(|p| p.options.clone()).unwrap_or_default();
+        if options != self.picker_options {
+            let rows: Vec<PickerRow> = options
+                .iter()
+                .map(|o| PickerRow { label: format!("{} {}", o.tool, o.version).into(), detail: o.detail.as_str().into() })
+                .collect();
+            self.picker_rows.set_vec(rows);
+            self.picker_options = options;
+        }
+        // The editor gets the keyboard back once the picker closes.
+        if self.picker_open && picker.is_none() {
+            window.invoke_refocus();
+        }
+        self.picker_open = picker.is_some();
+
         window.set_split(view.panes.len() > 1);
         window.set_can_split(view.can_split);
         window.set_focused_pane(view.focused_pane as i32);
@@ -312,6 +348,13 @@ impl WindowController {
     pub fn resolve_close(&mut self, workbench: &mut Workbench, choice: CloseChoice) {
         self.prompting = false;
         self.dispatch(workbench, Command::ResolveClose(choice));
+    }
+
+    /// A toolchain picker option was picked: pin it.
+    pub fn pick_toolchain(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some(option) = self.picker_options.get(index) else { return };
+        let command = option.command.clone();
+        self.dispatch(workbench, command);
     }
 
     /// A Problems item was clicked: open its file at the problem.

@@ -54,7 +54,8 @@ pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, 
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
     Caret, EditorView, HighlightSpan, InlineProblem, LeftColumnView, Notice, NoticeAction, Preedit, ProblemItem,
-    ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainView, VisibleLine, WelcomeView,
+    ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
+    ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};
