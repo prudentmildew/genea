@@ -171,7 +171,8 @@ impl FakeLsp {
         self
     }
 
-    /// Changes when the next starts crash; `None` stops crashing.
+    /// Changes the method it crashes on, from the next message on; `None`
+    /// stops crashing.
     pub fn set_crash_on(&self, method: Option<&str>) {
         self.script.lock().unwrap().crash_on = method.map(str::to_owned);
     }
@@ -216,10 +217,9 @@ impl FakeLsp {
 
     fn run(&self, io: FakeProcess) -> i32 {
         self.log.starts.fetch_add(1, Ordering::SeqCst);
-        let script = self.script();
         let FakeProcess { stdin, stdout, .. } = &io;
         let log = &self.log;
-        serve(&script, stdin, stdout, |received| {
+        serve(&self.script, stdin, stdout, |received| {
             log.received.lock().unwrap().push(received);
             log.changed.notify_all();
         })
@@ -265,7 +265,7 @@ impl FakeLsp {
 /// Plays a fake language server on `input` and `output` until `exit`, the
 /// end of the input, or a scripted crash. Returns the exit code. Every
 /// message that arrives goes to `record` first.
-pub fn serve(script: &LspScript, input: impl Read, output: impl Write, mut record: impl FnMut(Received)) -> i32 {
+pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mut record: impl FnMut(Received)) -> i32 {
     let mut input = BufReader::new(input);
     let mut out = Output { writer: output, next_id: 0, requests: HashMap::new() };
     let mut documents: HashMap<String, String> = HashMap::new();
@@ -275,6 +275,8 @@ pub fn serve(script: &LspScript, input: impl Read, output: impl Write, mut recor
             Ok(Some(message)) => message,
             Ok(None) | Err(_) => return 0,
         };
+        // The script is read per message, so a test can change it mid-run.
+        let script = &script.lock().unwrap().clone();
         let method = message["method"].as_str().map(str::to_owned);
         let Some(method) = method else {
             // The client's answer to one of the fake's requests.
@@ -496,7 +498,7 @@ mod tests {
             input.extend(frame(&json!({ "jsonrpc": "2.0", "id": 2, "method": "textDocument/diagnostic", "params": pull })));
             let mut output = Vec::new();
             let mut seen = Vec::new();
-            assert_eq!(serve(&script, input.as_slice(), &mut output, |r| seen.push(r.method)), 0);
+            assert_eq!(serve(&Mutex::new(script.clone()), input.as_slice(), &mut output, |r| seen.push(r.method)), 0);
 
             let replies = replies(&output);
             let item = &replies[1]["result"]["items"][0];
@@ -511,7 +513,7 @@ mod tests {
         let script = LspScript { crash_on: Some("initialize".into()), ..LspScript::default() };
         let input = frame(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }));
         let mut output = Vec::new();
-        assert_eq!(serve(&script, input.as_slice(), &mut output, |_| {}), 1);
+        assert_eq!(serve(&Mutex::new(script.clone()), input.as_slice(), &mut output, |_| {}), 1);
         assert!(output.is_empty());
     }
 

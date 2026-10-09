@@ -42,6 +42,12 @@ pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 /// Stderr lines kept for the crash notice.
 const STDERR_LINES: usize = 20;
 
+/// Once a server's output ends, how often and how long the reader checks
+/// whether it has exited before killing it: up to half a second, once, at
+/// the end of a server's life.
+const EXIT_CHECKS: usize = 50;
+const EXIT_CHECK_INTERVAL: Duration = Duration::from_millis(10);
+
 /// What the server sent, for the main thread.
 #[derive(Debug)]
 pub(crate) enum Event {
@@ -317,11 +323,18 @@ fn run(host: SharedHost, spec: ProcessSpec, shared: Arc<Shared>) {
             receive(&shared, message);
         }
     }
-    // The output ended: the process exited or is about to. Kill it in case
-    // it only closed stdout, then collect its exit.
+    // The output ended: the process exited or is about to. Give it a moment
+    // to exit by itself (so its exit code is what it said), then kill it in
+    // case it only closed stdout, and collect its exit.
     shared.close();
     let control = shared.control.lock().unwrap().take();
     let exit = control.and_then(|mut control| {
+        for _ in 0..EXIT_CHECKS {
+            if let Ok(Some(exit)) = control.try_wait() {
+                return Some(exit);
+            }
+            std::thread::sleep(EXIT_CHECK_INTERVAL);
+        }
         let _ = control.kill();
         control.wait().ok()
     });

@@ -2,11 +2,11 @@
 //! (`genea_testkit::FakeLsp`), which the test host plays whenever Genea
 //! starts the project's `tsc`.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use genea_core::{
     CaretMove, Command, InlineProblem, LARGE_FILE_BYTES, LanguageServerState, LanguageServerStatus, ProblemSource,
-    ProcessSpec, ProjectId, Severity, Workbench,
+    MAX_RESTARTS, ProcessSpec, ProjectId, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT, Severity, Workbench,
 };
 use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
 use serde_json::json;
@@ -242,4 +242,158 @@ fn closing_the_project_shuts_the_server_down() {
 
     assert_eq!(fake.wait_for("shutdown", 1).len(), 1);
     assert_eq!(fake.wait_for("exit", 1).len(), 1);
+}
+
+// --- Crashes -------------------------------------------------------------------
+
+impl Session {
+    fn language_server(&self) -> LanguageServerStatus {
+        self.view().status.language_servers.into_iter().next().expect("a language server item")
+    }
+
+    /// Moves the host clock on, then settles.
+    fn advance(&mut self, by: Duration) {
+        self.host.clock().advance(by);
+        self.settle();
+    }
+}
+
+#[test]
+fn a_crashing_server_is_restarted_three_times_within_five_minutes_then_marked_failed() {
+    let fixture = typescript_project().file("src/main.ts", "oops\n").build();
+    let fake = FakeLsp::new().error("oops", TYPE_ERROR).crash_on("textDocument/diagnostic");
+    let mut session = open(fixture, &fake);
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+    assert_eq!(fake.starts(), 1);
+    assert_eq!(session.language_server(), status(LanguageServerState::Restarting, "TypeScript restarting…"));
+
+    for restart in 1..=MAX_RESTARTS {
+        session.advance(RESTART_DELAY);
+        assert_eq!(fake.starts(), 1 + restart, "restart {restart}");
+    }
+    assert_eq!(session.language_server(), status(LanguageServerState::Failed, "TypeScript stopped"));
+    let notice = session.view().notices.into_iter().find(|n| n.message.contains("crashing")).expect("a notice");
+    assert!(notice.message.contains("exited with code 1"), "{}", notice.message);
+    session.advance(RESTART_WINDOW);
+    assert_eq!(fake.starts(), 1 + MAX_RESTARTS, "a failed server stays stopped");
+
+    // Fixed, it comes back with "Restart language server", the notice's action.
+    fake.set_crash_on(None);
+    session.dispatch(notice.action.unwrap().command);
+    session.settle();
+    assert_eq!(fake.starts(), 2 + MAX_RESTARTS);
+    assert_eq!(session.language_server(), ready("TypeScript 7.0.0-fake"));
+    assert_eq!(session.typescript_problems().len(), 1, "the open file is synced again");
+    assert!(session.view().notices.iter().all(|n| !n.message.contains("crashing")));
+}
+
+#[test]
+fn crashes_more_than_five_minutes_apart_keep_being_restarted() {
+    let fake = FakeLsp::new().crash_on("initialize");
+    let mut session = open(typescript_project().build(), &fake);
+    session.settle();
+
+    for restart in 1..=2 * MAX_RESTARTS {
+        session.advance(RESTART_WINDOW / 2);
+        assert_eq!(fake.starts(), 1 + restart);
+    }
+    assert_eq!(session.language_server().state, LanguageServerState::Restarting);
+}
+
+#[test]
+fn a_crash_drops_the_servers_diagnostics_until_it_is_back() {
+    let fixture = typescript_project().file("src/main.ts", "oops\n").build();
+    let fake = FakeLsp::new().error("oops", TYPE_ERROR);
+    let mut session = open(fixture, &fake);
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+    assert_eq!(session.typescript_problems().len(), 1);
+
+    fake.set_crash_on(Some("textDocument/diagnostic"));
+    session.dispatch(Command::InsertText(" ".into()));
+    session.settle();
+    assert_eq!(session.typescript_problems(), [], "no stale diagnostics from a dead server");
+
+    fake.set_crash_on(None);
+    session.advance(RESTART_DELAY);
+    assert_eq!(session.typescript_problems().len(), 1);
+}
+
+#[test]
+fn restart_language_server_starts_a_fresh_process() {
+    let fake = FakeLsp::new();
+    let mut session = open(typescript_project().build(), &fake);
+    session.settle();
+
+    session.dispatch(Command::RestartLanguageServer);
+    session.settle();
+
+    assert_eq!(fake.starts(), 2);
+    assert_eq!(fake.wait_for("exit", 1).len(), 1, "the old one was shut down");
+    assert_eq!(session.language_server(), ready("TypeScript 7.0.0-fake"));
+}
+
+// --- A slow, silent or noisy server ------------------------------------------------
+
+#[test]
+fn a_server_that_never_answers_doesnt_hold_up_typing() {
+    let fixture = typescript_project().file("src/main.ts", "let a = 1;\n").build();
+    let fake = FakeLsp::new().silent();
+    let mut session = open(fixture, &fake);
+    // Nothing waits for it, and after a while the status bar says so.
+    session.host.clock().advance(START_TIMEOUT);
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+    assert_eq!(session.language_server(), status(LanguageServerState::NotResponding, "TypeScript isn't responding"));
+
+    for _ in 0..200 {
+        session.dispatch(Command::InsertText("x".into()));
+    }
+    let editor = session.view().editor.unwrap();
+    assert_eq!(editor.lines[0].text, format!("{}let a = 1;", "x".repeat(200)));
+    assert_eq!(fake.starts(), 1, "it isn't killed: it may still answer");
+}
+
+#[test]
+fn a_flood_of_server_messages_doesnt_hold_up_typing() {
+    let fixture = typescript_project().file("src/main.ts", "oops\n").build();
+    let fake = FakeLsp::new().error("oops", TYPE_ERROR).flood(100_000);
+    let mut session = open(fixture, &fake);
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+    for _ in 0..100 {
+        session.dispatch(Command::InsertText("x".into()));
+    }
+    assert_eq!(session.view().editor.unwrap().lines[0].text, format!("{}oops", "x".repeat(100)));
+    session.settle();
+
+    let editor = session.view().editor.unwrap();
+    assert_eq!(editor.lines[0].text, format!("{}oops", "x".repeat(100)));
+    assert_eq!(
+        session.typescript_problems(),
+        [("src/main.ts".into(), "1:101".into(), Severity::Error, TYPE_ERROR.into())]
+    );
+}
+
+#[test]
+fn a_slow_server_gets_only_the_latest_text_and_its_diagnostics_win() {
+    let fixture = typescript_project().file("src/main.ts", "\n").build();
+    let fake = FakeLsp::new().error("oops", TYPE_ERROR).delay(Duration::from_millis(20));
+    let mut session = open(fixture, &fake);
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+
+    for c in "oops".chars() {
+        session.dispatch(Command::InsertText(c.into()));
+        session.workbench.pump();
+    }
+    session.settle();
+
+    assert_eq!(
+        session.typescript_problems(),
+        [("src/main.ts".into(), "1:1".into(), Severity::Error, TYPE_ERROR.into())]
+    );
+    let pulls = fake.received("textDocument/diagnostic").len();
+    assert!(pulls <= 5, "one pull in flight per file, not one per keystroke: {pulls}");
 }

@@ -17,7 +17,7 @@ use crate::{
     command::Command,
     jobs::Jobs,
     lsp::{
-        Event, LanguageServer, Output, ServerSpec, Timer,
+        Event, LanguageServer, Output, START_TIMEOUT, ServerSpec, Timer,
         text::{self, Encoding},
         typescript::{self, Detection},
     },
@@ -39,14 +39,38 @@ pub(crate) struct Language {
     typescript: Option<LanguageServer>,
     /// Why "Add TypeScript 7" failed.
     problem: Option<String>,
+    /// [`START_TIMEOUT`] passed after the open before the first look for
+    /// TypeScript 7 landed: tsgo starts as not responding.
+    start_overdue: bool,
 }
 
 impl Project {
     /// Starts language intelligence when the project opens: looks for
     /// TypeScript 7 in the background, and starts tsgo if it is there.
     pub(crate) fn start_language(&mut self, host: SharedHost, jobs: &Jobs) {
+        // The start timeout counts from the open, so it runs on the host
+        // clock from here, however late the look for TypeScript lands.
+        let (id, timer_jobs) = (self.id, jobs.clone());
+        host.clock().after(
+            START_TIMEOUT,
+            Box::new(move || {
+                timer_jobs.busy().finish(Box::new(move |core| {
+                    if let Some(project) = core.project_mut(id) {
+                        project.language_start_overdue();
+                    }
+                }))
+            }),
+        );
         self.language.context = Some((host, jobs.clone()));
         self.detect_typescript();
+    }
+
+    /// [`START_TIMEOUT`] has passed since the project opened.
+    fn language_start_overdue(&mut self) {
+        match &mut self.language.typescript {
+            Some(server) => server.not_responding(),
+            None => self.language.start_overdue = self.language.detection.is_none(),
+        }
     }
 
     fn detect_typescript(&mut self) {
@@ -84,6 +108,9 @@ impl Project {
                 let env = self.process_env();
                 let mut server = LanguageServer::new(self.id, self.root.clone(), spec, host, jobs);
                 let mut outputs = server.start(&env);
+                if std::mem::take(&mut self.language.start_overdue) {
+                    server.not_responding();
+                }
                 if let Some(mut old) = self.language.typescript.replace(server) {
                     outputs.extend(old.stop());
                 }
@@ -91,6 +118,7 @@ impl Project {
             }
             _ => self.language.typescript.take().map(|mut server| server.stop()).unwrap_or_default(),
         };
+        self.language.start_overdue = false;
         self.language.detection = Some(detection);
         self.language_outputs(outputs);
     }

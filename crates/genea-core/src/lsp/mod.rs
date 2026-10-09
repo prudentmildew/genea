@@ -128,7 +128,7 @@ pub(crate) enum Timer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum State {
     /// Started; `initialize` not answered yet.
-    Starting { since: Instant },
+    Starting,
     Ready,
     /// `initialize` hasn't been answered within [`START_TIMEOUT`].
     NotResponding,
@@ -221,7 +221,7 @@ impl LanguageServer {
         let initialize = connection.request("initialize", self.initialize_params(folder));
         self.requests.insert(initialize, Pending::Initialize);
         self.connection = Some(connection);
-        self.state = State::Starting { since: self.host.clock().now() };
+        self.state = State::Starting;
         self.after(START_TIMEOUT, Timer::StartTimeout);
         outputs
     }
@@ -267,7 +267,7 @@ impl LanguageServer {
     pub(crate) fn status(&self) -> LanguageServerStatus {
         let name = self.spec.name;
         let (state, label) = match &self.state {
-            State::Starting { .. } => (LanguageServerState::Starting, format!("{name} starting…")),
+            State::Starting => (LanguageServerState::Starting, format!("{name} starting…")),
             State::Ready => (LanguageServerState::Ready, self.label.clone()),
             State::NotResponding => (LanguageServerState::NotResponding, format!("{name} isn't responding")),
             State::Restarting => (LanguageServerState::Restarting, format!("{name} restarting…")),
@@ -397,13 +397,8 @@ impl LanguageServer {
             return Vec::new();
         }
         match (timer, &self.state) {
-            (Timer::StartTimeout, State::Starting { .. }) => {
-                self.state = State::NotResponding;
-                // `settle` stops waiting for the answer; it still counts if it comes.
-                let initialize = self.requests.iter().find(|(_, p)| matches!(p, Pending::Initialize)).map(|(id, _)| *id);
-                if let (Some(connection), Some(id)) = (&self.connection, initialize) {
-                    connection.forget(id);
-                }
+            (Timer::StartTimeout, _) => {
+                self.not_responding();
                 Vec::new()
             }
             (Timer::Restart, State::Restarting) => {
@@ -411,6 +406,21 @@ impl LanguageServer {
                 self.start(env)
             }
             _ => Vec::new(),
+        }
+    }
+
+    /// A server still starting has taken too long ([`START_TIMEOUT`]): the
+    /// status bar says it isn't responding, and `settle` stops waiting for
+    /// its `initialize` answer. It keeps running, and is used as soon as it
+    /// answers.
+    pub(crate) fn not_responding(&mut self) {
+        if !matches!(self.state, State::Starting) {
+            return;
+        }
+        self.state = State::NotResponding;
+        let initialize = self.requests.iter().find(|(_, p)| matches!(p, Pending::Initialize)).map(|(id, _)| *id);
+        if let (Some(connection), Some(id)) = (&self.connection, initialize) {
+            connection.forget(id);
         }
     }
 

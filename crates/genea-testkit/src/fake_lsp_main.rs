@@ -29,6 +29,6 @@ fn main() -> ExitCode {
         },
         _ => LspScript::default(),
     };
-    let code = fake_lsp::serve(&script, std::io::stdin().lock(), std::io::stdout().lock(), |_| {});
+    let code = fake_lsp::serve(&std::sync::Mutex::new(script), std::io::stdin().lock(), std::io::stdout().lock(), |_| {});
     ExitCode::from(code.clamp(0, 255) as u8)
 }
