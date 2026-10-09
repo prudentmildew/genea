@@ -79,6 +79,18 @@ tools. `--ignore-scripts` instead runs `npm ci --ignore-scripts` in each
 directory vscode's postinstall would, which gives the same `node_modules` trees
 without native builds.
 
+Figures after a full install (`large/report.ts`; Large has no targets):
+14,439 TS files, 4.02 M LOC, 224,102 `node_modules` entries (223,434 with
+`--ignore-scripts`). A full `npm ci` took about 4.5 min with a cold npm cache
+and 1.5 min with a warm one on the dev machine.
+
+TS 7 comes in under an alias: `node_modules/typescript` is TS 6.0.2
+(`npm:@typescript/typescript6`), TS 7.0.2 is `node_modules/@typescript/native`,
+and the tsgo binary is
+`node_modules/@typescript/typescript-darwin-arm64/lib/tsc`. Genea's "has TS 7"
+check and tsgo lookup must follow the alias, or Large opens with language
+intelligence off.
+
 Large is an npm project with an ESLint config, so in Genea its installs, script
 runner and format/fix on save are off (foreign tools, ADR 0001). That's fine
 for what Large measures: tree, finder, search, editing and memory.
