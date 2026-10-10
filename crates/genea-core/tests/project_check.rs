@@ -161,3 +161,38 @@ fn the_status_bar_shows_a_check_while_it_runs() {
     session.settle();
     assert_eq!(session.view().status.project_check, None);
 }
+
+#[test]
+fn open_files_show_live_diagnostics_instead_of_the_checks() {
+    let fixture = typescript_project()
+        .file("src/main.ts", "let a: number = \"oops\";\n")
+        .file("src/other.ts", "let b: number = \"no\";\n")
+        .build();
+    let tsc = FakeTsc::new().reports(
+        &format!(
+            "src/main.ts(1,17): error TS2322: {TYPE_ERROR}\n\
+             src/other.ts(1,17): error TS2322: {TYPE_ERROR}\n"
+        ),
+        1,
+    );
+    let lsp = FakeLsp::new().error("\"oops\"", "Live: not a number.");
+    let mut session = open_with(fixture, &tsc, &lsp);
+    session.check();
+
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+
+    let live = (ProblemSource::TypeScript, "src/main.ts".into(), "1:17".into(), Severity::Error, "Live: not a number.".into());
+    assert_eq!(session.problems(), [live, error("src/other.ts", "1:17", TYPE_ERROR)]);
+    let inline: Vec<String> = session.view().editor.unwrap().problems.into_iter().map(|p| p.message).collect();
+    assert_eq!(inline, ["Live: not a number."]);
+    assert_eq!(session.view().status.errors, 2);
+
+    session.dispatch(Command::CloseTab { pane: 0, tab: 0 });
+    session.settle();
+    assert_eq!(
+        session.problems(),
+        [error("src/main.ts", "1:17", TYPE_ERROR), error("src/other.ts", "1:17", TYPE_ERROR)],
+        "a closed file shows the check's results again"
+    );
+}

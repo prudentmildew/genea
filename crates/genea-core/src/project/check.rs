@@ -2,10 +2,12 @@
 //! project's TypeScript 7 and putting its results in Problems. The process
 //! and its output are `crate::project_check`.
 
+use std::collections::BTreeSet;
+
 use genea_host::ProcessSpec;
 
 use super::Project;
-use crate::{problems::ProblemSource, project_check};
+use crate::{lsp::text, problems::ProblemSource, project_check};
 
 /// The project check's state in a project.
 #[derive(Default)]
@@ -43,5 +45,17 @@ impl Project {
     /// The status-bar item while a check runs.
     pub(super) fn project_check_status(&self) -> Option<String> {
         self.check.running.then(|| "Checking project…".to_owned())
+    }
+
+    /// Keeps the project check in step with the open editors: open files
+    /// show live diagnostics instead of its results. Runs after every
+    /// command and every background result.
+    pub(crate) fn sync_project_check(&mut self) {
+        let live: BTreeSet<_> = self
+            .open_editors()
+            .filter(|e| text::language_id(e.path()).is_some() && e.is_loaded() && !e.is_large())
+            .map(|e| e.path().to_owned())
+            .collect();
+        self.problems.set_live(live);
     }
 }

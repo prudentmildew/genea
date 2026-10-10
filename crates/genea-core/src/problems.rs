@@ -14,7 +14,7 @@
 //! [`ProblemSource`] variant.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -81,6 +81,9 @@ pub(crate) struct Problem {
 #[derive(Default)]
 pub(crate) struct Problems {
     by_source: BTreeMap<ProblemSource, BTreeMap<PathBuf, Vec<Problem>>>,
+    /// Files open on a language server: their live diagnostics take over
+    /// from the project check's stored results, which are hidden there.
+    live: BTreeSet<PathBuf>,
 }
 
 impl Problems {
@@ -103,13 +106,32 @@ impl Problems {
         }
     }
 
+    /// Sets the files open on a language server, whose project-check
+    /// results are hidden while they are open.
+    pub(crate) fn set_live(&mut self, paths: BTreeSet<PathBuf>) {
+        self.live = paths;
+    }
+
+    /// Whether `source`'s problems in `path` show.
+    fn shows(&self, source: ProblemSource, path: &Path) -> bool {
+        source != ProblemSource::ProjectCheck || !self.live.contains(path)
+    }
+
     fn all(&self) -> impl Iterator<Item = (ProblemSource, &Problem)> {
-        self.by_source.iter().flat_map(|(source, by_file)| by_file.values().flatten().map(|p| (*source, p)))
+        self.by_source.iter().flat_map(move |(source, by_file)| {
+            by_file.iter().filter(move |(path, _)| self.shows(*source, path)).flat_map(move |(_, problems)| {
+                problems.iter().map(move |p| (*source, p))
+            })
+        })
     }
 
     /// The problems in one file, from every source.
     pub(crate) fn in_file<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Problem> + 'a {
-        self.by_source.values().filter_map(move |by_file| by_file.get(path)).flatten()
+        self.by_source
+            .iter()
+            .filter(move |(source, _)| self.shows(**source, path))
+            .filter_map(move |(_, by_file)| by_file.get(path))
+            .flatten()
     }
 
     /// (errors, warnings) over every source.

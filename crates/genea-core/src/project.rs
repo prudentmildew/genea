@@ -706,6 +706,7 @@ impl Project {
         }
         self.refresh_views();
         self.sync_language();
+        self.sync_project_check();
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
