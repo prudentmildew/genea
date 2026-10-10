@@ -261,7 +261,7 @@ impl Project {
     fn rename(&mut self, name: String) {
         self.sync_language();
         let navigation = &mut self.language.navigation;
-        let Some(mut renaming) = navigation.renaming.take().filter(|r| r.versions.is_none()) else { return };
+        let Some(mut renaming) = navigation.renaming.take().filter(|r| r.name.is_some() && r.versions.is_none()) else { return };
         let name = name.trim().to_owned();
         if name.is_empty() || renaming.name.as_ref() == Some(&name) {
             return;

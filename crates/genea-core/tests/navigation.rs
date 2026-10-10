@@ -353,6 +353,24 @@ fn a_cancelled_or_unchanged_rename_edits_nothing() {
 }
 
 #[test]
+fn typing_before_the_renames_edits_arrive_renames_nothing() {
+    let fake = FakeLsp::new();
+    let mut session = open(greeting_project().build(), &fake);
+    session.open_at("src/main.ts", 2, 14);
+    session.dispatch(Command::StartRename);
+    session.settle();
+
+    session.dispatch(Command::Rename("welcome".into()));
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.dispatch(Command::InsertText("//".into()));
+    session.settle();
+
+    assert_eq!(session.text(), MAIN.replace("\n\n", "\n//\n"));
+    assert_eq!(session.tabs(), [("src/main.ts".into(), true)]);
+    assert_eq!(session.view().hint.as_deref(), Some("Files changed while renaming, so nothing was renamed. Try again."));
+}
+
+#[test]
 fn rename_where_nothing_can_be_renamed_is_a_hint() {
     let fake = FakeLsp::new();
     let mut session = open(greeting_project().build(), &fake);
