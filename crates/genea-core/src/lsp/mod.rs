@@ -30,6 +30,7 @@
 //! every background result.
 
 mod connection;
+pub(crate) mod navigation;
 pub(crate) mod text;
 pub(crate) mod typescript;
 pub(crate) mod watch;
@@ -106,6 +107,8 @@ pub(crate) enum Output {
     Clear(PathBuf),
     /// Drop every file's diagnostics: the server is gone.
     ClearAll,
+    /// A navigation or rename answer (ticket #44).
+    Navigation(navigation::Answer),
 }
 
 /// A request waiting for its answer.
@@ -114,6 +117,8 @@ pub(crate) enum Pending {
     Initialize,
     /// `textDocument/diagnostic` for an open file.
     Diagnostics(PathBuf),
+    /// Go to definition, find usages or rename (ticket #44).
+    Navigation(navigation::Ask),
 }
 
 /// A timer of a server's, on the host clock.
@@ -384,6 +389,7 @@ impl LanguageServer {
             Event::Response { id, result } => match self.requests.remove(&id) {
                 Some(Pending::Initialize) => self.initialized(result),
                 Some(Pending::Diagnostics(path)) => self.diagnostics_answered(path, id, result),
+                Some(Pending::Navigation(ask)) => navigation::answered(ask, result),
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),

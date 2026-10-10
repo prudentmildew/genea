@@ -18,7 +18,8 @@
 //! (choosing UTF-8 positions when offered), keeps the text of open
 //! documents, answers `textDocument/diagnostic` with one diagnostic per
 //! occurrence of each scripted marker in the document, answers `shutdown`,
-//! and exits on `exit` or when its input closes.
+//! and exits on `exit` or when its input closes. It also answers code
+//! navigation and rename, knowing identifiers by their text (`navigation`).
 
 use std::{
     collections::HashMap,
@@ -33,6 +34,8 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{FakeProcess, TestHost};
+
+mod navigation;
 
 /// How long [`FakeLsp::wait_for`] waits before failing the test. Real
 /// time: it only guards against hangs.
@@ -276,6 +279,8 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
     let mut out = Output { writer: output, next_id: 0, requests: HashMap::new() };
     let mut documents: HashMap<String, String> = HashMap::new();
     let mut utf8 = false;
+    // The workspace folder, from `initialize`.
+    let mut root = None;
     loop {
         let message = match read_message(&mut input) {
             Ok(Some(message)) => message,
@@ -306,14 +311,26 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             }
         };
+        let workspace = navigation::Workspace { root: root.as_deref(), documents: &documents, utf8 };
+        if let Some(result) = navigation::answer(&workspace, &method, &params) {
+            answer(&mut out, result);
+            continue;
+        }
         match method.as_str() {
             "initialize" => {
                 let offered = params["capabilities"]["general"]["positionEncodings"].as_array();
                 utf8 = offered.is_some_and(|kinds| kinds.iter().any(|k| k == "utf-8"));
+                let folder = params["workspaceFolders"][0]["uri"].as_str().or(params["rootUri"].as_str());
+                root = folder.and_then(navigation::path);
                 let capabilities = json!({
                     "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
                     "textDocumentSync": { "openClose": true, "change": 1 },
                     "diagnosticProvider": { "identifier": "fake", "interFileDependencies": true, "workspaceDiagnostics": false },
+                    "definitionProvider": true,
+                    "typeDefinitionProvider": true,
+                    "implementationProvider": true,
+                    "referencesProvider": true,
+                    "renameProvider": { "prepareProvider": true },
                 });
                 answer(&mut out, json!({ "capabilities": capabilities, "serverInfo": { "name": "fake-lsp", "version": "7.0.0-fake" } }));
                 for i in 0..script.flood {

@@ -1,7 +1,10 @@
 //! A project's language intelligence (ticket #42): finding TypeScript 7,
 //! running tsgo with the project's lifecycle, keeping it in step with the
 //! open editors and the watcher, and turning its diagnostics into Problems.
-//! The protocol side is in `crate::lsp`.
+//! The protocol side is in `crate::lsp`. Code navigation and rename (#44)
+//! are in `navigation`.
+
+mod navigation;
 
 use std::{
     fs,
@@ -42,6 +45,8 @@ pub(crate) struct Language {
     /// [`START_TIMEOUT`] passed after the open before the first look for
     /// TypeScript 7 landed: tsgo starts as not responding.
     start_overdue: bool,
+    /// Go to definition, find usages and rename (#44).
+    navigation: navigation::Navigation,
 }
 
 impl Project {
@@ -222,6 +227,7 @@ impl Project {
                 }
                 Output::Clear(path) => self.problems.replace_file(source, &path, Vec::new()),
                 Output::ClearAll => self.problems.replace(source, Vec::new()),
+                Output::Navigation(answer) => self.navigation_answered(answer),
             }
         }
     }

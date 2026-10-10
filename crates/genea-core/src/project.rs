@@ -422,6 +422,9 @@ impl Project {
         // A shown change closes on anything but scrolling.
         let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
         let shown = if scrolling { None } else { self.shown_hunk.take() };
+        if !scrolling {
+            self.clear_hint();
+        }
         match command {
             Command::ShowHunk { line } => {
                 self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
@@ -693,6 +696,13 @@ impl Project {
                     self.save(path, jobs);
                 }
             }
+            Command::GoToDefinition
+            | Command::GoToTypeDefinition
+            | Command::GoToImplementation
+            | Command::FindUsages
+            | Command::StartRename
+            | Command::Rename(_)
+            | Command::CancelRename => self.navigation_command(command),
         }
         self.reparse(jobs);
         if let Some(path) = self.editor.as_ref().map(|e| e.path().to_owned()) {
@@ -799,6 +809,9 @@ impl Project {
             files: self.files.rows(),
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
+            usages: self.usages_view(),
+            rename: self.rename_prompt(),
+            hint: self.hint(),
         }
     }
 

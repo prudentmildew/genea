@@ -11,6 +11,7 @@
 //! the primary, which the view scrolls to and the status bar reports.
 
 mod indent;
+mod navigation;
 mod structural;
 
 use std::{

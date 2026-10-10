@@ -61,6 +61,36 @@ pub struct ProjectView {
     pub search: SearchView,
     /// The fuzzy finder overlay, while it is open (ticket #33).
     pub finder: Option<FinderView>,
+    /// The Usages view (ticket #44): the last Find Usages, or the places Go
+    /// to Definition, Type Definition or Implementation found when there
+    /// were several. `None` until there is one.
+    pub usages: Option<UsagesView>,
+    /// The rename prompt (⇧F6), while it is open (ticket #44).
+    pub rename: Option<RenamePrompt>,
+    /// A short message about the last command, shown until the next one:
+    /// why Go to Definition found nothing, why a symbol can't be renamed.
+    pub hint: Option<String>,
+}
+
+/// The Usages view: places in the project's files, grouped by file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsagesView {
+    /// What it lists: "Usages of greet", "Implementations of Shape".
+    pub title: String,
+    /// Files in the order of the project's tree, places top to bottom.
+    /// Clicking a place opens it with `Command::OpenFileAt`.
+    pub files: Vec<SearchFile>,
+    /// Places in `files`.
+    pub count: usize,
+    /// Still waiting for the language server.
+    pub finding: bool,
+}
+
+/// The rename prompt: the symbol's name, to edit and confirm with
+/// `Command::Rename` (or cancel with `Command::CancelRename`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenamePrompt {
+    pub name: String,
 }
 
 /// The fuzzy finder overlay: a query and the results matching it.
@@ -223,6 +253,8 @@ pub enum LeftColumnView {
     Problems,
     /// ⌘⇧F: project search.
     Search,
+    /// The usages Find Usages found (⌥F7 shows it, ticket #44).
+    Usages,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem
