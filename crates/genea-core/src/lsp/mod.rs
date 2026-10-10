@@ -272,9 +272,10 @@ impl LanguageServer {
         self.state == State::Ready
     }
 
-    /// Which decorations the config shows (ticket #46): inlay hints.
-    pub(crate) fn show_decorations(&mut self, hints: bool) {
-        self.decorations.show(hints);
+    /// Which decorations the config shows (ticket #46): inlay hints, code
+    /// lenses.
+    pub(crate) fn show_decorations(&mut self, hints: bool, lenses: bool) {
+        self.decorations.show(hints, lenses);
     }
 
     /// The server's columns: positions it sends and expects are in these.

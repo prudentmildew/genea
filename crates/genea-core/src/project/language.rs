@@ -143,7 +143,7 @@ impl Project {
     pub(crate) fn sync_language(&mut self) {
         self.hide_decorations();
         let Some(server) = &mut self.language.typescript else { return };
-        server.show_decorations(self.config.inlay_hints);
+        server.show_decorations(self.config.inlay_hints, self.config.code_lens);
         let editors = self.editor.iter().chain(self.panes.parked());
         let outputs = server.sync(editors);
         self.language_outputs(outputs);

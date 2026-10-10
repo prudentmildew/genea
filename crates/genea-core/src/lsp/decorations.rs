@@ -116,26 +116,31 @@ pub(crate) enum Kind {
     Tokens,
     /// `textDocument/inlayHint`, while the `inlayHints` config key is on.
     Hints,
+    /// `textDocument/codeLens`, then `codeLens/resolve` for each lens the
+    /// server sends without its title, while the `codeLens` config key is
+    /// on.
+    Lenses,
 }
 
 impl Kind {
-    const ALL: [Kind; 2] = [Kind::Tokens, Kind::Hints];
+    const ALL: [Kind; 3] = [Kind::Tokens, Kind::Hints, Kind::Lenses];
 
     fn method(self) -> &'static str {
         match self {
             Kind::Tokens => "textDocument/semanticTokens/full",
             Kind::Hints => "textDocument/inlayHint",
+            Kind::Lenses => "textDocument/codeLens",
         }
     }
 }
 
-/// A request for a document's decorations, waiting for its answer: for
-/// the editor's `version`.
+/// A request for a document's decorations, waiting for its answer.
 #[derive(Debug)]
-pub(crate) struct Pending {
-    kind: Kind,
-    path: PathBuf,
-    version: u64,
+pub(crate) enum Pending {
+    /// A kind's request, for the editor's `version`.
+    Request { kind: Kind, path: PathBuf, version: u64 },
+    /// `codeLens/resolve` for lens `index` of the code lens request `batch`.
+    Resolve { path: PathBuf, batch: i64, index: usize },
 }
 
 /// What the project applies to an open editor. Positions are in the
@@ -144,6 +149,7 @@ pub(crate) struct Pending {
 pub(crate) enum Output {
     Tokens { path: PathBuf, version: u64, encoding: Encoding, tokens: Vec<Token> },
     Hints { path: PathBuf, version: u64, encoding: Encoding, hints: Vec<Hint> },
+    Lenses { path: PathBuf, version: u64, encoding: Encoding, lenses: Vec<Lens> },
     /// The server is gone: drop every editor's decorations.
     ClearAll,
 }
@@ -166,6 +172,30 @@ pub(crate) struct Hint {
     pub(crate) label: String,
 }
 
+/// A code lens: its title, and where its range starts, in server units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Lens {
+    pub(crate) line: u32,
+    pub(crate) character: u32,
+    pub(crate) title: String,
+}
+
+/// A document's code lenses, while some still wait for their titles.
+#[derive(Debug)]
+struct LensBatch {
+    /// The `textDocument/codeLens` request's id.
+    id: i64,
+    version: u64,
+    encoding: Encoding,
+    /// Where each lens starts, and its title once known (`None` while
+    /// unresolved, or if resolving failed).
+    lenses: Vec<(u32, u32, Option<String>)>,
+    /// Lenses to resolve: their index, and the lens as the server sent it.
+    to_resolve: Vec<(usize, Value)>,
+    /// Resolve requests not answered yet.
+    waiting: usize,
+}
+
 /// Hints longer than this are cut, as VS Code cuts them: a big object
 /// type would otherwise push the line's own text far off.
 const MAX_HINT_CHARS: usize = 43;
@@ -183,6 +213,9 @@ struct Want {
 struct Wants {
     tokens: Want,
     hints: Want,
+    /// In flight from the code lens request until every lens is resolved.
+    lenses: Want,
+    batch: Option<LensBatch>,
     /// The document's line count, for the inlay hints' range.
     lines: u32,
 }
@@ -192,6 +225,7 @@ impl Wants {
         match kind {
             Kind::Tokens => &mut self.tokens,
             Kind::Hints => &mut self.hints,
+            Kind::Lenses => &mut self.lenses,
         }
     }
 }
@@ -206,6 +240,10 @@ pub(crate) struct Decorations {
     has_hints: bool,
     /// The `inlayHints` config key.
     show_hints: bool,
+    /// The server has code lenses.
+    has_lenses: bool,
+    /// The `codeLens` config key.
+    show_lenses: bool,
     documents: BTreeMap<PathBuf, Wants>,
 }
 
@@ -234,16 +272,21 @@ impl Decorations {
             modifiers: strings(&provider["legend"]["tokenModifiers"]),
         });
         self.has_hints = provided(&capabilities["inlayHintProvider"]);
+        self.has_lenses = provided(&capabilities["codeLensProvider"]);
     }
 
     /// What the config shows. Turning a kind on asks for it everywhere;
     /// turning it off drops answers still on their way (the project hides
     /// what the editors have).
-    pub(super) fn show(&mut self, hints: bool) {
+    pub(super) fn show(&mut self, hints: bool, lenses: bool) {
         if hints && !self.show_hints {
             self.want_everywhere(Kind::Hints);
         }
+        if lenses && !self.show_lenses {
+            self.want_everywhere(Kind::Lenses);
+        }
         self.show_hints = hints;
+        self.show_lenses = lenses;
     }
 
     /// Whether this kind is asked for at all.
@@ -251,6 +294,7 @@ impl Decorations {
         match kind {
             Kind::Tokens => self.legend.is_some(),
             Kind::Hints => self.has_hints && self.show_hints,
+            Kind::Lenses => self.has_lenses && self.show_lenses,
         }
     }
 
@@ -280,6 +324,7 @@ impl Decorations {
         let kind = match method {
             "workspace/semanticTokens/refresh" => Kind::Tokens,
             "workspace/inlayHint/refresh" => Kind::Hints,
+            "workspace/codeLens/refresh" => Kind::Lenses,
             _ => return false,
         };
         self.want_everywhere(kind);
@@ -296,6 +341,13 @@ impl Decorations {
         let active: Vec<Kind> = Kind::ALL.into_iter().filter(|kind| self.active(*kind)).collect();
         for (path, wants) in &mut self.documents {
             let Some(document) = documents.get(path) else { continue };
+            if let Some(batch) = &mut wants.batch {
+                for (index, lens) in batch.to_resolve.drain(..) {
+                    let id = connection.request("codeLens/resolve", lens);
+                    let pending = Pending::Resolve { path: path.clone(), batch: batch.id, index };
+                    requests.insert(id, super::Pending::Decorations(pending));
+                }
+            }
             for &kind in &active {
                 let lines = wants.lines;
                 let want = wants.of(kind);
@@ -310,7 +362,7 @@ impl Decorations {
                 }
                 let id = connection.request(kind.method(), params);
                 want.in_flight = Some(id);
-                let pending = Pending { kind, path: path.clone(), version: document.editor_version };
+                let pending = Pending::Request { kind, path: path.clone(), version: document.editor_version };
                 requests.insert(id, super::Pending::Decorations(pending));
             }
         }
@@ -324,7 +376,10 @@ impl Decorations {
         result: Result<Value, ResponseError>,
         encoding: Encoding,
     ) -> Vec<Output> {
-        let Pending { kind, path, version } = pending;
+        let (kind, path, version) = match pending {
+            Pending::Request { kind, path, version } => (kind, path, version),
+            Pending::Resolve { path, batch, index } => return self.resolved(path, batch, index, result),
+        };
         let active = self.active(kind);
         let Some(wants) = self.documents.get_mut(&path).filter(|w| w.of_ref(kind).in_flight == Some(id)) else {
             return Vec::new();
@@ -351,7 +406,61 @@ impl Decorations {
                 let hints = result.as_array().into_iter().flatten().filter_map(hint).collect();
                 vec![Output::Hints { path, version, encoding, hints }]
             }
+            Kind::Lenses => {
+                let mut batch = LensBatch { id, version, encoding, lenses: Vec::new(), to_resolve: Vec::new(), waiting: 0 };
+                for lens in result.as_array().into_iter().flatten() {
+                    let start = &lens["range"]["start"];
+                    let (Some(line), Some(character)) = (start["line"].as_u64(), start["character"].as_u64()) else {
+                        continue;
+                    };
+                    let title = lens["command"]["title"].as_str().map(str::to_owned);
+                    if title.is_none() {
+                        batch.to_resolve.push((batch.lenses.len(), lens.clone()));
+                        batch.waiting += 1;
+                    }
+                    batch.lenses.push((line as u32, character as u32, title));
+                }
+                if batch.waiting == 0 {
+                    return vec![batch.output(path)];
+                }
+                // Resolved at the next sync; still in flight until then.
+                wants.lenses.in_flight = Some(id);
+                wants.batch = Some(batch);
+                Vec::new()
+            }
         }
+    }
+
+    /// A lens's title came (or resolving it failed): once every lens of
+    /// its batch has one, the batch is done.
+    fn resolved(&mut self, path: PathBuf, batch: i64, index: usize, result: Result<Value, ResponseError>) -> Vec<Output> {
+        let active = self.active(Kind::Lenses);
+        let Some(wants) = self.documents.get_mut(&path) else { return Vec::new() };
+        let Some(lenses) = wants.batch.as_mut().filter(|b| b.id == batch) else { return Vec::new() };
+        if let (Ok(lens), Some(slot)) = (result, lenses.lenses.get_mut(index)) {
+            slot.2 = lens["command"]["title"].as_str().map(str::to_owned);
+        }
+        lenses.waiting -= 1;
+        if lenses.waiting > 0 {
+            return Vec::new();
+        }
+        let done = wants.batch.take().expect("checked above");
+        wants.lenses.in_flight = None;
+        if active { vec![done.output(path)] } else { Vec::new() }
+    }
+}
+
+impl LensBatch {
+    fn output(self, path: PathBuf) -> Output {
+        let lenses = self
+            .lenses
+            .into_iter()
+            .filter_map(|(line, character, title)| {
+                let title = title.filter(|t| !t.trim().is_empty())?;
+                Some(Lens { line, character, title: title.chars().map(|c| if c.is_control() { ' ' } else { c }).collect() })
+            })
+            .collect();
+        Output::Lenses { path, version: self.version, encoding: self.encoding, lenses }
     }
 }
 
@@ -360,6 +469,7 @@ impl Wants {
         match kind {
             Kind::Tokens => &self.tokens,
             Kind::Hints => &self.hints,
+            Kind::Lenses => &self.lenses,
         }
     }
 }

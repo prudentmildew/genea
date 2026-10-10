@@ -1053,10 +1053,16 @@ impl Editor {
             });
             push_highlight(&mut highlights, highlight, start..column);
         }
-        // Hints at the end of the last line, which has no line break.
+        // Hints at the end of the last line, which has no line break, and
+        // then the line's code lenses.
         if !cut {
             for inlay in inlays {
                 push_inlay(&mut text, &mut highlights, &mut column, &inlay.text);
+            }
+            if let Some(lenses) = self.decorations.lenses(line_start, line_end) {
+                text.push_str(decorations::LENS_GAP);
+                column += decorations::LENS_GAP.len();
+                push_inlay(&mut text, &mut highlights, &mut column, &lenses);
             }
         }
         (text, highlights)

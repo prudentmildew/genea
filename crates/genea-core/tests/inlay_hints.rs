@@ -113,6 +113,24 @@ fn turning_inlay_hints_on_and_off_shows_and_hides_them_live() {
 }
 
 #[test]
+fn code_lenses_are_off_by_default_and_show_at_the_end_of_their_line_while_turned_on() {
+    let fake = FakeLsp::new().lens("Shape", "1 reference").lens("Shape", "2 implementations").lens("area", "3 references");
+    let text = "interface Shape {}\nfunction area() {}\n";
+    let mut session = open(project(text), &fake);
+    assert_eq!(session.text(0), "interface Shape {}");
+    assert_eq!(fake.received("textDocument/codeLens"), Vec::<serde_json::Value>::new());
+
+    session.config(r#"{ "codeLens": true }"#);
+    assert_eq!(session.text(0), "interface Shape {}  1 reference · 2 implementations");
+    assert_eq!(session.hints(0), ["1 reference · 2 implementations"]);
+    assert_eq!(session.text(1), "function area() {}  3 references");
+
+    session.config(r#"{ "codeLens": false }"#);
+    assert_eq!(session.text(0), "interface Shape {}");
+    assert_eq!(session.text(1), "function area() {}");
+}
+
+#[test]
 fn hints_push_the_text_along_but_carets_and_clicks_stay_on_the_files_text() {
     let fake = FakeLsp::new().type_hint("total", ": number");
     let mut session = open(project("const total = 1 + 2;\n").file("genea.jsonc", r#"{ "inlayHints": true }"#), &fake);

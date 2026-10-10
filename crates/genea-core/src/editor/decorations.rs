@@ -1,5 +1,5 @@
 //! What the language server draws on an open file (ticket #46): semantic
-//! highlights over the tree-sitter ones, and inlay hints.
+//! highlights over the tree-sitter ones, inlay hints, and code lenses.
 //!
 //! They arrive for a version of the text, and are kept in byte positions
 //! that move with every edit (`Editor::splice`), so they stay on the text
@@ -11,6 +11,10 @@
 //! tab stops) don't. [`Editor::to_grid`] and [`Editor::from_grid`] convert
 //! at the edge: what the view shows, and the cells it sends back (clicks).
 //! A caret at a hint's position is drawn before the hint.
+//!
+//! Code lenses are drawn after the end of their line (not on a line of
+//! their own above it, which would take rows that aren't the file's
+//! lines), so they move nothing.
 
 use std::ops::Range;
 
@@ -27,7 +31,21 @@ pub(crate) struct Decorations {
     semantic: Spans,
     /// Inlay hints, by position.
     inlays: Vec<Inlay>,
+    /// Code lenses, by position.
+    lenses: Vec<Lens>,
 }
+
+/// A code lens: its title, drawn at the end of the line `byte` is on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Lens {
+    pub(super) byte: usize,
+    pub(super) title: String,
+}
+
+/// What goes between a line's text and its code lenses, and between
+/// lenses.
+pub(super) const LENS_GAP: &str = "  ";
+const LENS_SEPARATOR: &str = " · ";
 
 /// An inlay hint: text drawn before the char at `byte`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,17 +61,28 @@ impl Decorations {
         let (start, old_end, new_end) = (edit.start_byte, edit.old_end_byte, edit.new_end_byte);
         // A hint where text is inserted moves with the text after it (a
         // name typed on keeps its type hint at its end; an argument keeps
-        // its parameter hint); one in deleted text goes.
-        self.inlays.retain_mut(|inlay| {
-            if inlay.byte < start || (inlay.byte == start && start != old_end) {
+        // its parameter hint); one in deleted text goes. Lenses too.
+        let shift = |byte: &mut usize| {
+            if *byte < start || (*byte == start && start != old_end) {
                 true
-            } else if inlay.byte >= old_end {
-                inlay.byte = inlay.byte - old_end + new_end;
+            } else if *byte >= old_end {
+                *byte = *byte - old_end + new_end;
                 true
             } else {
                 false
             }
-        });
+        };
+        self.inlays.retain_mut(|inlay| shift(&mut inlay.byte));
+        self.lenses.retain_mut(|lens| shift(&mut lens.byte));
+    }
+
+    /// The code lenses at bytes `from..=to`, joined, as drawn after the
+    /// line's text; `None` without any.
+    pub(super) fn lenses(&self, from: usize, to: usize) -> Option<String> {
+        let first = self.lenses.partition_point(|l| l.byte < from);
+        let end = first + self.lenses[first..].partition_point(|l| l.byte <= to);
+        let titles: Vec<&str> = self.lenses[first..end].iter().map(|l| l.title.as_str()).collect();
+        (!titles.is_empty()).then(|| titles.join(LENS_SEPARATOR))
     }
 
     /// The semantic highlights overlapping a byte range.
@@ -92,6 +121,25 @@ impl Editor {
         let mut inlays: Vec<Inlay> = hints.into_iter().map(|(byte, text)| Inlay { byte, text }).collect();
         inlays.sort_by_key(|i| i.byte);
         self.decorations.inlays = inlays;
+    }
+
+    /// Replaces the code lenses (byte position, title), if the text is
+    /// still at `version`.
+    pub(crate) fn set_code_lenses(&mut self, version: u64, lenses: Vec<(usize, String)>) {
+        if version != self.version {
+            return;
+        }
+        let mut lenses: Vec<Lens> = lenses.into_iter().map(|(byte, title)| Lens { byte, title }).collect();
+        lenses.sort_by_key(|l| l.byte);
+        self.decorations.lenses = lenses;
+    }
+
+    pub(crate) fn has_code_lenses(&self) -> bool {
+        !self.decorations.lenses.is_empty()
+    }
+
+    pub(crate) fn clear_code_lenses(&mut self) {
+        self.decorations.lenses.clear();
     }
 
     pub(crate) fn has_inlay_hints(&self) -> bool {
