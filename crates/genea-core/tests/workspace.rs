@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use genea_core::{PackageScripts, ProjectId, Script, Workbench};
+use genea_core::{Command, FinderMode, LeftColumnView, PackageScripts, ProjectId, Script, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 fn open(fixture: FixtureBuilder) -> (FixtureProject, Workbench, ProjectId) {
@@ -63,6 +63,22 @@ fn a_pnpm_workspace_lists_the_root_then_each_package_in_path_order() {
             entry("@shop/shared", "packages/shared", &["build", "test"]),
         ]
     );
+}
+
+#[test]
+fn the_scripts_action_shows_the_script_runner_in_the_left_column() {
+    let (_fixture, mut workbench, project) = open(FixtureProject::new().file("package.json", PNPM_ROOT));
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    workbench.dispatch(project, Command::SetFinderQuery("Scripts".into()));
+    workbench.settle().unwrap();
+    let items = workbench.project(project).unwrap().finder.unwrap().items;
+    let index = items.iter().position(|item| item.label == "Scripts").expect("Scripts is an action");
+    workbench.dispatch(project, Command::SelectFinderItem(index));
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+
+    assert_eq!(workbench.project(project).unwrap().left_column, Some(LeftColumnView::Scripts));
 }
 
 #[test]

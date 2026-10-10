@@ -247,6 +247,8 @@ pub enum LeftColumnView {
     Problems,
     /// ⌘⇧F: project search.
     Search,
+    /// The script runner (ticket #40): `ProjectView::scripts`.
+    Scripts,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem
