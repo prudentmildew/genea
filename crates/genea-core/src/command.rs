@@ -282,6 +282,21 @@ pub enum Command {
     /// program that asked for the mouse, in the encoding it chose;
     /// otherwise nothing happens.
     TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
+    // Terminal tabs and links (ticket #39). The commands above act on the
+    // showing tab.
+    /// ⌘T in the terminal, or the pane's +: opens a tab with a new shell,
+    /// shows it and focuses the pane.
+    NewTerminalTab,
+    /// Closes a terminal tab (by index), hanging up its shell. The pane
+    /// shows the tab to its right, else the one to its left; closing the
+    /// last tab collapses the pane, and showing it again opens a new one.
+    CloseTerminalTab(usize),
+    /// ⌘-click on the active tab's cell at `line` and `column` (0-based
+    /// visible row and grid column): if a `path:line:col` reference
+    /// (`TerminalLine::links`) covers it, opens that file at that place,
+    /// like `OpenFileAt`, resolving a relative path against the tab's
+    /// directory. The editor takes the focus.
+    OpenTerminalLink { line: usize, column: usize },
 
     /// The Search view's query changed (⌘⇧F, ticket #34): cancels the
     /// search in flight and searches the project in the background, results

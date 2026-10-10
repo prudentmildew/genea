@@ -54,6 +54,7 @@ pub enum Action {
     ShowSearch,
     ShowProblems,
     ShowTerminal,
+    NewTerminalTab,
     SplitRight,
     MoveTabToOtherSide,
     CloseSplit,
@@ -64,7 +65,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 43] = [
+    pub const ALL: [Action; 44] = [
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
@@ -103,6 +104,7 @@ impl Action {
         Action::ShowSearch,
         Action::ShowProblems,
         Action::ShowTerminal,
+        Action::NewTerminalTab,
         Action::SplitRight,
         Action::MoveTabToOtherSide,
         Action::CloseSplit,
@@ -151,6 +153,7 @@ impl Action {
             Action::ShowSearch => "Search",
             Action::ShowProblems => "Problems",
             Action::ShowTerminal => "Terminal",
+            Action::NewTerminalTab => "New Terminal Tab",
             Action::SplitRight => "Split Right",
             Action::MoveTabToOtherSide => "Move Tab to Other Side",
             Action::CloseSplit => "Close Split",
@@ -192,6 +195,7 @@ impl Action {
             Action::ShowSearch => "⇧⌘F",
             Action::ShowProblems => "⌘6",
             Action::ShowTerminal => "⌥F12",
+            Action::NewTerminalTab => "⌘T",
             Action::SelectNextTab => "⇧⌘]",
             Action::SelectPreviousTab => "⇧⌘[",
             Action::OpenConfig
@@ -279,6 +283,7 @@ impl Action {
             Action::ShowSearch => Command::ToggleLeftColumn(LeftColumnView::Search),
             Action::ShowProblems => Command::ToggleLeftColumn(LeftColumnView::Problems),
             Action::ShowTerminal => Command::ToggleTerminal,
+            Action::NewTerminalTab => Command::NewTerminalTab,
             Action::SplitRight => Command::SplitRight,
             Action::CloseSplit => Command::CloseSplit,
             Action::CloseTab | Action::MoveTabToOtherSide | Action::SelectNextTab | Action::SelectPreviousTab => {
