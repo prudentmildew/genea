@@ -69,6 +69,7 @@ pub enum Action {
     ShowScripts,
     ShowTerminal,
     NewTerminalTab,
+    ShowDiffAgainstHead,
     SplitRight,
     MoveTabToOtherSide,
     CloseSplit,
@@ -79,7 +80,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 58] = [
+    pub const ALL: [Action; 59] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -133,6 +134,7 @@ impl Action {
         Action::ShowScripts,
         Action::ShowTerminal,
         Action::NewTerminalTab,
+        Action::ShowDiffAgainstHead,
         Action::SplitRight,
         Action::MoveTabToOtherSide,
         Action::CloseSplit,
@@ -191,6 +193,7 @@ impl Action {
             Action::ShowScripts => "Scripts",
             Action::ShowTerminal => "Terminal",
             Action::NewTerminalTab => "New Terminal Tab",
+            Action::ShowDiffAgainstHead => "Show Diff Against HEAD",
             Action::SplitRight => "Split Right",
             Action::MoveTabToOtherSide => "Move Tab to Other Side",
             Action::CloseSplit => "Close Split",
@@ -266,6 +269,7 @@ impl Action {
             | Action::SplitRight
             | Action::MoveTabToOtherSide
             | Action::CloseSplit
+            | Action::ShowDiffAgainstHead
             // ⌘0 is zoom (spec #19), so Changes has no shortcut.
             | Action::ShowChanges => return None,
         })
@@ -358,6 +362,7 @@ impl Action {
             Action::ShowScripts => Command::ToggleLeftColumn(LeftColumnView::Scripts),
             Action::ShowTerminal => Command::ToggleTerminal,
             Action::NewTerminalTab => Command::NewTerminalTab,
+            Action::ShowDiffAgainstHead => Command::ShowDiffAgainstHead,
             Action::SplitRight => Command::SplitRight,
             Action::CloseSplit => Command::CloseSplit,
             Action::GoToDefinition => Command::GoToDefinition,

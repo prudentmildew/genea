@@ -7,7 +7,7 @@
 
 use std::{path::Path, process};
 
-use genea_core::{Command, DiffAgainst, EditorView, ProjectId, Workbench};
+use genea_core::{Command, DiffAgainst, EditorView, FinderMode, ProjectId, Workbench};
 use genea_testkit::{FixtureBuilder, FixtureProject, TestHost};
 
 /// Runs `git` in `root`, isolated from the user's and the system's config.
@@ -158,6 +158,23 @@ fn close_inline_diff_shows_the_file_plainly() {
     let view = editor(&workbench, project);
     assert_eq!(view.inline_diff, None);
     assert_eq!(view.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["1", ""]);
+}
+
+#[test]
+fn find_action_runs_show_diff_against_head_on_the_focused_file() {
+    let fixture = repository(FixtureProject::new().file("main.ts", "one\n"));
+    fixture.write("main.ts", "1\n");
+    let (mut workbench, project) = open(&fixture, "main.ts");
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Actions));
+    workbench.dispatch(project, Command::SetFinderQuery("diff against head".into()));
+    workbench.settle().unwrap();
+    let finder = workbench.project(project).unwrap().finder.unwrap();
+    assert_eq!(finder.items[0].label, "Show Diff Against HEAD");
+    workbench.dispatch(project, Command::AcceptFinder);
+    workbench.settle().unwrap();
+
+    assert_eq!(rows(&editor(&workbench, project)), ["-one", "+1", " "]);
 }
 
 #[test]
