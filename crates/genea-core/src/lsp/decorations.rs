@@ -16,8 +16,11 @@ use std::{collections::BTreeMap, path::PathBuf};
 use ropey::Rope;
 use serde_json::{Value, json};
 
-use super::{CONTENT_MODIFIED, Document, SERVER_CANCELLED, connection::{Connection, ResponseError}};
-use super::text::Encoding;
+use super::{
+    CONTENT_MODIFIED, Document, SERVER_CANCELLED,
+    connection::{Connection, ResponseError},
+    text::Encoding,
+};
 use crate::syntax::Highlight;
 
 /// The semantic token types Genea offers (LSP's standard ones). The server
@@ -226,6 +229,14 @@ impl Wants {
             Kind::Tokens => &mut self.tokens,
             Kind::Hints => &mut self.hints,
             Kind::Lenses => &mut self.lenses,
+        }
+    }
+
+    fn of_ref(&self, kind: Kind) -> &Want {
+        match kind {
+            Kind::Tokens => &self.tokens,
+            Kind::Hints => &self.hints,
+            Kind::Lenses => &self.lenses,
         }
     }
 }
@@ -461,16 +472,6 @@ impl LensBatch {
             })
             .collect();
         Output::Lenses { path, version: self.version, encoding: self.encoding, lenses }
-    }
-}
-
-impl Wants {
-    fn of_ref(&self, kind: Kind) -> &Want {
-        match kind {
-            Kind::Tokens => &self.tokens,
-            Kind::Hints => &self.hints,
-            Kind::Lenses => &self.lenses,
-        }
     }
 }
 

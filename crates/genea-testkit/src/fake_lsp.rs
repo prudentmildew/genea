@@ -18,7 +18,11 @@
 //! (choosing UTF-8 positions when offered), keeps the text of open
 //! documents, answers `textDocument/diagnostic` with one diagnostic per
 //! occurrence of each scripted marker in the document, answers `shutdown`,
-//! and exits on `exit` or when its input closes.
+//! and exits on `exit` or when its input closes. Semantic tokens, inlay
+//! hints and code lenses (ticket #46) are scripted the same way
+//! ([`token`](FakeLsp::token), [`type_hint`](FakeLsp::type_hint),
+//! [`parameter_hint`](FakeLsp::parameter_hint), [`lens`](FakeLsp::lens));
+//! see `fake_lsp/decorations.rs`.
 
 use std::{
     collections::HashMap,
