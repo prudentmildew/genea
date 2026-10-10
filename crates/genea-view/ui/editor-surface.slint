@@ -61,6 +61,9 @@ export struct Line {
     // The git gutter marker (ticket #56): 0 none, 1 added, 2 modified,
     // 3 deleted (lines removed just above this one).
     change: int,
+    // The inline diff (ticket #55): 0 none, 1 an added line, 2 a removed
+    // line (a row of its own, with no line number).
+    diff: int,
 }
 
 // A change against HEAD, shown by a click on its gutter marker (ticket
@@ -148,6 +151,14 @@ export component EditorSurface inherits Rectangle {
         for line in root.lines: Rectangle {
             y: line.y;
             height: Theme.line-height;
+
+            // An added or removed line's row, under everything else.
+            if line.diff != 0: Rectangle {
+                x: 0px;
+                width: root.width;
+                height: Theme.line-height;
+                background: line.diff == 1 ? Theme.diff-added-background : Theme.diff-removed-background;
+            }
 
             for span in line.selections: Rectangle {
                 x: Theme.gutter-width + span.x;
@@ -244,7 +255,7 @@ export component EditorSurface inherits Rectangle {
                 height: Theme.line-height;
                 vertical-alignment: center;
                 text: run.text;
-                color: Theme.syntax[run.highlight];
+                color: line.diff == 2 ? Theme.diff-removed-foreground : Theme.syntax[run.highlight];
                 font-family: Theme.editor-font;
                 font-size: Theme.editor-font-size;
             }

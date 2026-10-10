@@ -13,6 +13,17 @@ export struct TabEntry {
     active: bool,
 }
 
+// The inline diff's bar (ticket #55), set by Rust from the pane's
+// EditorView::inline_diff.
+export struct DiffBar {
+    shown: bool,
+    // What the file is compared with.
+    label: string,
+    // Keep and Revert apply: the file is listed in Changes.
+    can-keep: bool,
+    can-revert: bool,
+}
+
 // Where the surface's lines, caret and preedit are, placed by Rust.
 export struct SurfaceGeometry {
     offset-y: length,
@@ -35,6 +46,9 @@ export component EditorPane inherits Rectangle {
     // The file changed on disk while it had unsaved edits (ticket #32):
     // the conflict bar shows over the top of the editor.
     in property <bool> conflict;
+    // The file shows as an inline diff (ticket #55): a small bar at the
+    // top right offers Keep, Revert and closing the diff.
+    in property <DiffBar> diff-bar;
 
     out property <length> char-width: surface.char-width;
     out property <length> viewport-height: surface.viewport-height;
@@ -46,6 +60,10 @@ export component EditorPane inherits Rectangle {
     callback split-right();
     // The conflict bar's buttons: Reload (`reload`) or Keep my edits.
     callback conflict-resolved(reload: bool);
+    // The diff bar's buttons.
+    callback diff-kept();
+    callback diff-reverted();
+    callback diff-closed();
 
     callback scrolled <=> surface.scrolled;
     callback pressed <=> surface.pressed;
@@ -180,6 +198,77 @@ export component EditorPane inherits Rectangle {
                 font-size: 13px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
+            }
+
+            // The inline diff's bar: over the surface's top right corner,
+            // like the conflict bar over its top.
+            if root.has-editor && root.diff-bar.shown && !root.conflict: Rectangle {
+                x: parent.width - self.width - 16px;
+                y: 6px;
+                width: bar.preferred-width;
+                height: 26px;
+                background: Theme.chrome-background;
+                border-width: 1px;
+                border-color: Theme.chrome-border;
+                border-radius: 4px;
+
+                // Clicks between the buttons don't reach the text below.
+                TouchArea {
+                    mouse-cursor: default;
+                }
+
+                bar := HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 8px;
+                    spacing: 12px;
+
+                    Text {
+                        text: root.diff-bar.label;
+                        color: Theme.chrome-muted;
+                        vertical-alignment: center;
+                    }
+
+                    if root.diff-bar.can-keep: Text {
+                        text: "Keep";
+                        color: keep.has-hover ? Theme.link : Theme.chrome-foreground;
+                        font-weight: 600;
+                        vertical-alignment: center;
+
+                        keep := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.diff-kept();
+                            }
+                        }
+                    }
+
+                    if root.diff-bar.can-revert: Text {
+                        text: "Revert";
+                        color: revert.has-hover ? Theme.link : Theme.chrome-foreground;
+                        font-weight: 600;
+                        vertical-alignment: center;
+
+                        revert := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.diff-reverted();
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "×";
+                        color: close-diff.has-hover ? Theme.chrome-foreground : Theme.chrome-muted;
+                        vertical-alignment: center;
+
+                        close-diff := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.diff-closed();
+                            }
+                        }
+                    }
+                }
             }
 
             // Over the surface rather than above it, so the pane's height

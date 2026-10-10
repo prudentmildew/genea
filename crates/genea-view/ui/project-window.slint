@@ -5,7 +5,7 @@
 
 import { Theme } from "theme.slint";
 import { Line, HunkPopup, QuickFixPopup } from "editor-surface.slint";
-import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
+import { EditorPane, TabEntry, SurfaceGeometry, DiffBar } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
 import { ScriptRow } from "scripts-view.slint";
@@ -118,6 +118,9 @@ export component ProjectWindow inherits Window {
     // Each pane's file changed on disk while it had unsaved edits (#32).
     in property <bool> left-conflict;
     in property <bool> right-conflict;
+    // Each pane's inline diff bar (ticket #55).
+    in property <DiffBar> left-diff-bar;
+    in property <DiffBar> right-diff-bar;
     // Both panes have the same font and height.
     out property <length> char-width: left.char-width;
     out property <length> viewport-height: left.viewport-height;
@@ -240,6 +243,10 @@ export component ProjectWindow inherits Window {
     callback tab-moved(pane: int, index: int);
     // A pane's conflict bar: Reload (`reload`) or Keep my edits.
     callback conflict-resolved(pane: int, reload: bool);
+    // A pane's inline diff bar: Keep, Revert, or close the diff.
+    callback diff-kept(pane: int);
+    callback diff-reverted(pane: int);
+    callback diff-closed(pane: int);
 
     // Editor input. Keys, commits and the preedit come from the focused
     // pane only, so they carry no pane.
@@ -901,6 +908,16 @@ export component ProjectWindow inherits Window {
                         conflict-resolved(reload) => {
                             root.conflict-resolved(0, reload);
                         }
+                        diff-bar: root.left-diff-bar;
+                        diff-kept => {
+                            root.diff-kept(0);
+                        }
+                        diff-reverted => {
+                            root.diff-reverted(0);
+                        }
+                        diff-closed => {
+                            root.diff-closed(0);
+                        }
                         tab-clicked(index) => {
                             root.tab-clicked(0, index);
                         }
@@ -964,6 +981,16 @@ export component ProjectWindow inherits Window {
                         conflict: root.right-conflict;
                         conflict-resolved(reload) => {
                             root.conflict-resolved(1, reload);
+                        }
+                        diff-bar: root.right-diff-bar;
+                        diff-kept => {
+                            root.diff-kept(1);
+                        }
+                        diff-reverted => {
+                            root.diff-reverted(1);
+                        }
+                        diff-closed => {
+                            root.diff-closed(1);
                         }
                         tab-clicked(index) => {
                             root.tab-clicked(1, index);

@@ -14,7 +14,7 @@ use std::{
 };
 
 use genea_core::{
-    ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
+    ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, DiffAgainst, InlineDiffView, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
     PackageScripts, ScriptLink,
     LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
     QuickFixesView, SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme,
@@ -26,7 +26,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    ChangeMark, ChangeRow, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, QuickFixPopup, ScriptRow,
+    ChangeMark, ChangeRow, DiffBar, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, QuickFixPopup, ScriptRow,
     SearchRow, TabEntry, Theme, app::with_app,
     dialogs, fonts,
     keys::{Modifiers, PopupKey},
@@ -526,12 +526,15 @@ impl WindowController {
             }
             let editor = shown.and_then(|p| p.editor.as_ref());
             let conflict = editor.is_some_and(|e| e.conflict);
+            let diff_bar = diff_bar(editor.and_then(|e| e.inline_diff.as_ref()));
             if pane == 0 {
                 window.set_left_has_editor(editor.is_some());
                 window.set_left_conflict(conflict);
+                window.set_left_diff_bar(diff_bar);
             } else {
                 window.set_right_has_editor(editor.is_some());
                 window.set_right_conflict(conflict);
+                window.set_right_diff_bar(diff_bar);
             }
             // Before Slint shapes the text: registers fallback fonts it needs.
             let titles = shown.iter().flat_map(|p| &p.tabs).map(|tab| &tab.title);
@@ -687,11 +690,34 @@ impl WindowController {
         self.dispatch(workbench, command);
     }
 
-    /// A Changes row was clicked: open the file, unless it was deleted.
+    /// A Changes row was clicked: open the file as an inline diff against
+    /// its review baseline (ticket #55). A deleted file that can't be
+    /// diffed has nothing to show.
     pub fn click_change(&mut self, workbench: &mut Workbench, index: usize) {
-        let Some(change) = self.changes.get(index).filter(|c| c.kind != ChangeKind::Deleted) else { return };
-        let command = Command::OpenFile(change.path.clone());
+        let Some(change) = self.changes.get(index).filter(|c| c.diffable || c.kind != ChangeKind::Deleted) else {
+            return;
+        };
+        let command = Command::OpenChange(change.path.clone());
         self.dispatch(workbench, command);
+    }
+
+    /// A pane's inline diff bar was clicked: Keep (`Some(true)`), Revert
+    /// (`Some(false)`) for the file that pane shows, or close its diff.
+    pub fn diff_bar_clicked(&mut self, workbench: &mut Workbench, pane: usize, keep: Option<bool>) {
+        let Some(view) = workbench.project(self.project) else { return };
+        let Some(editor) = view.panes.get(pane).and_then(|p| p.editor.as_ref()) else { return };
+        let path = editor.path.clone();
+        match keep {
+            Some(true) => self.dispatch(workbench, Command::KeepChange(path)),
+            Some(false) => self.dispatch(workbench, Command::RevertChange(path)),
+            None => {
+                // CloseInlineDiff acts on the focused file.
+                if pane != view.focused_pane {
+                    self.dispatch(workbench, Command::FocusPane(pane));
+                }
+                self.dispatch(workbench, Command::CloseInlineDiff);
+            }
+        }
     }
 
     /// A Changes row's Keep (`keep`) or Revert.
@@ -847,4 +873,18 @@ fn problem_counts(errors: usize, warnings: usize) -> String {
         n => Some(format!("{n} {what}s")),
     };
     [count(errors, "error"), count(warnings, "warning")].into_iter().flatten().collect::<Vec<_>>().join("  ")
+}
+
+/// A pane's inline diff bar (ticket #55).
+fn diff_bar(diff: Option<&InlineDiffView>) -> DiffBar {
+    let Some(diff) = diff else { return DiffBar::default() };
+    let label = match diff.against {
+        DiffAgainst::ReviewBaseline => "Changes since review",
+    };
+    DiffBar {
+        shown: true,
+        label: label.into(),
+        can_keep: diff.change.is_some(),
+        can_revert: diff.change.as_ref().is_some_and(|c| c.can_revert),
+    }
 }
