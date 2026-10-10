@@ -642,18 +642,28 @@ impl Toolchain {
     }
 
     /// The lockfile cross-check: `packageManager` (or Genea's default)
-    /// decides, and a root lockfile of the other package manager is a
-    /// warning on `package.json`. A foreign or invalid pin isn't checked
-    /// here.
+    /// decides, and a root lockfile of the other package manager, or of npm
+    /// or Yarn, is a warning on `package.json`. A foreign or invalid pin
+    /// isn't checked here.
     fn lockfile_problems(&self) -> Vec<Problem> {
         let Some(slot) = &self.slots[Role::PackageManager.index()] else { return Vec::new() };
         let Some((tool, _)) = &slot.want else { return Vec::new() };
-        let Lockfiles { pnpm, bun, .. } = self.lockfiles;
+        let Lockfiles { pnpm, bun, foreign } = self.lockfiles;
+        let at = if slot.defaulted { TextPosition::default() } else { self.package_manager_at };
+        let warning = |message| Problem { severity: Severity::Warning, path: "package.json".into(), start: at, end: at, message };
+        // A foreign lockfile in a project that pins pnpm or Bun (unpinned,
+        // it would have made the package manager foreign).
+        let foreign = foreign.filter(|_| !slot.defaulted).map(|(stale, kind)| {
+            let article = if kind == "npm" { "an" } else { "a" };
+            warning(format!(
+                "packageManager pins {tool}, but {stale} is {article} {kind} lockfile. Genea uses {tool}, so {stale} goes stale."
+            ))
+        });
         let (stale, stale_kind) = match tool {
             Tool::Bun => (pnpm.then_some(LOCKFILES[0]), Tool::Pnpm),
             _ => (bun, Tool::Bun),
         };
-        let Some(stale) = stale else { return Vec::new() };
+        let Some(stale) = stale else { return foreign.into_iter().collect() };
         let message = match (pnpm && bun.is_some(), slot.defaulted) {
             (true, defaulted) => {
                 let decides = if defaulted {
@@ -674,8 +684,7 @@ impl Toolchain {
                 "packageManager pins {tool}, but {stale} is a {stale_kind} lockfile. Genea uses {tool}, so {stale} goes stale."
             ),
         };
-        let at = if slot.defaulted { TextPosition::default() } else { self.package_manager_at };
-        vec![Problem { severity: Severity::Warning, path: "package.json".into(), start: at, end: at, message }]
+        std::iter::once(warning(message)).chain(foreign).collect()
     }
 
     /// The roles' tools that are in the store, runtime first: the project

@@ -81,6 +81,57 @@ fn a_yarn_package_manager_pin_shows_the_warning_at_the_pin() {
     assert_eq!(view.toolchain.package_manager.unwrap().tool, "Yarn");
 }
 
+#[test]
+fn an_npm_lockfile_appearing_or_going_turns_reduced_mode_on_and_off() {
+    let host = TestHost::new();
+    let fixture = project(UNPINNED).build();
+    let (mut workbench, project) = open(&host, &fixture);
+    assert_eq!(view(&workbench, project).toolchain.package_manager.unwrap().tool, "pnpm");
+
+    fixture.write("package-lock.json", "{}\n");
+    workbench.settle().unwrap();
+
+    assert_eq!(foreign_problems(&workbench, project), [warning("package-lock.json", TextPosition::default(), NPM_OFF)]);
+    assert_eq!(view(&workbench, project).toolchain.package_manager.unwrap().tool, "npm");
+    assert_eq!(view(&workbench, project).scripts, []);
+
+    fixture.remove("package-lock.json");
+    workbench.settle().unwrap();
+
+    assert_eq!(foreign_problems(&workbench, project), []);
+    let view = view(&workbench, project);
+    assert_eq!(view.status.foreign_tools, None);
+    assert_eq!(view.toolchain.package_manager.unwrap().tool, "pnpm");
+    assert_eq!(view.scripts_off, None);
+    assert_eq!(view.scripts[0].scripts[0].name, "dev");
+}
+
+#[test]
+fn a_pinned_package_manager_decides_over_an_npm_or_yarn_lockfile_which_goes_stale() {
+    let pnpm = "{\n  \"name\": \"app\",\n  \"packageManager\": \"pnpm@12.10.1\"\n}\n";
+    for (lockfile, kind) in [("package-lock.json", "an npm"), ("yarn.lock", "a Yarn")] {
+        let host = TestHost::new();
+        let fixture = project(pnpm).file(lockfile, "").build();
+
+        let (workbench, project) = open(&host, &fixture);
+
+        assert_eq!(foreign_problems(&workbench, project), []);
+        let view = view(&workbench, project);
+        assert_eq!(view.status.foreign_tools, None);
+        assert_eq!(view.toolchain.package_manager.unwrap().tool, "pnpm");
+        let lockfile_warnings: Vec<String> = view
+            .problems
+            .into_iter()
+            .filter(|p| p.source == ProblemSource::Toolchain)
+            .map(|p| p.message)
+            .collect();
+        assert_eq!(
+            lockfile_warnings,
+            [format!("packageManager pins pnpm, but {lockfile} is {kind} lockfile. Genea uses pnpm, so {lockfile} goes stale.")]
+        );
+    }
+}
+
 /// npm by its lockfile, and Yarn by `packageManager`.
 fn npm_and_yarn() -> [(&'static str, FixtureProject); 2] {
     [
