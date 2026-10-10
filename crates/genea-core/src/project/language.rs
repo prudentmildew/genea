@@ -22,6 +22,7 @@ use crate::{
         typescript::{self, Detection},
     },
     problems::{Problem, ProblemSource, Severity},
+    review::store::hash_bytes,
     view::{LanguageServerState, LanguageServerStatus, Notice, NoticeAction},
     watcher::FileChanges,
 };
@@ -202,11 +203,16 @@ impl Project {
     /// "Add TypeScript 7": writes it to `package.json` in the background.
     pub(super) fn add_typescript(&mut self, jobs: &Jobs) {
         let (id, path) = (self.id, self.root.join("package.json"));
+        let own_writes = self.review.own_writes();
         jobs.spawn("add TypeScript 7", move || {
             let written = fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|text| typescript::add_typescript(&text))
-                .and_then(|text| fs::write(&path, text).map_err(|e| e.to_string()));
+                .and_then(|text| {
+                    // Review knows this write as Genea's own (ticket #53).
+                    let _writing = own_writes.writing(Path::new("package.json"), Some(hash_bytes(text.as_bytes())));
+                    fs::write(&path, text).map_err(|e| e.to_string())
+                });
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 project.language.problem =

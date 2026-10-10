@@ -248,6 +248,20 @@ pub enum Command {
     /// file changed on disk while it had unsaved edits. The path is as in
     /// `EditorView::path`.
     ResolveConflict { path: PathBuf, choice: ConflictChoice },
+
+    // Review (ticket #53). Paths are as in `ChangeItem::path`; a path that
+    // isn't listed in Changes is ignored. Both work in the background.
+    /// Keep: makes the file's content on disk its review baseline, so it
+    /// leaves Changes.
+    KeepChange(PathBuf),
+    /// Revert: writes the file's review baseline back to disk (deleting a
+    /// created file, restoring a deleted one), and open editors reload.
+    RevertChange(PathBuf),
+    /// Keep for every file in Changes.
+    KeepAllChanges,
+    /// Revert for every file in Changes that can be reverted.
+    RevertAllChanges,
+
     // The terminal pane (ticket #38).
     /// ⌥F12: shows the terminal pane and focuses it; if it is showing and
     /// focused, collapses it and gives the editor the focus back. The

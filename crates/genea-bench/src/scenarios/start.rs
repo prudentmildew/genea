@@ -10,8 +10,19 @@
 //!
 //! Cold runs `sudo -n purge` and waits 2 s before every launch; they are
 //! skipped when `sudo` would ask for a password (run `sudo -v` first).
+//!
+//! Every Genea start is a project's *first open* (ticket #53): before each
+//! launch the harness deletes the workspace's review baseline store, so
+//! Genea snapshots every file in review in the background while it starts.
+//! The budget then shows that the snapshot doesn't delay content visible,
+//! and a run fails if Genea didn't start the snapshot.
 
-use std::{process::Command, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 
 use serde_json::{Value, json};
 
@@ -76,7 +87,7 @@ fn series(cx: &mut Context, kind: &str, runs: usize, cold: bool, budget: Budget)
     );
     let Some(margin) = margin else { return Ok(budget.skipped("no runs")) };
     Ok(budget.check(Some(margin.p95_ms)).with_note(format!(
-        "Genea p95 {} ms, floor p95 {} ms, {runs} runs each",
+        "Genea p95 {} ms, floor p95 {} ms, {runs} runs each; every Genea run a first open (review snapshot)",
         round(margin.genea.p95),
         round(margin.floor.p95)
     )))
@@ -91,12 +102,17 @@ fn floor(cx: &Context) -> Result<f64, String> {
     value["visible_ms"].as_f64().ok_or_else(|| format!("floor printed {last:?}"))
 }
 
-/// One Genea launch: its start milestones, in ms since process start.
+/// One Genea launch: its start milestones, in ms since process start. It
+/// is the workspace's first open: its review store is deleted first.
 fn genea(cx: &Context) -> Result<Value, String> {
+    forget_review_baseline(cx.workspace())?;
     let mut genea = cx.launch(true)?;
     genea.wait_content()?;
     let journal = genea.journal()?;
     genea.quit();
+    if review_store(cx.workspace()).is_none() {
+        return Err("Genea didn't start the review snapshot of the workspace on its first open".into());
+    }
     let start = journal.process_start;
     let since_start = |t: Option<u64>| t.map(|t| round(ms(t.saturating_sub(start))));
     let content_visible = journal.content_visible().ok_or("the journal has no content-visible milestone")?;
@@ -109,6 +125,30 @@ fn genea(cx: &Context) -> Result<Value, String> {
         "main_ms": since_start(Some(journal.started)),
         "longest_stall_ms": round(journal.stalls(Window { from: 0, to: content_visible }).max_ms),
     }))
+}
+
+/// Genea's review baseline stores (`genea-core/src/review/store.rs`): one
+/// folder per project under the application-support folder, with a `root`
+/// file naming the project.
+fn review_stores() -> PathBuf {
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    Path::new(&home).join("Library/Application Support/Genea/review")
+}
+
+/// The workspace's review store, if Genea has made one.
+fn review_store(workspace: &Path) -> Option<PathBuf> {
+    let workspace = workspace.canonicalize().ok()?;
+    fs::read_dir(review_stores()).ok()?.filter_map(Result::ok).map(|entry| entry.path()).find(|store| {
+        fs::read(store.join("root")).is_ok_and(|root| root == workspace.as_os_str().as_encoded_bytes())
+    })
+}
+
+/// Deletes the workspace's review store, so the next open is a first open.
+fn forget_review_baseline(workspace: &Path) -> Result<(), String> {
+    match review_store(workspace) {
+        Some(store) => fs::remove_dir_all(&store).map_err(|e| format!("couldn't remove {}: {e}", store.display())),
+        None => Ok(()),
+    }
 }
 
 pub(super) fn can_purge() -> bool {

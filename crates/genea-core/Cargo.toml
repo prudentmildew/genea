@@ -37,6 +37,8 @@ imara-diff.workspace = true
 # Templates write package.json with its keys in the conventional order; the
 # update check (ticket #64) reads GitHub's release JSON.
 serde_json = { workspace = true, features = ["preserve_order"] }
+# Review (ticket #53): the baseline store is content-addressed by SHA-256.
+sha2.workspace = true
 # The LSP client (ticket #42). `serde` writes package.json with its own
 # indentation ("Add TypeScript 7").
 gen-lsp-types.workspace = true

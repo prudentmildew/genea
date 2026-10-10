@@ -40,6 +40,7 @@ mod problems;
 mod project;
 mod reading;
 mod recent;
+mod review;
 mod search;
 mod syntax;
 mod templates;
@@ -73,7 +74,7 @@ pub use view::{
     RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
     ToolchainView, VisibleLine, WelcomeView,
 };
-pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
+pub use view::{ChangeItem, ChangeKind, ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use view::{
     TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle,
     TerminalTab, TerminalView,

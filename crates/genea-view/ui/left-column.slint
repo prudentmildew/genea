@@ -1,15 +1,16 @@
 // The left column (spec #19 story 54): a view switcher on top and the active
-// view below. Files (⌘1, the one a project opens with), Search (⌘⇧F) and
-// Problems (⌘6) are there; Changes joins them in its ticket: add a
+// view below. Files (⌘1, the one a project opens with), Search (⌘⇧F),
+// Changes (#53) and Problems (⌘6) are there. For a new view, add a
 // `LeftView` value, a switcher tab and the view itself. The column is collapsed (not shown) while the core's
 // `left_column` is `None`.
 
 import { Theme } from "theme.slint";
 import { ProblemsView, ProblemRow } from "problems-view.slint";
 import { FilesView, FileEntry } from "files-view.slint";
+import { ChangesView, ChangeRow } from "changes-view.slint";
 import { SearchView, SearchRow } from "search-view.slint";
 
-export enum LeftView { files, search, problems }
+export enum LeftView { files, search, changes, problems }
 
 // A tab in the switcher.
 component SwitcherTab inherits Rectangle {
@@ -45,6 +46,7 @@ export component LeftColumn inherits Rectangle {
     in property <LeftView> view;
     in property <[ProblemRow]> problems;
     in property <[FileEntry]> files;
+    in property <[ChangeRow]> changes;
     in property <string> search-query;
     in property <bool> search-regex;
     in property <bool> search-case-sensitive;
@@ -57,6 +59,12 @@ export component LeftColumn inherits Rectangle {
     callback show(LeftView);
     callback problem-clicked(int);
     callback file-clicked(int);
+    // The Changes view's row, its Keep and Revert, and Keep All, Revert All.
+    callback change-clicked(int);
+    callback keep-change(int);
+    callback revert-change(int);
+    callback keep-all-changes();
+    callback revert-all-changes();
     callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
     callback search-result-clicked(int);
 
@@ -83,6 +91,14 @@ export component LeftColumn inherits Rectangle {
                     active: root.view == LeftView.search;
                     clicked => {
                         root.show(LeftView.search);
+                    }
+                }
+
+                SwitcherTab {
+                    label: root.changes.length == 0 ? "Changes" : "Changes (" + root.changes.length + ")";
+                    active: root.view == LeftView.changes;
+                    clicked => {
+                        root.show(LeftView.changes);
                     }
                 }
 
@@ -124,6 +140,26 @@ export component LeftColumn inherits Rectangle {
             }
             clicked(index) => {
                 root.search-result-clicked(index);
+            }
+        }
+
+        if root.view == LeftView.changes: ChangesView {
+            vertical-stretch: 1;
+            changes: root.changes;
+            clicked(index) => {
+                root.change-clicked(index);
+            }
+            keep(index) => {
+                root.keep-change(index);
+            }
+            revert(index) => {
+                root.revert-change(index);
+            }
+            keep-all => {
+                root.keep-all-changes();
+            }
+            revert-all => {
+                root.revert-all-changes();
             }
         }
 
