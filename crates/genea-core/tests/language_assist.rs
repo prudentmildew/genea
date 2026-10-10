@@ -2,7 +2,9 @@
 //! server (`genea_testkit::FakeLsp`), which the test host plays whenever
 //! Genea starts the project's `tsc`.
 
-use genea_core::{Caret, Command, CompletionItem, CompletionKind, ProjectId, Workbench};
+use std::time::{Duration, Instant};
+
+use genea_core::{CaretMove, Caret, Command, CompletionItem, CompletionKind, MarkupBlock, ProjectId, Workbench};
 use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
 use serde_json::json;
 
@@ -90,4 +92,177 @@ fn typing_a_word_lists_the_servers_completions_that_match_it() {
         ]
     );
     assert_eq!(completion.selected, 0);
+}
+
+#[test]
+fn accepting_a_completion_replaces_the_typed_word() {
+    let fake = FakeLsp::new()
+        .completion(json!({ "label": "totalCount", "kind": 6 }))
+        .completion(json!({ "label": "toString", "kind": 2 }));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("tot");
+    session.settle();
+    assert_eq!(session.completion_labels(), ["totalCount", "toString"], "`toString` has the typed letters in order");
+
+    session.dispatch(Command::AcceptCompletion);
+
+    let editor = session.editor();
+    assert_eq!(editor.lines[1].text, "totalCount");
+    assert_eq!(editor.caret, Caret { line: 1, column: 10 });
+    assert_eq!(editor.completion, None);
+}
+
+#[test]
+fn typing_on_narrows_the_list_without_asking_the_server_again() {
+    let fake = FakeLsp::new()
+        .completion(json!({ "label": "totalCount", "kind": 6 }))
+        .completion(json!({ "label": "toString", "kind": 2 }))
+        .completion(json!({ "label": "other", "kind": 6 }));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("t");
+    session.settle();
+    assert_eq!(session.completion_labels(), ["toString", "totalCount"]);
+    let asked = fake.received("textDocument/completion").len();
+
+    session.type_text("ota");
+    session.settle();
+
+    assert_eq!(session.completion_labels(), ["totalCount"]);
+    assert_eq!(fake.received("textDocument/completion").len(), asked);
+    session.dispatch(Command::Delete(CaretMove::Left));
+    session.dispatch(Command::Delete(CaretMove::Left));
+    assert_eq!(session.completion_labels(), ["toString", "totalCount"], "deleting widens it again");
+
+    session.type_text(";");
+    assert_eq!(session.editor().completion, None, "a character that can't be in a word closes it");
+}
+
+#[test]
+fn a_trigger_character_lists_every_completion_and_tells_the_server_why() {
+    let fake = FakeLsp::new()
+        .completion(json!({ "label": "toFixed", "kind": 2 }))
+        .completion(json!({ "label": "toString", "kind": 2 }));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("a.");
+    session.settle();
+
+    assert_eq!(session.completion_labels(), ["toFixed", "toString"]);
+    assert_eq!(session.editor().completion.unwrap().at, Caret { line: 1, column: 2 });
+    let asked = fake.received("textDocument/completion");
+    let last = asked.last().unwrap();
+    assert_eq!(last["context"], json!({ "triggerKind": 2, "triggerCharacter": "." }));
+    assert_eq!(last["position"], json!({ "line": 1, "character": 2 }));
+}
+
+/// An auto-import of `addNumbers` from `./helper`, as tsgo offers it: the
+/// import edit comes only when the item is resolved.
+fn auto_import_server() -> FakeLsp {
+    FakeLsp::new()
+        .completion(json!({
+            "label": "addNumbers", "kind": 3, "sortText": "16",
+            "labelDetails": { "description": "./helper" },
+            "data": { "name": "addNumbers", "source": "./helper" },
+        }))
+        .resolve(
+            "addNumbers",
+            json!({
+                "detail": "Add import from \"./helper\"",
+                "documentation": { "kind": "markdown", "value": "Adds two numbers." },
+                "additionalTextEdits": [{
+                    "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } },
+                    "newText": "import { addNumbers } from \"./helper\";\n",
+                }],
+            }),
+        )
+}
+
+fn lines(session: &Session) -> Vec<String> {
+    session.editor().lines.iter().map(|l| l.text.clone()).collect()
+}
+
+#[test]
+fn accepting_an_auto_import_adds_its_import_in_the_same_undo_step() {
+    let fake = auto_import_server();
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("addN");
+    session.settle();
+    let completion = session.editor().completion.expect("a completion list");
+    assert_eq!(completion.items[0].source.as_deref(), Some("./helper"));
+    assert_eq!(completion.detail.as_deref(), Some("Add import from \"./helper\""), "the selected item is resolved");
+    assert_eq!(completion.documentation, [MarkupBlock::Text("Adds two numbers.".into())]);
+    assert_eq!(fake.received("completionItem/resolve")[0]["data"], json!({ "name": "addNumbers", "source": "./helper" }));
+
+    session.dispatch(Command::AcceptCompletion);
+
+    assert_eq!(lines(&session), ["import { addNumbers } from \"./helper\";", "const a = 1;", "addNumbers"]);
+    assert_eq!(session.editor().caret, Caret { line: 2, column: 10 });
+    session.dispatch(Command::Undo);
+    assert_eq!(lines(&session), ["const a = 1;", "addN"]);
+}
+
+/// Pumps (without settling) until the focused editor satisfies `done`;
+/// fails after 10 s.
+fn pump_until(session: &mut Session, done: impl Fn(&genea_core::EditorView) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !done(&session.editor()) {
+        assert!(Instant::now() < deadline, "never happened: {:#?}", session.editor());
+        session.workbench.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn an_auto_import_accepted_before_it_is_resolved_gets_its_import_when_the_answer_comes() {
+    let fake = auto_import_server().slow("completionItem/resolve", Duration::from_millis(300));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("addN");
+    pump_until(&mut session, |editor| editor.completion.is_some());
+
+    session.dispatch(Command::AcceptCompletion);
+    session.type_text("(");
+    assert_eq!(session.editor().lines[1].text, "addNumbers(", "typing goes on at once");
+    session.settle();
+
+    assert_eq!(lines(&session), ["import { addNumbers } from \"./helper\";", "const a = 1;", "addNumbers("]);
+    assert_eq!(session.editor().caret, Caret { line: 2, column: 11 }, "the caret stays after what was typed");
+}
+
+#[test]
+fn a_slow_completion_never_holds_up_typing() {
+    let fake = FakeLsp::new()
+        .completion(json!({ "label": "totalCount", "kind": 6 }))
+        .slow("textDocument/completion", Duration::from_millis(1000));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+
+    let started = Instant::now();
+    session.type_text("to");
+    assert!(started.elapsed() < Duration::from_millis(500), "typing waited {:?}", started.elapsed());
+    assert_eq!(session.editor().lines[1].text, "to");
+    assert_eq!(session.editor().completion, None, "the answer isn't in yet");
+
+    session.settle();
+    assert_eq!(session.completion_labels(), ["totalCount"]);
+}
+
+#[test]
+fn a_completion_answer_for_text_that_has_moved_on_is_dropped() {
+    let fake = FakeLsp::new()
+        .completion(json!({ "label": "totalCount", "kind": 6 }))
+        .slow("textDocument/completion", Duration::from_millis(200));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("to");
+    // Still in the word, where the list would narrow to `t`: but the
+    // answer is for the caret after `to`.
+    session.dispatch(Command::MoveCaret(CaretMove::Left));
+    session.settle();
+
+    assert_eq!(fake.received("textDocument/completion").len(), 2, "the server answered");
+    assert_eq!(session.editor().completion, None);
 }

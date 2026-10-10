@@ -470,6 +470,9 @@ impl Project {
         };
         list.refilter(text, asked.context);
         self.assist.completion = (!list.shown.is_empty() || list.incomplete).then_some(list);
+        if self.language.server().is_some_and(|s| s.assist_capabilities().resolve) {
+            self.resolve_selected();
+        }
     }
 
     fn resolve_answered(&mut self, resolving: Resolving, item: &Value, now: Instant) {
