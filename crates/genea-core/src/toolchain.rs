@@ -101,6 +101,9 @@ pub(crate) struct Toolchain {
     lockfile_generation: u64,
     /// Writing pins to `package.json` is Genea's own write (ticket #53).
     own_writes: OwnWrites,
+    /// `package.json` has a `packageManager` field. Without one, a foreign
+    /// lockfile decides (ticket #51).
+    package_manager_pinned: bool,
 }
 
 /// Writes pins to `package.json` as Genea's own write.
@@ -113,20 +116,43 @@ fn write_package_json(own_writes: &OwnWrites, path: &Path, text: &str) -> Result
 /// Bun's text and (older) binary ones.
 pub(crate) const LOCKFILES: [&str; 3] = ["pnpm-lock.yaml", "bun.lock", "bun.lockb"];
 
+/// The lockfiles of foreign package managers (ticket #51), at the project
+/// root, with the tool each belongs to. One of them makes an unpinned
+/// project an npm or Yarn project.
+pub(crate) const FOREIGN_LOCKFILES: [(&str, &str); 3] =
+    [("package-lock.json", "npm"), ("npm-shrinkwrap.json", "npm"), ("yarn.lock", "Yarn")];
+
+/// Whether `name` is a lockfile Genea looks at, its own or a foreign one.
+pub(crate) fn is_lockfile(name: &str) -> bool {
+    LOCKFILES.contains(&name) || FOREIGN_LOCKFILES.iter().any(|(file, _)| *file == name)
+}
+
 /// Which lockfiles are at the project root.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Lockfiles {
     pnpm: bool,
     /// `bun.lock` or `bun.lockb`.
     bun: Option<&'static str>,
+    /// The first foreign lockfile, and its tool (`npm`, `Yarn`).
+    foreign: Option<(&'static str, &'static str)>,
 }
 
 impl Lockfiles {
     /// Stats the root for lockfiles (blocking).
     fn find(root: &Path) -> Self {
         let exists = |name: &str| root.join(name).is_file();
-        Lockfiles { pnpm: exists(LOCKFILES[0]), bun: LOCKFILES[1..].iter().copied().find(|name| exists(name)) }
+        Lockfiles {
+            pnpm: exists(LOCKFILES[0]),
+            bun: LOCKFILES[1..].iter().copied().find(|name| exists(name)),
+            foreign: FOREIGN_LOCKFILES.iter().copied().find(|(name, _)| exists(name)),
+        }
     }
+}
+
+/// A foreign package manager's name as the user reads it: `Yarn` for
+/// `yarn`, anything else as written.
+fn foreign_name(name: &str) -> String {
+    if name == "yarn" { "Yarn".into() } else { name.to_owned() }
 }
 
 /// Where `packageManager` is in `package.json`'s text, else the start.
@@ -193,6 +219,7 @@ impl Toolchain {
             lockfiles: Lockfiles::default(),
             package_manager_at: TextPosition::default(),
             lockfile_generation: 0,
+            package_manager_pinned: false,
         }
     }
 
@@ -224,16 +251,20 @@ impl Toolchain {
                     if toolchain.lockfile_generation == lockfile_generation {
                         toolchain.lockfiles = lockfiles;
                     }
-                    toolchain.loaded(pins, &jobs);
+                    toolchain.loaded(pins, lockfiles, &jobs);
                 }
                 update_problems(core, id);
             })
         });
     }
 
-    fn loaded(&mut self, pins: Option<Result<Pins, String>>, jobs: &Jobs) {
+    /// `package.json` is read: sets up every role. An unpinned package
+    /// manager is a foreign one when the root has a foreign lockfile
+    /// (`lockfiles`, as read with `package.json`).
+    fn loaded(&mut self, pins: Option<Result<Pins, String>>, lockfiles: Lockfiles, jobs: &Jobs) {
         self.problems.clear();
         self.slots = [None, None];
+        self.package_manager_pinned = false;
         let pins = match pins {
             None => return,
             Some(Ok(pins)) => pins,
@@ -242,8 +273,13 @@ impl Toolchain {
                 return;
             }
         };
+        self.package_manager_pinned = pins.package_manager != Pin::Unpinned;
+        let package_manager = match (pins.package_manager, lockfiles.foreign) {
+            (Pin::Unpinned, Some((_, tool))) => Pin::Foreign(tool.to_owned()),
+            (pin, _) => pin,
+        };
         let defaults = [Tool::Node, Tool::Pnpm];
-        for (role, pin) in Role::ALL.into_iter().zip([pins.runtime, pins.package_manager]) {
+        for (role, pin) in Role::ALL.into_iter().zip([pins.runtime, package_manager]) {
             self.slots[role.index()] = Some(match pin {
                 Pin::Unpinned => {
                     let tool = defaults[role.index()];
@@ -252,7 +288,7 @@ impl Toolchain {
                 }
                 Pin::Pinned { tool, request } => Slot::new(tool.display_name(), Some((tool, request)), false),
                 Pin::Foreign(name) => {
-                    let mut slot = Slot::new(&name, None, false);
+                    let mut slot = Slot::new(&foreign_name(&name), None, false);
                     slot.state = SlotState::Off;
                     slot
                 }
@@ -566,13 +602,43 @@ impl Toolchain {
         jobs.spawn("check lockfiles", move || {
             let lockfiles = Lockfiles::find(&root);
             Box::new(move |core| {
+                let jobs = core.jobs.clone();
                 let Some(toolchain) = toolchain_mut(core, id) else { return };
                 if toolchain.lockfile_generation == generation {
+                    let was_foreign = toolchain.lockfiles.foreign.map(|(_, tool)| tool);
                     toolchain.lockfiles = lockfiles;
+                    // A foreign lockfile came or went in an unpinned project:
+                    // its package manager changes, so set the roles up again.
+                    let decides = !toolchain.loading && !toolchain.package_manager_pinned;
+                    if decides && toolchain.slots[Role::PackageManager.index()].is_some()
+                        && was_foreign != lockfiles.foreign.map(|(_, tool)| tool)
+                    {
+                        toolchain.load(&jobs);
+                    }
                 }
                 update_problems(core, id);
             })
         });
+    }
+
+    /// The package manager is a foreign one (npm, Yarn, …; ticket #51):
+    /// its name and the warning that says what is off, on the lockfile that
+    /// made it so, else on `packageManager`.
+    pub(crate) fn foreign_package_manager(&self) -> Option<(String, Problem)> {
+        let slot = self.slots[Role::PackageManager.index()].as_ref()?;
+        if !matches!(slot.state, SlotState::Off) {
+            return None;
+        }
+        let name = &slot.name;
+        let off = format!("Genea doesn't run {name}, so installing dependencies and running scripts are off.");
+        let (path, at, message) = match self.lockfiles.foreign {
+            Some((lockfile, tool)) if !self.package_manager_pinned => {
+                let article = if tool == "npm" { "an" } else { "a" };
+                (lockfile, TextPosition::default(), format!("{lockfile} is {article} {tool} lockfile. {off}"))
+            }
+            _ => ("package.json", self.package_manager_at, format!("packageManager pins {name}. {off}")),
+        };
+        Some((name.clone(), Problem { severity: Severity::Warning, path: path.into(), start: at, end: at, message }))
     }
 
     /// The lockfile cross-check: `packageManager` (or Genea's default)
@@ -582,7 +648,7 @@ impl Toolchain {
     fn lockfile_problems(&self) -> Vec<Problem> {
         let Some(slot) = &self.slots[Role::PackageManager.index()] else { return Vec::new() };
         let Some((tool, _)) = &slot.want else { return Vec::new() };
-        let Lockfiles { pnpm, bun } = self.lockfiles;
+        let Lockfiles { pnpm, bun, .. } = self.lockfiles;
         let (stale, stale_kind) = match tool {
             Tool::Bun => (pnpm.then_some(LOCKFILES[0]), Tool::Pnpm),
             _ => (bun, Tool::Bun),
@@ -835,6 +901,7 @@ fn update_problems(core: &mut Core, id: ProjectId) {
     let Some(project) = core.project_mut(id) else { return };
     let problems = project.toolchain.as_ref().map(Toolchain::lockfile_problems).unwrap_or_default();
     project.replace_problems(ProblemSource::Toolchain, problems);
+    project.update_foreign_tools();
 }
 
 fn toolchain_mut(core: &mut Core, id: ProjectId) -> Option<&mut Toolchain> {
