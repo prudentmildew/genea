@@ -21,9 +21,9 @@
 //!
 //! "Reformat file" (⌥⌘L) runs step 1 alone, whatever `formatOnSave` says.
 //!
-//! Turning a step off for other reasons (#51: a foreign formatter or
-//! linter's config) belongs in [`Project::format_on_save`] and
-//! [`Project::fix_on_save`].
+//! Both steps are also off while a foreign formatter or linter is
+//! configured (#51, `project/foreign.rs`); [`Project::format_on_save`] and
+//! [`Project::fix_on_save`] decide.
 
 use std::{
     path::{Path, PathBuf},
@@ -150,12 +150,14 @@ impl Project {
         }
     }
 
-    /// Whether `formatOnSave` applies to the project.
+    /// Whether `formatOnSave` applies to the project: it is on, and no
+    /// foreign formatter or linter is configured (ticket #51).
     pub(super) fn format_on_save(&self) -> bool {
         self.config.format_on_save && !self.has_foreign_formatter()
     }
 
-    /// Whether `fixOnSave` applies to the project.
+    /// Whether `fixOnSave` applies to the project: it is on, and no
+    /// foreign formatter or linter is configured (ticket #51).
     pub(super) fn fix_on_save(&self) -> bool {
         self.config.fix_on_save && !self.has_foreign_formatter()
     }

@@ -27,7 +27,8 @@ pub enum ProblemSource {
     /// configs.
     Config,
     /// The toolchain checks: a root lockfile that doesn't match
-    /// `packageManager`, or both a pnpm and a Bun lockfile.
+    /// `packageManager` (another blessed one, or npm's or Yarn's), or both a
+    /// pnpm and a Bun lockfile.
     Toolchain,
     /// Foreign tools (ticket #51): npm or Yarn, or ESLint, Prettier, Biome
     /// or dprint config, and the features Genea turns off for them.

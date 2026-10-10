@@ -58,6 +58,7 @@ export component LeftColumn inherits Rectangle {
     in property <string> search-status;
     in property <bool> search-status-error;
     in property <[ScriptRow]> scripts;
+    in property <string> scripts-off;
     in property <bool> has-usages;
     in property <string> usages-title;
     in property <string> usages-status;
@@ -210,6 +211,7 @@ export component LeftColumn inherits Rectangle {
         if root.view == LeftView.scripts: ScriptsView {
             vertical-stretch: 1;
             rows: root.scripts;
+            off: root.scripts-off;
             clicked(index) => {
                 root.script-clicked(index);
             }

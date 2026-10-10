@@ -154,6 +154,42 @@ fn npm_and_yarn_workspaces_package_roots_count_for_formatter_config() {
     }
 }
 
+#[test]
+fn language_intelligence_still_works_with_every_foreign_tool() {
+    const TYPE_ERROR: &str = "Type 'string' is not assignable to type 'number'.";
+    let typescript = "{\n  \"name\": \"app\",\n  \"devDependencies\": { \"typescript\": \"^7.0.2\" }\n}\n";
+    let yarn = typescript.replace("\"name\": \"app\",", "\"name\": \"app\",\n  \"packageManager\": \"yarn@4.5.0\",");
+    let fixtures = [
+        ("npm", project(typescript).file("package-lock.json", "{}\n")),
+        ("Yarn", project(&yarn).file("yarn.lock", "")),
+        ("Prettier", project(typescript).file(".prettierrc", "{}\n")),
+        ("ESLint", project(typescript).file("eslint.config.js", "")),
+        ("Biome", project(typescript).file("biome.json", "{}\n")),
+        ("dprint", project(typescript).file("dprint.json", "{}\n")),
+    ];
+    for (tool, fixture) in fixtures {
+        // TypeScript 7 as npm and Yarn's node-modules linker lay it out.
+        let fixture = fixture
+            .file("tsconfig.json", "{}")
+            .file("node_modules/typescript/package.json", r#"{ "name": "typescript", "version": "7.0.2" }"#)
+            .file("node_modules/@typescript/typescript-darwin-arm64/lib/tsc", "#!/bin/sh\n")
+            .file("src/main.ts", "let a: number = \"oops\";\n")
+            .build();
+        let host = TestHost::new();
+        genea_testkit::FakeLsp::new().error("\"oops\"", TYPE_ERROR).install(&host, "tsc");
+        let (mut workbench, project) = open(&host, &fixture);
+
+        workbench.dispatch(project, Command::OpenFile("src/main.ts".into()));
+        workbench.settle().unwrap();
+
+        let view = view(&workbench, project);
+        assert_eq!(view.status.foreign_tools, Some(format!("Reduced mode: {tool}")));
+        let typescript: Vec<&str> =
+            view.problems.iter().filter(|p| p.source == ProblemSource::TypeScript).map(|p| p.message.as_str()).collect();
+        assert_eq!(typescript, [TYPE_ERROR], "{tool}");
+    }
+}
+
 /// npm by its lockfile, and Yarn by `packageManager`.
 fn npm_and_yarn() -> [(&'static str, FixtureProject); 2] {
     [

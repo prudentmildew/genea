@@ -388,6 +388,8 @@ impl WindowController {
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
         window.set_status_notice(notice.unwrap_or_default().into());
         window.set_status_config_notice(view.status.config_notice.clone().unwrap_or_default().into());
+        window.set_status_foreign_tools(view.status.foreign_tools.clone().unwrap_or_default().into());
+        window.set_scripts_off(view.scripts_off.clone().unwrap_or_default().into());
         window.set_status_problems(problem_counts(view.status.errors, view.status.warnings).into());
         window.set_status_has_errors(view.status.errors > 0);
 

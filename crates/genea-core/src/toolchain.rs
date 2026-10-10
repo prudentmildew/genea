@@ -13,7 +13,9 @@
 //! be read or a pin that can't be understood.
 //!
 //! A folder without a root `package.json` has no toolchain and downloads
-//! nothing.
+//! nothing. A foreign package manager (npm, Yarn, …; ticket #51), pinned in
+//! `packageManager` or, without a pin, found by its root lockfile, turns
+//! the role off: nothing is downloaded or run for it.
 
 use std::{
     collections::HashSet,
