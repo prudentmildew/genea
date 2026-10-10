@@ -16,7 +16,7 @@ import { SearchRow } from "search-view.slint";
 import { Finder, FinderRow } from "finder.slint";
 
 // What the finder finds (the core's FinderMode).
-export enum FinderKind { files, recent-files, actions, everywhere }
+export enum FinderKind { files, recent-files, actions, everywhere, file-symbols, project-symbols }
 
 // The Code menu's items (ticket #25).
 export enum StructuralAction {
@@ -533,6 +533,23 @@ export component ProjectWindow inherits Window {
                 title: "Search Everywhere";
                 activated => {
                     root.open-finder(FinderKind.everywhere);
+                }
+            }
+
+            // Symbols from tsgo (ticket #47).
+            MenuItem {
+                title: "File Structure";
+                shortcut: @keys(Control + F12);
+                activated => {
+                    root.open-finder(FinderKind.file-symbols);
+                }
+            }
+
+            MenuItem {
+                title: "Go to Symbol…";
+                shortcut: @keys(Control + Alt + O);
+                activated => {
+                    root.open-finder(FinderKind.project-symbols);
                 }
             }
         }

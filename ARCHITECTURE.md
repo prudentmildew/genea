@@ -145,7 +145,20 @@ use, and nothing else:
   step with `genea-view`'s menus and `src/keys.rs`). A file chosen takes
   the focus from the terminal, as `OpenFile` does; editing actions
   (`Action::edits`) do what the Edit menu does while the terminal has it.
-  Symbols (#47) add a `FinderItemKind` and a mode.
+  **Symbols** (ticket #47, `src/project/symbols.rs`, `src/lsp/symbols.rs`):
+  File Structure (⌘F12, `FinderMode::FileSymbols`) asks tsgo for the
+  current file's `textDocument/documentSymbol`; Go to Symbol (⌥⌘O,
+  `ProjectSymbols`) and Search Everywhere ask `workspace/symbol` for each
+  non-empty query. A request is *wanted* when the finder opens or its
+  query changes and goes out after the next `sync_language` (so the server
+  has the current text, and a server that isn't ready yet is asked once it
+  is); only the latest request's answer is kept, in the `Finder`, and
+  `refresh_finder` matches it like files and actions (nucleo on the name,
+  so everything ranks together). The project's symbols leave out what the
+  finder hides (`FileIndex::lists`). Server columns become char columns in
+  the match job, for the shown results only (`Positions`, reading files
+  that aren't open). Choosing one is `OpenFileAt`
+  (`FinderItemKind::Symbol`).
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -488,7 +501,7 @@ Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
 the test host as `tsc`: scripted per test to report markers, crash, stay
 silent, delay or flood, and asked afterwards what reached it. As a binary
 (`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
-tsgo in the harness's `typing-silent-lsp`. The slow lane
+tsgo in the harness's `typing-silent-lsp`. It answers `documentSymbol` and `workspace/symbol` from a rough reading of the declarations in the files (`genea-testkit/src/fake_symbols.rs`). The slow lane
 `tests/language_server_slow.rs` (`-- --ignored`) installs TypeScript 7 with
 pnpm and checks real diagnostics.
 

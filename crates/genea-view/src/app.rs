@@ -459,6 +459,8 @@ fn wire(controller: &WindowController) {
             FinderKind::RecentFiles => FinderMode::RecentFiles,
             FinderKind::Actions => FinderMode::Actions,
             FinderKind::Everywhere => FinderMode::Everywhere,
+            FinderKind::FileSymbols => FinderMode::FileSymbols,
+            FinderKind::ProjectSymbols => FinderMode::ProjectSymbols,
         };
         with_app(move |app| app.dispatch(key, Command::OpenFinder(mode)));
     });

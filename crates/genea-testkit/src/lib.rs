@@ -19,6 +19,7 @@
 
 mod download_server;
 pub mod fake_lsp;
+mod fake_symbols;
 mod fixture;
 mod host;
 mod pty;

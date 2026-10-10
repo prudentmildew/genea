@@ -17,7 +17,9 @@
 //! What it does, unless the script says otherwise: answers `initialize`
 //! (choosing UTF-8 positions when offered), keeps the text of open
 //! documents, answers `textDocument/diagnostic` with one diagnostic per
-//! occurrence of each scripted marker in the document, answers `shutdown`,
+//! occurrence of each scripted marker in the document, answers
+//! `textDocument/documentSymbol` and `workspace/symbol` from the
+//! declarations in the files (`fake_symbols`), answers `shutdown`,
 //! and exits on `exit` or when its input closes.
 
 use std::{
@@ -32,7 +34,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::{FakeProcess, TestHost};
+use crate::{FakeProcess, TestHost, fake_symbols};
 
 /// How long [`FakeLsp::wait_for`] waits before failing the test. Real
 /// time: it only guards against hangs.
@@ -276,6 +278,10 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
     let mut out = Output { writer: output, next_id: 0, requests: HashMap::new() };
     let mut documents: HashMap<String, String> = HashMap::new();
     let mut utf8 = false;
+    // For symbols (ticket #47): the workspace root, and whether the client
+    // takes `DocumentSymbol` hierarchies.
+    let mut root = None;
+    let mut hierarchical = false;
     loop {
         let message = match read_message(&mut input) {
             Ok(Some(message)) => message,
@@ -310,10 +316,16 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
             "initialize" => {
                 let offered = params["capabilities"]["general"]["positionEncodings"].as_array();
                 utf8 = offered.is_some_and(|kinds| kinds.iter().any(|k| k == "utf-8"));
+                root = params["rootUri"].as_str().and_then(fake_symbols::path);
+                hierarchical = params["capabilities"]["textDocument"]["documentSymbol"]["hierarchicalDocumentSymbolSupport"]
+                    .as_bool()
+                    .unwrap_or(false);
                 let capabilities = json!({
                     "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
                     "textDocumentSync": { "openClose": true, "change": 1 },
                     "diagnosticProvider": { "identifier": "fake", "interFileDependencies": true, "workspaceDiagnostics": false },
+                    "documentSymbolProvider": true,
+                    "workspaceSymbolProvider": true,
                 });
                 answer(&mut out, json!({ "capabilities": capabilities, "serverInfo": { "name": "fake-lsp", "version": "7.0.0-fake" } }));
                 for i in 0..script.flood {
@@ -346,6 +358,15 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
                 let text = documents.get(uri).map(String::as_str).unwrap_or_default();
                 answer(&mut out, json!({ "kind": "full", "items": diagnostics(script, text, utf8) }));
+            }
+            "textDocument/documentSymbol" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let text = documents.get(uri).map(String::as_str).unwrap_or_default();
+                answer(&mut out, fake_symbols::document_symbols(uri, text, utf8, hierarchical));
+            }
+            "workspace/symbol" => {
+                let query = params["query"].as_str().unwrap_or_default();
+                answer(&mut out, fake_symbols::workspace_symbols(query, root.as_deref(), &documents, utf8));
             }
             "shutdown" => answer(&mut out, Value::Null),
             "exit" => return 0,
@@ -429,7 +450,7 @@ fn diagnostics(script: &LspScript, text: &str, utf8: bool) -> Vec<Value> {
 
 /// An LSP position of a byte offset: the line, and the column in UTF-8
 /// bytes or UTF-16 units.
-fn position(text: &str, offset: usize, utf8: bool) -> Value {
+pub(crate) fn position(text: &str, offset: usize, utf8: bool) -> Value {
     let before = &text[..offset];
     let line = before.matches('\n').count();
     let line_start = before.rfind('\n').map_or(0, |i| i + 1);

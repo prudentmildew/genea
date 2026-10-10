@@ -1,5 +1,6 @@
 // The fuzzy finder overlay (ticket #33): files (⌘⇧O), recent files (⌘E),
-// actions (⌘⇧A) and Search Everywhere (⇧⇧). The query is typed into a
+// actions (⌘⇧A), symbols (⌘F12 and ⌥⌘O, ticket #47) and Search Everywhere
+// (⇧⇧). The query is typed into a
 // real TextInput; ↑/↓ move the selection, Return chooses, Esc closes. The
 // results are set from Rust (src/window.rs) out of the core's FinderView,
 // which matches them in the background.
@@ -8,7 +9,7 @@ import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 
 export struct FinderRow {
-    // A file's name or an action's.
+    // A file's name, an action's or a symbol's.
     label: string,
     // A file's folder.
     detail: string,

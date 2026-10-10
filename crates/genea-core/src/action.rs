@@ -49,6 +49,8 @@ pub enum Action {
     RecentFiles,
     FindAction,
     SearchEverywhere,
+    FileStructure,
+    GoToSymbol,
     ShowFiles,
     ShowSearch,
     ShowProblems,
@@ -64,7 +66,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 43] = [
+    pub const ALL: [Action; 45] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -98,6 +100,8 @@ impl Action {
         Action::RecentFiles,
         Action::FindAction,
         Action::SearchEverywhere,
+        Action::FileStructure,
+        Action::GoToSymbol,
         Action::ShowFiles,
         Action::ShowSearch,
         Action::ShowProblems,
@@ -146,6 +150,8 @@ impl Action {
             Action::RecentFiles => "Recent Files",
             Action::FindAction => "Find Action…",
             Action::SearchEverywhere => "Search Everywhere",
+            Action::FileStructure => "File Structure",
+            Action::GoToSymbol => "Go to Symbol…",
             Action::ShowFiles => "Files",
             Action::ShowSearch => "Search",
             Action::ShowProblems => "Problems",
@@ -186,6 +192,8 @@ impl Action {
             Action::RecentFiles => "⌘E",
             Action::FindAction => "⇧⌘A",
             Action::SearchEverywhere => "⇧⇧",
+            Action::FileStructure => "⌘F12",
+            Action::GoToSymbol => "⌥⌘O",
             Action::ShowFiles => "⌘1",
             Action::ShowSearch => "⇧⌘F",
             Action::ShowProblems => "⌘6",
@@ -272,6 +280,8 @@ impl Action {
             Action::RecentFiles => Command::OpenFinder(FinderMode::RecentFiles),
             Action::FindAction => Command::OpenFinder(FinderMode::Actions),
             Action::SearchEverywhere => Command::OpenFinder(FinderMode::Everywhere),
+            Action::FileStructure => Command::OpenFinder(FinderMode::FileSymbols),
+            Action::GoToSymbol => Command::OpenFinder(FinderMode::ProjectSymbols),
             Action::ShowFiles => Command::ToggleLeftColumn(LeftColumnView::Files),
             Action::ShowSearch => Command::ToggleLeftColumn(LeftColumnView::Search),
             Action::ShowProblems => Command::ToggleLeftColumn(LeftColumnView::Problems),

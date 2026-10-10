@@ -30,6 +30,7 @@
 //! every background result.
 
 mod connection;
+pub(crate) mod symbols;
 pub(crate) mod text;
 pub(crate) mod typescript;
 pub(crate) mod watch;
@@ -42,7 +43,7 @@ use std::{
 };
 
 use gen_lsp_types::{
-    ClientCapabilities, ClientInfo, Diagnostic, DiagnosticClientCapabilities, DiagnosticWorkspaceClientCapabilities,
+    ClientCapabilities, ClientInfo, Diagnostic, DocumentSymbolClientCapabilities, WorkspaceSymbolClientCapabilities, DiagnosticClientCapabilities, DiagnosticWorkspaceClientCapabilities,
     DidChangeWatchedFilesClientCapabilities, DocumentDiagnosticReport, FileEvent, GeneralClientCapabilities,
     InitializeParams, InitializeResult, PositionEncodingKind, PublishDiagnosticsClientCapabilities,
     PublishDiagnosticsParams, RegistrationParams, TextDocumentClientCapabilities,
@@ -106,6 +107,9 @@ pub(crate) enum Output {
     Clear(PathBuf),
     /// Drop every file's diagnostics: the server is gone.
     ClearAll,
+    /// The answer to the symbols request `id` (ticket #47); empty if it
+    /// failed.
+    Symbols { id: i64, symbols: Vec<symbols::Symbol> },
 }
 
 /// A request waiting for its answer.
@@ -114,6 +118,9 @@ pub(crate) enum Pending {
     Initialize,
     /// `textDocument/diagnostic` for an open file.
     Diagnostics(PathBuf),
+    /// `textDocument/documentSymbol` for `document` (an absolute path), or
+    /// `workspace/symbol` (ticket #47).
+    Symbols { document: Option<PathBuf> },
 }
 
 /// A timer of a server's, on the host clock.
@@ -384,6 +391,10 @@ impl LanguageServer {
             Event::Response { id, result } => match self.requests.remove(&id) {
                 Some(Pending::Initialize) => self.initialized(result),
                 Some(Pending::Diagnostics(path)) => self.diagnostics_answered(path, id, result),
+                Some(Pending::Symbols { document }) => {
+                    let symbols = result.map(|answer| symbols::parse(&answer, document.as_deref())).unwrap_or_default();
+                    vec![Output::Symbols { id, symbols }]
+                }
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
@@ -438,6 +449,7 @@ impl LanguageServer {
                 workspace_folders: Some(true),
                 configuration: Some(true),
                 diagnostics: Some(DiagnosticWorkspaceClientCapabilities { refresh_support: Some(true) }),
+                symbol: Some(WorkspaceSymbolClientCapabilities::default()),
                 ..Default::default()
             }),
             text_document: Some(TextDocumentClientCapabilities {
@@ -453,6 +465,10 @@ impl LanguageServer {
                 }),
                 publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                     version_support: Some(true),
+                    ..Default::default()
+                }),
+                document_symbol: Some(DocumentSymbolClientCapabilities {
+                    hierarchical_document_symbol_support: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
