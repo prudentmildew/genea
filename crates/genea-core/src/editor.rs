@@ -1234,7 +1234,8 @@ impl Editor {
             let line = p.line.min(lines - 1);
             self.text.line_to_char(line) + p.column.min(self.line_len(line))
         };
-        let mut carets: Vec<_> = selections.iter().map(|&(a, c)| CaretSelection::selecting(offset(a), offset(c))).collect();
+        let mut carets: Vec<_> =
+            selections.iter().map(|&(a, c)| CaretSelection::selecting(offset(a), offset(c))).collect();
         if carets.is_empty() {
             carets.push(CaretSelection::at(0));
         }

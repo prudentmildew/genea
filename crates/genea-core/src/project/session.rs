@@ -99,7 +99,8 @@ impl Project {
         self.zoom.hash(&mut state);
         if let Some(layout) = self.window_layout {
             let WindowLayout { frame, left_column_width, terminal_width, terminal_height } = layout;
-            for length in [frame.x, frame.y, frame.width, frame.height, left_column_width, terminal_width, terminal_height] {
+            let lengths = [frame.x, frame.y, frame.width, frame.height, left_column_width, terminal_width, terminal_height];
+            for length in lengths {
                 length.to_bits().hash(&mut state);
             }
         }

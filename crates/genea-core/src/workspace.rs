@@ -265,7 +265,6 @@ impl Patterns {
     fn matches(&self, relative: &Path) -> bool {
         self.include.is_match(relative) && !self.exclude.is_match(relative)
     }
-
 }
 
 /// Whether a folder (relative to the root) may be, or hold, a match of an

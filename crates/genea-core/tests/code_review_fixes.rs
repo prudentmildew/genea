@@ -29,7 +29,8 @@ fn session_file(host: &TestHost) -> PathBuf {
 /// back with one caret at the start of the file instead of none.
 #[test]
 fn a_restored_tab_without_usable_carets_gets_one_at_the_start() {
-    for selections in [None, Some(serde_json::json!([])), Some(serde_json::json!("nonsense")), Some(serde_json::json!([[1]]))] {
+    let malformed = [Some(serde_json::json!([])), Some(serde_json::json!("nonsense")), Some(serde_json::json!([[1]]))];
+    for selections in std::iter::once(None).chain(malformed) {
         let fixture = FixtureProject::new().file("a.ts", "let a = 1;\nlet b = 2;\n").build();
         let host = TestHost::new();
         let mut workbench = Workbench::new(host.shared());
