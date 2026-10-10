@@ -222,6 +222,7 @@ impl Project {
                 }
                 Output::Clear(path) => self.problems.replace_file(source, &path, Vec::new()),
                 Output::ClearAll => self.problems.replace(source, Vec::new()),
+                Output::Decorations(output) => self.apply_decorations(output),
             }
         }
     }

@@ -1,5 +1,6 @@
 //! One open project: its folder and what its window shows.
 
+mod decorations;
 mod external;
 mod language;
 mod finder;

@@ -185,6 +185,22 @@ impl Spans {
         Spans(spans)
     }
 
+    /// Spans from any list: sorted, with empty ones and ones overlapping
+    /// an earlier one left out.
+    pub(crate) fn from_spans(spans: impl IntoIterator<Item = Span>) -> Self {
+        let mut spans: Vec<Span> = spans.into_iter().filter(|s| s.start < s.end).collect();
+        spans.sort_by_key(|s| s.start);
+        let mut end = 0;
+        spans.retain(|s| {
+            let keep = s.start >= end;
+            if keep {
+                end = s.end;
+            }
+            keep
+        });
+        Spans(spans)
+    }
+
     /// The spans that overlap a byte range, in order.
     pub(crate) fn overlapping(&self, bytes: Range<usize>) -> &[Span] {
         let first = self.0.partition_point(|s| (s.end as usize) <= bytes.start);

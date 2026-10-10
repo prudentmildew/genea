@@ -10,6 +10,7 @@
 //! selection. They are kept in the order they were added; the last one is
 //! the primary, which the view scrolls to and the status bar reports.
 
+mod decorations;
 mod indent;
 mod structural;
 
@@ -28,7 +29,7 @@ use crate::{
     command::{CaretMove, ConflictChoice},
     disk::{self, Checked, DiskCheck, DiskText, Splice},
     history::{Change, Edit, EditKind, History, Selection},
-    syntax::{Highlight, ParseJob, Parsed, Syntax},
+    syntax::{Highlight, ParseJob, Parsed, Span, Syntax},
     text::{self, LineEnding},
     view::{Caret, EditorView, HighlightSpan, Preedit, VisibleLine},
 };
@@ -125,6 +126,9 @@ pub(crate) struct Editor {
     /// The tree and highlights, for files in a highlighted language that
     /// aren't large.
     syntax: Option<Syntax>,
+    /// What the language server draws on the text: semantic highlights
+    /// (ticket #46).
+    decorations: decorations::Decorations,
     /// Over [`LARGE_FILE_BYTES`] when opened: no syntax, no language
     /// intelligence.
     large: bool,
@@ -173,6 +177,7 @@ impl Editor {
             expansions: None,
             folds: Vec::new(),
             syntax,
+            decorations: decorations::Decorations::default(),
             large,
             loading: None,
             disk,
@@ -773,9 +778,9 @@ impl Editor {
         self.text.insert(chars.start, text);
         let new_end_byte = start_byte + text.len();
         let new_end_position = self.point(new_end_byte);
+        let edit = InputEdit { start_byte, old_end_byte, new_end_byte, start_position, old_end_position, new_end_position };
+        self.decorations.edit(&edit);
         if let Some(syntax) = &mut self.syntax {
-            let edit =
-                InputEdit { start_byte, old_end_byte, new_end_byte, start_position, old_end_position, new_end_position };
             syntax.edit(edit);
         }
         self.shift_folds(chars, text.chars().count());
@@ -982,7 +987,9 @@ impl Editor {
     fn grid_line(&self, line: usize) -> (String, Vec<HighlightSpan>) {
         let line_start = self.text.line_to_byte(line);
         let slice = self.text.line(line);
-        let spans = self.syntax.as_ref().map_or(&[][..], |s| s.spans(line_start..line_start + slice.len_bytes()));
+        let line_bytes = line_start..line_start + slice.len_bytes();
+        let spans = self.syntax.as_ref().map_or(&[][..], |s| s.spans(line_bytes.clone()));
+        let semantic = self.decorations.semantic(line_bytes);
         // Each char with its byte offset in the file; the preedit has none.
         let chars = slice.chars().scan(line_start, |byte, c| {
             let at = *byte;
@@ -1000,6 +1007,7 @@ impl Editor {
         let mut text = String::new();
         let mut highlights: Vec<HighlightSpan> = Vec::new();
         let mut spans = spans.iter().peekable();
+        let mut semantic = semantic.iter().peekable();
         let mut column = 0;
         for (byte, c) in chars {
             if matches!(c, '\n' | '\r') || column >= MAX_VISIBLE_COLUMNS {
@@ -1014,9 +1022,13 @@ impl Editor {
                 text.push(c);
                 column += c.width().unwrap_or(0);
             }
+            // Semantic highlights win over the tree-sitter ones.
             let highlight = byte.and_then(|byte| {
-                while spans.next_if(|s| (s.end as usize) <= byte).is_some() {}
-                spans.peek().filter(|s| (s.start as usize) <= byte).map(|s| s.highlight)
+                let at = |spans: &mut std::iter::Peekable<std::slice::Iter<'_, Span>>| {
+                    while spans.next_if(|s| (s.end as usize) <= byte).is_some() {}
+                    spans.peek().filter(|s| (s.start as usize) <= byte).map(|s| s.highlight)
+                };
+                at(&mut semantic).or_else(|| at(&mut spans))
             });
             push_highlight(&mut highlights, highlight, start..column);
         }

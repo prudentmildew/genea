@@ -399,10 +399,7 @@ fn receive(shared: &Arc<Shared>, message: Value) {
         Some(method) if id.is_some() => {
             let params = message.get("params").cloned().unwrap_or(Value::Null);
             let answer = match method.as_str() {
-                "workspace/configuration" => {
-                    let items = params["items"].as_array().map_or(0, Vec::len);
-                    Ok(Value::Array(vec![Value::Null; items]))
-                }
+                "workspace/configuration" => Ok(super::decorations::configuration(&params)),
                 "workspace/workspaceFolders" => Ok(shared.folders.clone()),
                 "client/registerCapability"
                 | "client/unregisterCapability"
