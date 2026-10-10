@@ -134,9 +134,9 @@ impl Store {
             );
         }
         let index = json!({ "version": INDEX_VERSION, "root": root.to_string_lossy(), "files": files });
-        let temp = self.temp_path();
-        fs::write(&temp, serde_json::to_vec(&index).map_err(io::Error::other)?)?;
-        fs::rename(&temp, self.dir.join("index.json"))
+        let temp = TempFile(self.temp_path());
+        fs::write(&temp.0, serde_json::to_vec(&index).map_err(io::Error::other)?)?;
+        fs::rename(&temp.0, self.dir.join("index.json"))
     }
 
     pub(crate) fn read_blob(&self, hash: &Hash) -> io::Result<Vec<u8>> {
@@ -183,8 +183,8 @@ pub(crate) fn read_file(path: &Path, store: Option<(&Store, &mut Budget)>) -> io
     let mut file = File::open(path)?;
     let mut copy = match store {
         Some(store) => {
-            let temp = store.temp_path();
-            Some((File::create(&temp)?, temp))
+            let temp = TempFile(store.temp_path());
+            Some((File::create(&temp.0)?, temp))
         }
         None => None,
     };
@@ -213,9 +213,20 @@ pub(crate) fn read_file(path: &Path, store: Option<(&Store, &mut Budget)>) -> io
     let mut stored = false;
     if let (Some(store), Some((temp, temp_path))) = (store, copy) {
         drop(temp);
-        stored = store.keep_blob(&temp_path, &hash).is_ok();
+        stored = store.keep_blob(&temp_path.0, &hash).is_ok();
     }
     Ok(Some(FileState { hash, size, mtime, text, stored }))
+}
+
+/// A temp file in the store, removed when dropped unless it was moved into
+/// place: an error on the way never leaves it behind.
+struct TempFile(PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        // After a successful `keep_blob` it is gone already.
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 /// Whether the regular file at `path` still has `state`'s size and mtime,
