@@ -53,6 +53,7 @@ pub enum Action {
     GoToSymbol,
     ShowFiles,
     ShowSearch,
+    ShowChanges,
     ShowProblems,
     ShowTerminal,
     NewTerminalTab,
@@ -66,7 +67,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 45] = [
+    pub const ALL: [Action; 46] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -104,6 +105,7 @@ impl Action {
         Action::GoToSymbol,
         Action::ShowFiles,
         Action::ShowSearch,
+        Action::ShowChanges,
         Action::ShowProblems,
         Action::ShowTerminal,
         Action::NewTerminalTab,
@@ -154,6 +156,7 @@ impl Action {
             Action::GoToSymbol => "Go to Symbol…",
             Action::ShowFiles => "Files",
             Action::ShowSearch => "Search",
+            Action::ShowChanges => "Changes",
             Action::ShowProblems => "Problems",
             Action::ShowTerminal => "Terminal",
             Action::NewTerminalTab => "New Terminal Tab",
@@ -214,7 +217,9 @@ impl Action {
             | Action::CollapseAllFolds
             | Action::SplitRight
             | Action::MoveTabToOtherSide
-            | Action::CloseSplit => return None,
+            | Action::CloseSplit
+            // ⌘0 is zoom (spec #19), so Changes has no shortcut.
+            | Action::ShowChanges => return None,
         })
     }
 
@@ -284,6 +289,7 @@ impl Action {
             Action::GoToSymbol => Command::OpenFinder(FinderMode::ProjectSymbols),
             Action::ShowFiles => Command::ToggleLeftColumn(LeftColumnView::Files),
             Action::ShowSearch => Command::ToggleLeftColumn(LeftColumnView::Search),
+            Action::ShowChanges => Command::ToggleLeftColumn(LeftColumnView::Changes),
             Action::ShowProblems => Command::ToggleLeftColumn(LeftColumnView::Problems),
             Action::ShowTerminal => Command::ToggleTerminal,
             Action::NewTerminalTab => Command::NewTerminalTab,

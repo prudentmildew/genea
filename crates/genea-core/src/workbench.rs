@@ -97,7 +97,7 @@ impl Core {
         }
         let id = ProjectId(self.next_id);
         self.next_id += 1;
-        let project = self.projects.entry(id).or_insert(Project::new(id, root));
+        let project = self.projects.entry(id).or_insert(Project::new(id, root, &self.jobs));
         project.start(&self.jobs, self.host.as_ref());
         project.start_toolchain(self.toolchain.clone(), &self.jobs);
         project.start_environment(self.host.clone(), &self.jobs);

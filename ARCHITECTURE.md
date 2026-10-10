@@ -76,7 +76,7 @@ use, and nothing else:
 - **Files changing on disk**: each project has one `notify` watcher
   (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
   batches at `Project::files_changed(FileChanges, jobs)`; react there (the
-  config, the file index and open editors do; review hooks in beside them).
+  config, the file index, open editors and review do).
   `settle` waits for the watcher by writing a cookie file into
   `<support>/watch-sync`, which the same FSEvents stream watches: once its
   event is back, every earlier change has been delivered. So a test writes a
@@ -90,8 +90,31 @@ use, and nothing else:
   the changed stretch, so carets outside it keep their place) or, with
   unsaved edits, sets `EditorView::conflict` until
   `Command::ResolveConflict` (Reload or Keep my edits) or a save. A result
-  whose buffer or disk text moved on meanwhile is checked again. Review
-  (#53) should reuse the same "what Genea last wrote" comparison.
+  whose buffer or disk text moved on meanwhile is checked again.
+- **Review** (`src/review/`, `src/project/changes.rs`, ticket #53): every
+  file in scope (not ignored by a `.gitignore` in the project, outside
+  `.git` and `node_modules`; `exclude` doesn't count) has a review
+  baseline in a per-project store under `<support>/review/<key>/`
+  (`store.rs`: SHA-256 blobs plus `index.json` of path → hash, size, mtime,
+  text, stored). The first open snapshots every file in the background; a
+  later open loads the index (#54 adds the rescan). Watcher batches become
+  checks that hash each changed file (a new or moved-in folder is read
+  whole, a gone one marks everything under it gone, a `.gitignore` change
+  rescans everything) and compare it with the baseline; a difference is
+  listed in `ProjectView::changes` (`ChangeItem`: modified, created or
+  deleted; `diffable` false for binary or large files; `can_revert` false
+  when the baseline's blob wasn't stored, which only happens to files over
+  5 MB above the store's 1 GiB cap) with `review_banner`. `KeepChange`,
+  `RevertChange`, `KeepAllChanges` and `RevertAllChanges` settle them; a
+  Revert reloads open editors right away. Everything that touches the disk
+  or the store is an op, and ops run one at a time, in order.
+  **Writing a project file from the core**: announce it first with
+  `Project::review.own_writes().writing(relative_path, Some(hash))`
+  (`review/own.rs`) and hold the guard until the write is done, as saves,
+  "Open config", toolchain pins, "Add TypeScript 7" and Revert do. Review
+  then knows the content as Genea's own (a file without a pending change
+  moves its baseline; one with a pending change stays listed), ignores what
+  it read mid-write, and checks the file again when the guard drops.
 - **The file index** (`src/files.rs`, ticket #30): every file and folder
   outside `node_modules` and `.git`, read once in the background at open and
   then kept up to date from the watcher's batches (a changed path re-lists
@@ -573,7 +596,9 @@ chrome, native menus via muda (Slint's `MenuBar`).
   view, shown while the core's `left_column` is `Some`. A view's shortcut
   is a menu item that dispatches `ToggleLeftColumn` (Files is ⌘1, and a
   project opens showing it; Search is ⌘⇧F, and focuses its query field
-  when it appears; Problems is ⌘6). A new
+  when it appears; Changes has a menu item but no shortcut, since ⌘0 is
+  zoom; Problems is ⌘6). The review banner over the window's content
+  (`review-banner`) offers Review, Keep All and Revert All. A new
   view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
   switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`

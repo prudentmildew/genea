@@ -14,7 +14,7 @@ use std::{
 };
 
 use genea_core::{
-    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
+    ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
     LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
     SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme, ToolchainOption,
     Workbench,
@@ -25,7 +25,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app,
+    ChangeMark, ChangeRow, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app,
     dialogs, fonts,
     keys::Modifiers,
     links,
@@ -65,6 +65,9 @@ pub struct WindowController {
     /// The Files view's rows as last pushed, likewise.
     files: Arc<[FileRow]>,
     file_rows: Rc<VecModel<FileEntry>>,
+    /// The Changes view's items as last pushed, likewise.
+    changes: Arc<[ChangeItem]>,
+    change_rows: Rc<VecModel<ChangeRow>>,
     /// The Search view's results as last pushed.
     search: SearchResults,
     /// The button went down with ⌥ (adding a caret) or on a fold marker,
@@ -102,6 +105,8 @@ impl WindowController {
         window.set_picker_options(ModelRc::from(picker_rows.clone()));
         let file_rows = Rc::new(VecModel::default());
         window.set_files(ModelRc::from(file_rows.clone()));
+        let change_rows = Rc::new(VecModel::default());
+        window.set_changes(ModelRc::from(change_rows.clone()));
         let search = SearchResults::default();
         window.set_search_rows(ModelRc::from(search.rows.clone()));
         let finder_rows = Rc::new(VecModel::default());
@@ -123,6 +128,8 @@ impl WindowController {
             problem_rows,
             files: Arc::from([]),
             file_rows,
+            changes: Arc::from([]),
+            change_rows,
             search,
             option_press: false,
             picker_open: false,
@@ -325,8 +332,31 @@ impl WindowController {
         match view.left_column {
             Some(LeftColumnView::Files) => window.set_left_view(LeftView::Files),
             Some(LeftColumnView::Problems) => window.set_left_view(LeftView::Problems),
+            Some(LeftColumnView::Changes) => window.set_left_view(LeftView::Changes),
             Some(LeftColumnView::Search) => window.set_left_view(LeftView::Search),
             None => {}
+        }
+        window.set_review_banner(view.review_banner.clone().unwrap_or_default().into());
+        // Shared like the tree: an unchanged list is a pointer compare.
+        if view.changes != self.changes {
+            let rows: Vec<ChangeRow> = view
+                .changes
+                .iter()
+                .map(|change| ChangeRow {
+                    path: change.path.to_string_lossy().as_ref().into(),
+                    mark: match change.kind {
+                        ChangeKind::Modified => ChangeMark::Modified,
+                        ChangeKind::Created => ChangeMark::Created,
+                        ChangeKind::Deleted => ChangeMark::Deleted,
+                    },
+                    can_revert: change.can_revert,
+                })
+                .collect();
+            for row in &rows {
+                fonts::prepare(&row.path);
+            }
+            self.change_rows.set_vec(rows);
+            self.changes = view.changes.clone();
         }
         self.search.sync(window, &view.search);
         // The core shares an unchanged tree, so this is a pointer compare.
@@ -550,6 +580,20 @@ impl WindowController {
             FileRowKind::Folder { .. } => Command::ToggleFolder(row.path.clone()),
         };
         self.dispatch(workbench, command);
+    }
+
+    /// A Changes row was clicked: open the file, unless it was deleted.
+    pub fn click_change(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some(change) = self.changes.get(index).filter(|c| c.kind != ChangeKind::Deleted) else { return };
+        let command = Command::OpenFile(change.path.clone());
+        self.dispatch(workbench, command);
+    }
+
+    /// A Changes row's Keep (`keep`) or Revert.
+    pub fn review_change(&mut self, workbench: &mut Workbench, index: usize, keep: bool) {
+        let Some(change) = self.changes.get(index) else { return };
+        let path = change.path.clone();
+        self.dispatch(workbench, if keep { Command::KeepChange(path) } else { Command::RevertChange(path) });
     }
 
     /// A Search view row was clicked: open the file, at the match for a

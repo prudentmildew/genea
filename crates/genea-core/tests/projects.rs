@@ -118,6 +118,9 @@ fn background_work_notifies_and_shows_up_after_pump() {
     assert_eq!(workbench.project(project).unwrap().editor, None);
     assert!(workbench.pump());
     assert_eq!(workbench.project(project).unwrap().editor.unwrap().title, "a.ts");
+    // Opening the file starts work of its own (its parse, its HEAD
+    // version), which may land at any time; once settled, nothing is left.
+    workbench.settle().unwrap();
     assert!(!workbench.pump(), "nothing left to apply");
 }
 
