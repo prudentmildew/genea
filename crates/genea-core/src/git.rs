@@ -212,3 +212,30 @@ fn read_base(repo: &gix::Repository, root: &Path, path: &Path) -> Option<Rope> {
     let text = std::str::from_utf8(&object.data).ok()?;
     Some(Rope::from_str(text))
 }
+
+/// Why a file can't be shown against HEAD.
+#[derive(Debug)]
+pub(crate) enum NoHeadText {
+    /// The project isn't in a git repository.
+    NoRepository,
+    /// The file is at HEAD, but not as text.
+    NotText,
+}
+
+/// A file (relative to `root`, or absolute) at HEAD, for "Show Diff Against
+/// HEAD" (ticket #57). A file that isn't at HEAD (untracked, or no commit
+/// yet) reads as empty, so it shows as all added.
+pub(crate) fn read_at_head(root: &Path, path: &Path) -> Result<Rope, NoHeadText> {
+    let repo = gix::discover(root).map_err(|_| NoHeadText::NoRepository)?;
+    let workdir = repo.workdir().ok_or(NoHeadText::NoRepository)?;
+    let absolute = root.join(path);
+    let Ok(relative) = absolute.strip_prefix(workdir) else { return Ok(Rope::new()) };
+    let Ok(tree) = repo.head_tree() else { return Ok(Rope::new()) };
+    let Ok(Some(entry)) = tree.lookup_entry_by_path(relative) else { return Ok(Rope::new()) };
+    if !entry.mode().is_blob() {
+        return Ok(Rope::new());
+    }
+    let object = entry.object().map_err(|_| NoHeadText::NotText)?;
+    let text = std::str::from_utf8(&object.data).map_err(|_| NoHeadText::NotText)?;
+    Ok(Rope::from_str(text))
+}

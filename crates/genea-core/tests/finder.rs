@@ -195,6 +195,7 @@ fn find_action_lists_every_action_with_its_shortcut() {
     assert_eq!(shortcut("Zoom In"), Some("⌘+".into()));
     assert_eq!(shortcut("Zoom Out"), Some("⌘−".into()));
     assert_eq!(shortcut("Reset Zoom"), Some("⌘0".into()));
+    assert_eq!(shortcut("Show Diff Against HEAD"), None);
     assert!(items.iter().all(|item| matches!(item.kind, FinderItemKind::Action(_))));
 }
 

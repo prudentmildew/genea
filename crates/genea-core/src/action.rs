@@ -73,6 +73,7 @@ pub enum Action {
     ZoomIn,
     ZoomOut,
     ResetZoom,
+    ShowDiffAgainstHead,
     SplitRight,
     MoveTabToOtherSide,
     CloseSplit,
@@ -83,7 +84,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 62] = [
+    pub const ALL: [Action; 63] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -141,6 +142,7 @@ impl Action {
         Action::ZoomIn,
         Action::ZoomOut,
         Action::ResetZoom,
+        Action::ShowDiffAgainstHead,
         Action::SplitRight,
         Action::MoveTabToOtherSide,
         Action::CloseSplit,
@@ -203,6 +205,7 @@ impl Action {
             Action::ZoomIn => "Zoom In",
             Action::ZoomOut => "Zoom Out",
             Action::ResetZoom => "Reset Zoom",
+            Action::ShowDiffAgainstHead => "Show Diff Against HEAD",
             Action::SplitRight => "Split Right",
             Action::MoveTabToOtherSide => "Move Tab to Other Side",
             Action::CloseSplit => "Close Split",
@@ -282,6 +285,7 @@ impl Action {
             | Action::SplitRight
             | Action::MoveTabToOtherSide
             | Action::CloseSplit
+            | Action::ShowDiffAgainstHead
             // ⌘0 is zoom (spec #19), so Changes has no shortcut.
             | Action::ShowChanges => return None,
         })
@@ -379,6 +383,7 @@ impl Action {
             Action::ZoomIn => Command::ZoomIn,
             Action::ZoomOut => Command::ZoomOut,
             Action::ResetZoom => Command::ResetZoom,
+            Action::ShowDiffAgainstHead => Command::ShowDiffAgainstHead,
             Action::SplitRight => Command::SplitRight,
             Action::CloseSplit => Command::CloseSplit,
             Action::GoToDefinition => Command::GoToDefinition,

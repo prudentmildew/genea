@@ -143,8 +143,15 @@ use, and nothing else:
   Revert, which are the ordinary `KeepChange`/`RevertChange`). The diff
   closes when the file leaves Changes (`review_changes_changed`, after
   every review op; a moved baseline is read again), on `CloseInlineDiff`,
-  or when its last tab closes; a deleted file's tab closes with it. It is
-  built to take other bases: #57 adds a `DiffAgainst` for HEAD.
+  or when its last tab closes; a deleted file's tab closes with it. A
+  shown file's base is a `Base`: the review baseline, or HEAD (ticket
+  #57): `Command::ShowDiffAgainstHead` (the "Show Diff Against HEAD"
+  action) shows the focused file against its text at HEAD
+  (`git::read_at_head`, in the background; `DiffAgainst::Head`, no
+  `change`, so no Keep or Revert). A file not at HEAD (untracked, no
+  commit yet) reads as empty, so it is all added; outside a repository a
+  notice says so. It is read again when the watcher sees HEAD move
+  (`head_moved`, next to `Git::reload`), not when Changes change.
 - **The file index** (`src/files.rs`, ticket #30): every file and folder
   outside `node_modules` and `.git`, read once in the background at open and
   then kept up to date from the watcher's batches (a changed path re-lists
@@ -802,8 +809,9 @@ chrome, native menus via muda (Slint's `MenuBar`).
   removed lines (#55) fill slots of their own (`Line.diff` 2, no number,
   `index` the line below, which a click goes to); `row_of_line` and the
   row estimates skip them (`file_lines`). Added lines get `Line.diff` 1
-  and a background. The pane's diff bar (`DiffBar`) offers Keep, Revert
-  and closing the diff.
+  and a background. The pane's diff bar (`DiffBar`) names the base
+  ("Changes since review" or "since HEAD") and offers Keep and Revert
+  (review only) and closing the diff.
 - `src/fonts.rs`: registers Apple Color Emoji and Hiragino Sans GB (CJK),
   memory-mapped, the first time visible text has an emoji or CJK character
   that Menlo and Apple Symbols lack. It is

@@ -683,6 +683,7 @@ fn wire(controller: &WindowController) {
     window.on_terminal_size_changed(move || with_app(move |app| app.sync(key)));
     // Terminal tabs (ticket #39).
     window.on_new_terminal_tab(menu(Command::NewTerminalTab));
+    window.on_show_diff_against_head(menu(Command::ShowDiffAgainstHead));
     window.on_terminal_tab_closed(move |tab| {
         with_app(move |app| app.dispatch(key, Command::CloseTerminalTab(index(tab))));
     });

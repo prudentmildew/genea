@@ -270,6 +270,13 @@ pub enum Command {
     /// buffer, as an edit that Undo reverts, and closes it. Does nothing
     /// without a shown change.
     RollbackHunk,
+    /// "Show Diff Against HEAD" (ticket #57): shows the focused file as an
+    /// inline diff against its text at HEAD (`EditorView::inline_diff`,
+    /// `DiffAgainst::Head`), like `OpenChange` but without Keep and Revert.
+    /// An untracked file is all added. It follows edits and HEAD moving,
+    /// and closes with `CloseInlineDiff`. Outside a repository a notice
+    /// says so.
+    ShowDiffAgainstHead,
     /// Answers an open file's conflict bar (`EditorView::conflict`): its
     /// file changed on disk while it had unsaved edits. The path is as in
     /// `EditorView::path`.

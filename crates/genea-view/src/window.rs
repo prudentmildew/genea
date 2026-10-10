@@ -979,6 +979,7 @@ fn diff_bar(diff: Option<&InlineDiffView>) -> DiffBar {
     let Some(diff) = diff else { return DiffBar::default() };
     let label = match diff.against {
         DiffAgainst::ReviewBaseline => "Changes since review",
+        DiffAgainst::Head => "Changes since HEAD",
     };
     DiffBar {
         shown: true,

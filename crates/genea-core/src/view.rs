@@ -514,7 +514,7 @@ pub struct InlineDiffView {
     /// For a diff against the review baseline: the file's entry in
     /// Changes, whose Keep and Revert (`Command::KeepChange`,
     /// `Command::RevertChange`) the diff offers. The diff closes once the
-    /// file leaves Changes.
+    /// file leaves Changes. `None` against HEAD, which offers neither.
     pub change: Option<ChangeItem>,
 }
 
@@ -523,6 +523,9 @@ pub struct InlineDiffView {
 pub enum DiffAgainst {
     /// The file's review baseline (ticket #55).
     ReviewBaseline,
+    /// The file at git HEAD (ticket #57); empty if it isn't there
+    /// (untracked), so it is all added.
+    Head,
 }
 
 /// A line of the base that isn't in the file, on a row of its own.
