@@ -120,10 +120,14 @@ fn picking_a_runtime_writes_an_exact_pin_and_downloads_it() {
     assert!(notices(&view.notices).is_empty(), "{:?}", view.notices);
 }
 
-/// The project's notices without TypeScript 7's: these projects don't have
-/// it, and `tests/language_server.rs` covers that notice.
+/// The project's notices without TypeScript 7's and Oxlint's: these projects
+/// don't have them, and `tests/language_server.rs` and `tests/oxlint.rs`
+/// cover those notices.
 fn notices(notices: &[Notice]) -> Vec<Notice> {
-    notices.iter().filter(|n| !n.message.starts_with("Language intelligence is off")).cloned().collect()
+    let language = |n: &&Notice| {
+        n.message.starts_with("Language intelligence is off") || n.message.starts_with("Lint and format are off")
+    };
+    notices.iter().filter(|n| !language(n)).cloned().collect()
 }
 
 
