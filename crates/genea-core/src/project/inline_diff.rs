@@ -74,7 +74,12 @@ impl Project {
         let deleted = self.review.listed_change(&path).is_some_and(|c| c.kind == ChangeKind::Deleted);
         if !deleted {
             self.open_file(path, None, jobs);
-        } else if !self.focus_open_file(&path) {
+            return;
+        }
+        // Like an OpenFile, so a slower one asked for before doesn't take
+        // the focus from it.
+        self.open_generation += 1;
+        if !self.focus_open_file(&path) {
             self.open_tab(Editor::missing(path));
         }
     }
@@ -143,12 +148,40 @@ impl Project {
         }
     }
 
-    /// Shows a file plainly again.
+    /// Shows a file plainly again. A deleted file's tabs close.
     fn end_inline_diff(&mut self, path: &Path) {
         self.inline_diffs.files.remove(path);
         let rows = self.viewport_rows;
         if let Some(editor) = self.open_editor_mut(path) {
+            if editor.is_missing() {
+                return self.close_file(path);
+            }
             editor.set_inline_diff(None, rows);
+        }
+    }
+
+    /// Changes changed (a review op finished): diffs against the review
+    /// baseline of files no longer listed close, and those whose baseline
+    /// moved read it again.
+    pub(super) fn review_changes_changed(&mut self, jobs: &Jobs) {
+        let shown: Vec<(PathBuf, BaselineReader)> = self
+            .inline_diffs
+            .files
+            .iter()
+            .filter(|(_, shown)| shown.against == DiffAgainst::ReviewBaseline)
+            .map(|(path, shown)| (path.clone(), shown.baseline.clone()))
+            .collect();
+        for (path, baseline) in shown {
+            match self.review.baseline_reader(&path) {
+                None => self.end_inline_diff(&path),
+                Some(now) if now != baseline => {
+                    if let Some(shown) = self.inline_diffs.files.get_mut(&path) {
+                        shown.baseline = now.clone();
+                    }
+                    self.read_baseline(path, now, jobs);
+                }
+                Some(_) => {}
+            }
         }
     }
 

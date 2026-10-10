@@ -9,6 +9,7 @@ impl Project {
     /// A review op finished.
     pub(crate) fn review_done(&mut self, done: Done, jobs: &Jobs) {
         let outcome = self.review.done(done, jobs);
+        self.review_changes_changed(jobs);
         for error in outcome.errors {
             self.notify(error);
         }
