@@ -1208,15 +1208,21 @@ impl Editor {
     }
 
     /// A cursor with these selections and scroll position, each clamped to
-    /// the text (the file may have changed since they were saved).
+    /// the text (the file may have changed since they were saved). Without
+    /// any selection, it has one caret at the start: a cursor always has a
+    /// caret.
     pub(crate) fn cursor_at(&self, selections: &[(TextPosition, TextPosition)], scroll_top: f64) -> Cursor {
         let lines = self.text.len_lines();
         let offset = |p: TextPosition| {
             let line = p.line.min(lines - 1);
             self.text.line_to_char(line) + p.column.min(self.line_len(line))
         };
+        let mut carets: Vec<_> = selections.iter().map(|&(a, c)| CaretSelection::selecting(offset(a), offset(c))).collect();
+        if carets.is_empty() {
+            carets.push(CaretSelection::at(0));
+        }
         Cursor {
-            carets: selections.iter().map(|&(a, c)| CaretSelection::selecting(offset(a), offset(c))).collect(),
+            carets,
             scroll_top: scroll_top.max(0.0),
             preedit: String::new(),
             whole_words: None,
