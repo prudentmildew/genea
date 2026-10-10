@@ -60,20 +60,25 @@ pub(super) fn code_actions(actions: &[ScriptedAction], params: &Value, text: &st
         .iter()
         .filter(|action| wanted(&action.kind) && applies(&action.at))
         .map(|action| {
-            let edits: Vec<Value> = action
-                .edits
-                .iter()
-                .map(|(find, replace)| {
-                    let start = if find.is_empty() { Some(0) } else { text.find(find.as_str()) };
-                    let start = start.unwrap_or(text.len());
-                    let end = if find.is_empty() || start == text.len() { start } else { start + find.len() };
-                    let (start, end) = (super::position(text, start, utf8), super::position(text, end, utf8));
-                    let range = json!({ "start": start, "end": end });
-                    json!({ "range": range, "newText": replace })
-                })
-                .collect();
+            let edits = edits(&action.edits, text, utf8);
             json!({ "title": action.title, "kind": action.kind, "edit": { "changes": { uri: edits } } })
         })
         .collect();
     Value::Array(answers)
+}
+
+/// LSP text edits against `text`, each replacing the first occurrence of
+/// its find text (an empty find inserts at the start).
+pub(super) fn edits(edits: &[(String, String)], text: &str, utf8: bool) -> Vec<Value> {
+    edits
+        .iter()
+        .map(|(find, replace)| {
+            let start = if find.is_empty() { Some(0) } else { text.find(find.as_str()) };
+            let start = start.unwrap_or(text.len());
+            let end = if find.is_empty() || start == text.len() { start } else { start + find.len() };
+            let (start, end) = (super::position(text, start, utf8), super::position(text, end, utf8));
+            let range = json!({ "start": start, "end": end });
+            json!({ "range": range, "newText": replace })
+        })
+        .collect()
 }

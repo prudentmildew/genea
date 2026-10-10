@@ -635,6 +635,24 @@ message types. `project/language.rs` is a project's side of it.
   Server generations are unique across servers, so `language_event` and
   `language_timer` route Oxlint's by generation; "Restart language server"
   restarts both.
+- **Oxfmt, format and fix on save** (ticket #50, `project/formatting.rs`,
+  protocol in `lsp/formatting.rs`): Oxfmt runs like Oxlint, as
+  `<pinned runtime> node_modules/oxfmt/bin/oxfmt --lsp`, when both are
+  listed and `node_modules/oxfmt/bin/oxfmt` exists. `ServerSpec::languages`
+  picks the files a server gets (Oxfmt: the first-class languages plus
+  JSON, CSS, YAML, Markdown and HTML, never `.env`), and
+  `ServerSpec::pull_diagnostics` is off for it. `Command::Save` goes
+  through `Project::save`: `textDocument/formatting` to Oxfmt (unless
+  `formatOnSave` is off), then `source.fixAll.oxc` to Oxlint (unless
+  `fixOnSave` is off; its `Output::CodeActions` are told apart from quick
+  fixes by ticket), then `write_file`. Each answer applies as one undo step
+  if the editor is still at the version it was asked at. A save that
+  hasn't finished within `FORMAT_TIMEOUT` (1 s, host clock) forgets the
+  request (releasing `settle`), writes the buffer as it is, and adds a
+  notice. A step whose server isn't ready is skipped. `Project::format_on_save`
+  and `fix_on_save` are where other reasons to skip a step go (#51).
+  `Command::ReformatFile` (⌥⌘L) runs the format step alone. tsgo's
+  formatter is never asked.
 
 - **Completion, hover and signature help** (ticket #43;
   `project/assist.rs`, protocol in `lsp/assist.rs`, popups in
@@ -654,9 +672,11 @@ message types. `project/language.rs` is a project's side of it.
 
 Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
 the test host as `tsc` (and as `node` or `bun` for Oxlint in
-`tests/oxlint.rs`): scripted per test to report markers, crash, stay
-silent, delay or flood, offer code actions (`quick_fix`,
-`organize_imports`: edits as text to find and replace), and asked
+`tests/oxlint.rs`; `tests/format_on_save.rs` plays Oxfmt and Oxlint from
+two fakes on `node`, by launcher script, through `FakeLsp::run`): scripted
+per test to report markers, crash, stay silent, delay or flood, offer
+code actions (`quick_fix`, `organize_imports`: edits as text to find and
+replace), format (`formats`), never answer one method (`hang_on`), and asked
 afterwards what reached it. As a binary
 (`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
 tsgo in the harness's `typing-silent-lsp`. It answers `documentSymbol` and `workspace/symbol` from a rough reading of the declarations in the files (`genea-testkit/src/fake_symbols.rs`). The slow lane

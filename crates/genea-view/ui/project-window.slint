@@ -270,6 +270,8 @@ export component ProjectWindow inherits Window {
     // and a click on a fix in the popup.
     callback show-quick-fixes();
     callback organize-imports();
+    // Reformat File (ticket #50), in the Code menu.
+    callback reformat-file();
     callback quick-fix-clicked(int);
     // A click on a completion; the pointer moving over a pane's text and
     // leaving it (ticket #43).
@@ -501,6 +503,16 @@ export component ProjectWindow inherits Window {
                 enabled: root.has-editor;
                 activated => {
                     root.organize-imports();
+                }
+            }
+
+            // WebStorm's Reformat Code key.
+            MenuItem {
+                title: "Reformat File";
+                shortcut: @keys(Control + Alt + L);
+                enabled: root.has-editor;
+                activated => {
+                    root.reformat-file();
                 }
             }
 

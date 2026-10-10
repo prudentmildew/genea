@@ -78,6 +78,12 @@ pub struct LspScript {
     pub watch: Vec<String>,
     /// What `textDocument/codeAction` offers (ticket #45).
     pub code_actions: Vec<ScriptedAction>,
+    /// What `textDocument/formatting` changes (ticket #50), as a code
+    /// action's edits: each replaces the first occurrence of its find text.
+    /// Without any, it answers `null` (nothing to change).
+    pub formatting: Vec<(String, String)>,
+    /// Methods it takes but never answers (ticket #50).
+    pub hang_on: Vec<String>,
     /// Semantic tokens, inlay hints and code lenses (ticket #46).
     pub decorations: Decorations,
     /// Completion, hover and signature help answers (ticket #43).
@@ -113,6 +119,8 @@ impl LspScript {
             "flood": self.flood,
             "watch": self.watch,
             "codeActions": self.code_actions.iter().map(ScriptedAction::to_json).collect::<Vec<_>>(),
+            "formatting": self.formatting.iter().map(|(find, replace)| json!([find, replace])).collect::<Vec<_>>(),
+            "hangOn": self.hang_on,
             "decorations": self.decorations.to_json(),
             "assist": self.assist.to_json(),
             "slow": self.slow.iter().map(|(method, delay)| json!([method, delay.as_millis() as u64])).collect::<Vec<_>>(),
@@ -148,6 +156,16 @@ impl LspScript {
                 .flatten()
                 .map(ScriptedAction::from_json)
                 .collect(),
+            formatting: value["formatting"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|edit| {
+                    let part = |i: usize| edit[i].as_str().unwrap_or_default().to_owned();
+                    (part(0), part(1))
+                })
+                .collect(),
+            hang_on: value["hangOn"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect(),
             decorations: Decorations::from_json(&value["decorations"]),
             assist: AssistScript::from_json(&value["assist"]),
             slow: value["slow"]
@@ -273,6 +291,22 @@ impl FakeLsp {
         self
     }
 
+    /// Answers `textDocument/formatting` with these edits, as
+    /// [`quick_fix`](Self::quick_fix) has them: each replaces the first
+    /// occurrence of its find text (ticket #50).
+    pub fn formats(self, edits: &[(&str, &str)]) -> Self {
+        let edits = edits.iter().map(|(find, replace)| ((*find).to_owned(), (*replace).to_owned()));
+        self.script.lock().unwrap().formatting.extend(edits);
+        self
+    }
+
+    /// Takes `method` but never answers it, while answering everything
+    /// else (ticket #50: a formatter that doesn't answer).
+    pub fn hang_on(self, method: &str) -> Self {
+        self.script.lock().unwrap().hang_on.push(method.into());
+        self
+    }
+
     /// Reports every occurrence of `text` as a semantic token of this type
     /// (a name from tsgo's legend: `parameter`, `interface`, …) and
     /// modifiers (`declaration`, `defaultLibrary`, …).
@@ -358,7 +392,10 @@ impl FakeLsp {
         host.processes().script(program, move |_spec, io| fake.run(io));
     }
 
-    pub(crate) fn run(&self, io: FakeProcess) -> i32 {
+    /// Plays one process on `io`, for a test's own process script (e.g.
+    /// one that tells two servers started by the same runtime apart by
+    /// their arguments). Returns its exit code.
+    pub fn run(&self, io: FakeProcess) -> i32 {
         self.log.starts.fetch_add(1, Ordering::SeqCst);
         let FakeProcess { stdin, stdout, .. } = &io;
         let log = &self.log;
@@ -452,6 +489,9 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
         if script.crash_on.as_deref() == Some(method.as_str()) {
             return 1;
         }
+        if script.hang_on.contains(&method) {
+            continue;
+        }
         let id = message.get("id").cloned();
         let slow = script.slow.iter().filter(|(m, _)| *m == method).map(|(_, d)| *d).sum::<Duration>();
         let answer = |out: &mut Output<_>, result: Value| {
@@ -538,6 +578,12 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
                 let text = documents.get(uri).map(String::as_str).unwrap_or_default();
                 answer(&mut out, code_actions::code_actions(&script.code_actions, &params, text, utf8));
+            }
+            "textDocument/formatting" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let text = documents.get(uri).map(String::as_str).unwrap_or_default();
+                let edits = code_actions::edits(&script.formatting, text, utf8);
+                answer(&mut out, if script.formatting.is_empty() { Value::Null } else { Value::Array(edits) });
             }
             "textDocument/semanticTokens/full" => {
                 let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
@@ -755,6 +801,8 @@ mod tests {
                 at: "x".into(),
                 edits: vec![("x".into(), "y".into())],
             }],
+            formatting: vec![("a  =".into(), "a =".into())],
+            hang_on: vec!["textDocument/formatting".into()],
             decorations: Decorations::default(),
             assist: AssistScript {
                 completions: vec![json!({ "label": "count" })],

@@ -151,7 +151,11 @@ pub enum Command {
     /// from after it. Any edit after an undo drops what could be redone.
     Redo,
     /// ⌘S: writes the open file to disk in the background. `settle` (tests)
-    /// or the change notification (the app) says when it is written.
+    /// or the change notification (the app) says when it is written. Oxfmt
+    /// formats it first, and Oxlint applies its safe fixes, as undo steps,
+    /// unless `formatOnSave` or `fixOnSave` turns that off (ticket #50); if
+    /// they haven't answered within [`crate::FORMAT_TIMEOUT`] on the host
+    /// clock, it is written as it is, with a notice.
     Save,
     /// Shows a file with the caret at a place in it: a click on a Problems
     /// item (and later a search result or a terminal link). A file that is
@@ -399,6 +403,10 @@ pub enum Command {
     /// the language server does it (`source.organizeImports`), as one undo
     /// step. Only ever on this command: saving never organizes imports.
     OrganizeImports,
+    /// ⌥⌘L: formats the focused file with Oxfmt, as one undo step, whether
+    /// or not `formatOnSave` is on (ticket #50). Nothing happens while Oxfmt
+    /// isn't running or doesn't format the file.
+    ReformatFile,
 
     // Code navigation and rename (ticket #44), at the focused file's primary
     // caret, answered by the language server. Places open in tabs with
