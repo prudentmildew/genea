@@ -33,6 +33,11 @@ const REBASE_LINES: usize = 10_000;
 /// the marker's width in ui/editor-surface.slint.
 const FOLD_MARKER_WIDTH: f32 = 14.0;
 
+/// `Line.diff` (ui/editor-surface.slint): an added line, and a removed
+/// line's row (ticket #55).
+const DIFF_ADDED: i32 = 1;
+const DIFF_REMOVED: i32 = 2;
+
 #[derive(PartialEq)]
 struct SlotState {
     index: usize,
@@ -52,6 +57,9 @@ struct SlotState {
     carets: Vec<usize>,
     /// The git gutter marker, as `Line.change` has it.
     change: i32,
+    /// The inline diff, as `Line.diff` has it: 2 marks a removed line's
+    /// row, whose `index` is the line it was removed above.
+    diff: i32,
     /// The cell width the runs, selections and carets were laid out with.
     char_width: f32,
 }
@@ -99,14 +107,14 @@ impl Surface {
         (self.line_at_row(row), column)
     }
 
-    /// The file line drawn on a row (rows skip folded lines). Rows below
-    /// the last line drawn count on from it; the core clamps them.
+    /// The file line drawn on a row (rows skip folded lines; an inline
+    /// diff's removed line gives the line below it). Rows below the last
+    /// line drawn count on from it; the core clamps them.
     fn line_at_row(&self, row: usize) -> usize {
-        let drawn = self.slots.iter().flatten();
-        if let Some(slot) = drawn.clone().find(|s| s.row == row) {
+        if let Some(slot) = self.slots.iter().flatten().find(|s| s.row == row) {
             return slot.index;
         }
-        match drawn.max_by_key(|s| s.row) {
+        match self.file_lines().max_by_key(|s| s.row) {
             Some(last) if row > last.row => last.index + (row - last.row),
             _ => row,
         }
@@ -116,7 +124,7 @@ impl Surface {
     /// fold counts as the row after the last line drawn above it, and
     /// lines outside the drawn ones count on from its ends.
     fn row_of_line(&self, line: usize) -> f64 {
-        let drawn = self.slots.iter().flatten();
+        let drawn = self.file_lines();
         let above = drawn.clone().filter(|s| s.index <= line).max_by_key(|s| s.index);
         match above {
             Some(s) if s.index == line => s.row as f64,
@@ -127,6 +135,11 @@ impl Surface {
                 None => line as f64,
             },
         }
+    }
+
+    /// The drawn slots of the file's own lines (not removed lines).
+    fn file_lines(&self) -> impl Iterator<Item = &SlotState> + Clone {
+        self.slots.iter().flatten().filter(|s| s.diff != DIFF_REMOVED)
     }
 
     /// The line whose fold marker is under a point in the gutter, if any.
@@ -191,6 +204,27 @@ impl Surface {
                         LineChange::Modified => 2,
                         LineChange::Deleted => 3,
                     }),
+                    diff: match &editor.inline_diff {
+                        Some(diff) if diff.added.contains(&line.index) => DIFF_ADDED,
+                        _ => 0,
+                    },
+                    char_width,
+                });
+            }
+            for removed in editor.inline_diff.iter().flat_map(|d| &d.removed) {
+                wanted[removed.row % slot_count] = Some(SlotState {
+                    index: removed.before,
+                    row: removed.row,
+                    base: self.base,
+                    fold: 0,
+                    brackets: Vec::new(),
+                    text: removed.text.clone(),
+                    selections: Vec::new(),
+                    problems: Vec::new(),
+                    highlights: Vec::new(),
+                    carets: Vec::new(),
+                    change: 0,
+                    diff: DIFF_REMOVED,
                     char_width,
                 });
             }
@@ -205,7 +239,7 @@ impl Surface {
                 None => Line { y: -1000.0, ..Line::default() },
                 Some(s) => Line {
                     y: (s.row - s.base) as f32 * line_height(window),
-                    number: (s.index + 1).to_string().into(),
+                    number: if s.diff == DIFF_REMOVED { "".into() } else { (s.index + 1).to_string().into() },
                     fold: s.fold,
                     fold_x: s.text.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>() as f32 * char_width,
                     brackets: if s.brackets.is_empty() {
@@ -252,6 +286,7 @@ impl Surface {
                         ))
                     },
                     change: s.change,
+                    diff: s.diff,
                 },
             };
             self.lines.set_row_data(slot, row);

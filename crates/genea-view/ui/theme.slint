@@ -46,6 +46,11 @@ export global Theme {
     out property <color> git-deleted: root.dark ? #f85149 : #cf222e;
     // The background of a change's lines at HEAD in its popover.
     out property <color> git-head-background: root.dark ? #2d1517 : #ffebe9;
+    // The inline diff (ticket #55): the rows of added and removed lines,
+    // and the removed lines' text.
+    out property <color> diff-added-background: root.dark ? #12261e : #e6ffec;
+    out property <color> diff-removed-background: root.dark ? #2d1517 : #ffebe9;
+    out property <color> diff-removed-foreground: root.dark ? #b1bac4 : #57606a;
 
     out property <color> chrome-background: root.dark ? #161b22 : #f6f8fa;
     out property <color> chrome-border: root.dark ? #30363d : #d0d7de;

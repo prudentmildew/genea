@@ -13,6 +13,7 @@
 mod decorations;
 mod assist;
 mod indent;
+mod inline_diff;
 mod navigation;
 mod structural;
 mod text_edits;
@@ -37,6 +38,8 @@ use crate::{
     text::{self, LineEnding},
     view::{Caret, EditorView, HighlightSpan, Preedit, VisibleLine},
 };
+pub(crate) use inline_diff::InlineDiff;
+use inline_diff::RowContent;
 
 /// Grid columns a tab advances to (the next multiple of this).
 const TAB_WIDTH: usize = 4;
@@ -149,6 +152,12 @@ pub(crate) struct Editor {
     /// `disk` changed outside Genea while the buffer had unsaved edits: the
     /// conflict bar shows until the user picks Reload or Keep my edits.
     conflict: bool,
+    /// The diff shown inline (ticket #55), if any: its removed lines take
+    /// rows of their own (scrolling and the view count them).
+    inline_diff: Option<InlineDiff>,
+    /// The file isn't on disk: a deleted file, opened empty and read-only
+    /// to show its inline diff (ticket #55). No language work starts for it.
+    missing: bool,
 }
 
 /// The buffer as it was when a save started.
@@ -187,6 +196,8 @@ impl Editor {
             disk,
             disk_generation: fresh_disk_generation(),
             conflict: false,
+            inline_diff: None,
+            missing: false,
         }
     }
 
@@ -834,9 +845,10 @@ impl Editor {
     }
 
     /// Scrolls by `rows`, keeping the last line at the bottom of the
-    /// viewport at most. Rows are lines not hidden in a fold.
+    /// viewport at most. Rows are lines not hidden in a fold, plus an
+    /// inline diff's removed lines.
     pub(crate) fn scroll_by(&mut self, rows: f64, viewport_rows: f64) {
-        let max = (self.row_count() as f64 - viewport_rows).max(0.0);
+        let max = (self.display_row_count() as f64 - viewport_rows).max(0.0);
         self.scroll_top = (self.scroll_top + rows).clamp(0.0, max);
     }
 
@@ -844,7 +856,7 @@ impl Editor {
     /// unfolding any folds that hide a caret.
     fn reveal_caret(&mut self, viewport_rows: f64) {
         self.unfold_carets();
-        let line = self.row_of(self.text.char_to_line(self.primary().caret)) as f64;
+        let line = self.display_row_of(self.text.char_to_line(self.primary().caret)) as f64;
         if line < self.scroll_top {
             self.scroll_top = line;
         } else if line + 1.0 > self.scroll_top + viewport_rows {
@@ -913,13 +925,20 @@ impl Editor {
 
     pub(crate) fn view(&self, viewport_rows: f64) -> EditorView {
         let line_count = self.text.len_lines();
-        let row_count = self.row_count();
+        let row_count = self.display_row_count();
         let first = (self.scroll_top.floor() as usize).min(row_count);
         let end = ((self.scroll_top + viewport_rows).ceil() as usize).min(row_count);
         let mut ranges: Vec<Range<usize>> =
             self.carets.iter().map(|c| c.range()).filter(|r| !r.is_empty()).collect();
         ranges.sort_by_key(|r| r.start);
-        let shown = self.rows_to_lines(first..end);
+        let rows = self.display_rows(first..end);
+        let shown: Vec<(usize, usize)> = rows
+            .iter()
+            .filter_map(|&(row, content)| match content {
+                RowContent::Line(index) => Some((row, index)),
+                RowContent::Removed { .. } => None,
+            })
+            .collect();
         let folds = self.fold_markers(shown.first().map_or(0, |s| s.1)..shown.last().map_or(0, |s| s.1 + 1));
         let lines: Vec<VisibleLine> = shown
             .iter()
@@ -948,6 +967,7 @@ impl Editor {
             column: caret.column,
             width: self.preedit.chars().fold(caret.column, display_columns_from) - caret.column,
         });
+        let inline_diff = self.inline_diff_view(&lines, &rows);
         EditorView {
             title: self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             path: self.path.clone(),
@@ -965,6 +985,7 @@ impl Editor {
             brackets: self.matched_brackets(),
             gutter: Vec::new(),
             hunk: None,
+            inline_diff,
             completion: None,
             hover: None,
             signature_help: None,
@@ -1122,9 +1143,10 @@ impl Editor {
         &self.text
     }
 
-    /// The whole file is in, not only its first screen (ticket #27).
+    /// The whole file is in, not only its first screen (ticket #27), and
+    /// it is on disk (not a deleted file shown for its diff, ticket #55).
     pub(crate) fn is_loaded(&self) -> bool {
-        self.loading.is_none()
+        self.loading.is_none() && !self.missing
     }
 
     pub(crate) fn cursor(&self) -> Cursor {

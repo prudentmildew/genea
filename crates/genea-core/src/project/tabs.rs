@@ -331,8 +331,18 @@ impl Project {
         self.close_empty_pane(pane);
         if !self.panes.sides.iter().any(|s| s.position(&removed.path).is_some()) {
             self.panes.parked.retain(|e| e.path() != removed.path);
+            self.inline_diffs.forget(&removed.path);
         }
         self.unpark();
+    }
+
+    /// Closes every tab of a file, without asking.
+    pub(super) fn close_file(&mut self, path: &Path) {
+        while let Some((pane, tab)) =
+            self.panes.sides.iter().enumerate().find_map(|(p, side)| side.position(path).map(|t| (p, t)))
+        {
+            self.remove_tab(pane, tab);
+        }
     }
 
     /// Closes `pane` if it has no tabs and isn't the only one. The other
