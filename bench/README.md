@@ -44,7 +44,7 @@ then ask it to open the file under test, in a fresh Genea per run.
 
 | Scenario | Budgets |
 | --- | --- |
-| `start` | warm start ≤ start floor + 50 ms; cold start after `purge` ≤ start floor + 100 ms (content visible, p95 minus the floor's p95, every Genea run paired with a floor run). Every Genea run is a first open: the harness deletes the workspace's review store first, so the review snapshot runs during the start |
+| `start` | warm start ≤ start floor + 50 ms; cold start after `purge` ≤ start floor + 100 ms (content visible, p95 minus the floor's p95, every Genea run paired with a floor run). Every Genea run is a first open: the harness deletes the workspace's review store first, so the review snapshot runs during the start; and every run restores the session the previous run saved as it quit (ticket #59) |
 | `typing` | keystroke to frame ≤ 8 ms (Genea's work, p95, 400 keys at 25/s); no main-thread stall > 16 ms |
 | `typing-silent-lsp` | the same, in a copy of the file whose project's tsgo is `genea-fake-lsp` scripted never to answer (ticket #42: typing never waits on a language server) |
 | `scroll` | ≤ 1 % dropped frames at the display's rate; frame work ≤ 8.3 ms (a 120 Hz frame, p95); no stall > 16 ms |

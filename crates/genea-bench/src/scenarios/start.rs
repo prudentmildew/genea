@@ -16,6 +16,11 @@
 //! Genea snapshots every file in review in the background while it starts.
 //! The budget then shows that the snapshot doesn't delay content visible,
 //! and a run fails if Genea didn't start the snapshot.
+//!
+//! Every Genea start also restores a session (ticket #59): the harness's
+//! `quit` saves the workspace's session as ⌘Q does, so each launch (after
+//! the throwaway one) reopens the window's tabs, terminal and layout from
+//! the run before it, as a user's restart does.
 
 use std::{
     fs,
