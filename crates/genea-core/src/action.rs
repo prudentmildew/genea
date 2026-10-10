@@ -64,7 +64,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 42] = [
+    pub const ALL: [Action; 43] = [
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
