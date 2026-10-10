@@ -19,6 +19,7 @@
 //! and ops run one at a time in the background, in the order they were
 //! asked for. So a check never races a Keep or a Revert of the same file.
 
+mod diff_base;
 mod own;
 mod scope;
 pub(crate) mod store;
@@ -30,6 +31,7 @@ use std::{
     sync::Arc,
 };
 
+pub(crate) use diff_base::BaselineReader;
 pub(crate) use own::OwnWrites;
 use scope::Scope;
 use store::{Budget, FileState, Hash, LARGE_BLOBS_CAP, Store, read_file, store_file};

@@ -434,6 +434,51 @@ pub struct EditorView {
     /// Rollback. Typing, a click in the text and most other commands close
     /// it (`Command::HideHunk` does too); scrolling doesn't.
     pub hunk: Option<HunkView>,
+    /// The file shown as an inline diff (ticket #55), e.g. after
+    /// `Command::OpenChange`: lines removed since the base are drawn as
+    /// rows of their own between the file's lines, and lines added since
+    /// are marked. `None` while the file shows plainly.
+    pub inline_diff: Option<InlineDiffView>,
+}
+
+/// An inline diff on the visible rows: how the file differs from a base
+/// (its review baseline). Removed lines take rows of their own, so with a
+/// diff `VisibleLine::row` counts them too; `lines` and `removed` together
+/// fill the rows. The file stays editable, and the diff follows edits a
+/// moment behind, like the gutter markers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlineDiffView {
+    /// What the file is compared with.
+    pub against: DiffAgainst,
+    /// The visible lines that aren't in the base (added, or replacing
+    /// removed lines), as `VisibleLine::index`es, top to bottom.
+    pub added: Vec<usize>,
+    /// The removed lines on the visible rows, top to bottom.
+    pub removed: Vec<RemovedLine>,
+    /// For a diff against the review baseline: the file's entry in
+    /// Changes, whose Keep and Revert (`Command::KeepChange`,
+    /// `Command::RevertChange`) the diff offers. The diff closes once the
+    /// file leaves Changes.
+    pub change: Option<ChangeItem>,
+}
+
+/// What an inline diff compares the file with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffAgainst {
+    /// The file's review baseline (ticket #55).
+    ReviewBaseline,
+}
+
+/// A line of the base that isn't in the file, on a row of its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemovedLine {
+    /// The row it is drawn on.
+    pub row: usize,
+    /// The file line it was removed just above (`VisibleLine::index`); a
+    /// click on it goes there.
+    pub before: usize,
+    /// Its text as laid out on the grid, like `VisibleLine::text`.
+    pub text: String,
 }
 
 /// A change against HEAD, as its popover shows it.
