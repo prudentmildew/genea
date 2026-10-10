@@ -149,6 +149,9 @@ pub(crate) struct Editor {
     /// The diff shown inline (ticket #55), if any: its removed lines take
     /// rows of their own (scrolling and the view count them).
     inline_diff: Option<InlineDiff>,
+    /// The file isn't on disk: a deleted file, opened empty and read-only
+    /// to show its inline diff (ticket #55). No language work starts for it.
+    missing: bool,
 }
 
 /// The buffer as it was when a save started.
@@ -187,6 +190,7 @@ impl Editor {
             disk_generation: fresh_disk_generation(),
             conflict: false,
             inline_diff: None,
+            missing: false,
         }
     }
 
@@ -1089,9 +1093,10 @@ impl Editor {
         &self.text
     }
 
-    /// The whole file is in, not only its first screen (ticket #27).
+    /// The whole file is in, not only its first screen (ticket #27), and
+    /// it is on disk (not a deleted file shown for its diff, ticket #55).
     pub(crate) fn is_loaded(&self) -> bool {
-        self.loading.is_none()
+        self.loading.is_none() && !self.missing
     }
 
     pub(crate) fn cursor(&self) -> Cursor {

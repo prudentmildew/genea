@@ -48,3 +48,30 @@ fn opening_a_changed_file_from_changes_shows_removed_and_added_lines_interleaved
     assert_eq!(view.path, std::path::Path::new("main.ts"));
     assert_eq!(rows(&view), [" one", "-two", "+2", " three", " four", "+five", " "]);
 }
+
+#[test]
+fn a_created_file_shows_as_all_added() {
+    let (fixture, mut workbench, project) = open(&[("main.ts", "one\n")]);
+    fixture.write("src/new.ts", "alpha\nbeta\n");
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::OpenChange("src/new.ts".into()));
+    workbench.settle().unwrap();
+
+    assert_eq!(rows(&editor(&workbench, project)), ["+alpha", "+beta", " "]);
+}
+
+#[test]
+fn a_deleted_file_opens_read_only_and_shows_as_all_removed() {
+    let (fixture, mut workbench, project) = open(&[("main.ts", "one\n"), ("old.ts", "first\nsecond\n")]);
+    fixture.remove("old.ts");
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::OpenChange("old.ts".into()));
+    workbench.settle().unwrap();
+
+    let view = editor(&workbench, project);
+    assert_eq!(view.path, std::path::Path::new("old.ts"));
+    assert!(view.read_only);
+    assert_eq!(rows(&view), ["-first", "-second", " "]);
+}

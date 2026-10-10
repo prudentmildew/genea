@@ -9,7 +9,7 @@
 //! and for the view (`VisibleLine::row`), but carets never land on them:
 //! Up and Down move by the file's own rows, as before.
 
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
 
 use ropey::Rope;
 use unicode_width::UnicodeWidthChar;
@@ -46,6 +46,20 @@ struct Block {
 }
 
 impl Editor {
+    /// An editor for a deleted file, to show its inline diff in: empty,
+    /// read-only, and not loaded, so no language work starts for it.
+    pub(crate) fn missing(path: PathBuf) -> Editor {
+        let mut editor = Editor::new(path, Rope::new()).read_only();
+        editor.syntax = None;
+        editor.missing = true;
+        editor
+    }
+
+    /// A deleted file's editor (see [`Editor::missing`]).
+    pub(crate) fn is_missing(&self) -> bool {
+        self.missing
+    }
+
     /// Shows `diff` inline, or the file plainly for `None`.
     pub(crate) fn set_inline_diff(&mut self, diff: Option<InlineDiff>, viewport_rows: f64) {
         self.inline_diff = diff;

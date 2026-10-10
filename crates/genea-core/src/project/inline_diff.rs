@@ -18,10 +18,10 @@ use super::Project;
 use crate::{
     command::Command,
     diff::BaseDiff,
-    editor::InlineDiff,
+    editor::{Editor, InlineDiff},
     jobs::Jobs,
     review::BaselineReader,
-    view::{DiffAgainst, EditorView},
+    view::{ChangeKind, DiffAgainst, EditorView},
 };
 
 /// The files shown with an inline diff, by path.
@@ -71,7 +71,12 @@ impl Project {
         let shown = Shown { against: DiffAgainst::ReviewBaseline, baseline: baseline.clone(), reading: None, diff: BaseDiff::default() };
         self.inline_diffs.files.insert(path.clone(), shown);
         self.read_baseline(path.clone(), baseline, jobs);
-        self.open_file(path, None, jobs);
+        let deleted = self.review.listed_change(&path).is_some_and(|c| c.kind == ChangeKind::Deleted);
+        if !deleted {
+            self.open_file(path, None, jobs);
+        } else if !self.focus_open_file(&path) {
+            self.open_tab(Editor::missing(path));
+        }
     }
 
     /// Reads a shown file's baseline in the background, then diffs it.
