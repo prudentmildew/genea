@@ -15,7 +15,7 @@ use gen_lsp_types::{Diagnostic, DiagnosticSeverity, FileEvent, Message};
 use genea_host::{ProcessSpec, SharedHost};
 use serde_json::json;
 
-use super::{Project, oxlint::Linting};
+use super::{Project, formatting::Formatting, oxlint::Linting};
 use crate::{
     command::Command,
     jobs::Jobs,
@@ -51,6 +51,8 @@ pub(crate) struct Language {
     navigation: navigation::Navigation,
     /// Oxlint (ticket #49, `project/oxlint.rs`).
     pub(super) oxlint: Linting,
+    /// Oxfmt, and format and fix on save (ticket #50, `project/formatting.rs`).
+    pub(super) oxfmt: Formatting,
 }
 
 impl Language {
@@ -80,6 +82,7 @@ impl Project {
         self.language.context = Some((host, jobs.clone()));
         self.detect_typescript();
         self.detect_oxc();
+        self.detect_oxfmt();
     }
 
     /// [`START_TIMEOUT`] has passed since the project opened.
@@ -130,6 +133,8 @@ impl Project {
                     // Genea pulls diagnostics; pushing them too would be work for nothing.
                     options: json!({ "disablePushDiagnostics": true }),
                     label: format!("TypeScript {version}"),
+                    languages: text::language_id,
+                    pull_diagnostics: true,
                 };
                 let env = self.process_env();
                 let mut server = LanguageServer::new(self.id, self.root.clone(), spec, host, jobs);
@@ -154,6 +159,9 @@ impl Project {
         if self.language.oxlint.owns(generation) {
             return self.oxlint_event(generation, event);
         }
+        if self.language.oxfmt.owns(generation) {
+            return self.oxfmt_event(generation, event);
+        }
         let Some(server) = &mut self.language.typescript else { return };
         let outputs = server.event(generation, event);
         self.language_outputs(outputs);
@@ -163,6 +171,9 @@ impl Project {
     pub(crate) fn language_timer(&mut self, generation: u64, timer: Timer) {
         if self.language.oxlint.owns(generation) {
             return self.oxlint_timer(generation, timer);
+        }
+        if self.language.oxfmt.owns(generation) {
+            return self.oxfmt_timer(generation, timer);
         }
         let env = self.process_env();
         let Some(server) = &mut self.language.typescript else { return };
@@ -174,6 +185,7 @@ impl Project {
     /// editors. Runs after every command and every background result.
     pub(crate) fn sync_language(&mut self) {
         self.sync_oxlint();
+        self.sync_oxfmt();
         let Some(server) = &mut self.language.typescript else { return };
         let editors = self.editor.iter().chain(self.panes.parked());
         let outputs = server.sync(editors);
@@ -197,6 +209,7 @@ impl Project {
     /// 7 again (it may have been installed or removed).
     pub(super) fn language_files_changed(&mut self, changes: &FileChanges) {
         self.oxlint_files_changed(changes);
+        self.oxfmt_files_changed(changes);
         if let Some(server) = &self.language.typescript {
             server.files_changed(&changes.paths, &changes.created);
         }
@@ -217,6 +230,9 @@ impl Project {
     pub(crate) fn language_files_events(&mut self, generation: u64, events: Vec<FileEvent>) {
         if self.language.oxlint.owns(generation) {
             return self.oxlint_files_events(generation, events);
+        }
+        if self.language.oxfmt.owns(generation) {
+            return self.oxfmt_files_events(generation, events);
         }
         if let Some(server) = &self.language.typescript {
             server.send_file_events(generation, events);
@@ -279,6 +295,8 @@ impl Project {
                 Output::Symbols { id, symbols } => self.symbols_answered(id, symbols),
                 Output::CodeActions { ticket, fixes } => self.code_actions_answered(ticket, fixes),
                 Output::Navigation(answer) => self.navigation_answered(answer),
+                // tsgo's formatter is never asked (ticket #50).
+                Output::Formatted { .. } => {}
             }
         }
     }

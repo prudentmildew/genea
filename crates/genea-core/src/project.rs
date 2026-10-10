@@ -6,6 +6,7 @@ mod external;
 mod language;
 mod oxlint;
 mod finder;
+mod formatting;
 mod quick_fixes;
 mod symbols;
 mod tabs;
@@ -48,6 +49,7 @@ use crate::{
     workspace::Workspace,
 };
 use check::Check;
+pub use formatting::FORMAT_TIMEOUT;
 use language::Language;
 use quick_fixes::QuickFixes;
 use tabs::Panes;
@@ -548,7 +550,9 @@ impl Project {
             Command::RestartLanguageServer => {
                 self.restart_language_server();
                 self.restart_oxlint();
+                self.restart_oxfmt();
             }
+            Command::ReformatFile => self.reformat_file(),
             Command::AddTypeScript => self.add_typescript(jobs),
             Command::AddOxlintAndOxfmt => self.add_oxc(jobs),
             Command::OpenFinder(_)
@@ -862,7 +866,7 @@ impl Project {
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
-            language_servers: self.language_status().into_iter().chain(self.oxlint_status()).collect(),
+            language_servers: self.language_status().into_iter().chain(self.oxlint_status()).chain(self.oxfmt_status()).collect(),
             project_check: self.project_check_status(),
             script_links: self.terminal.script_links(),
         };
@@ -872,6 +876,7 @@ impl Project {
         notices.extend(self.environment.iter().flat_map(Environment::notices));
         notices.extend(self.language_notices());
         notices.extend(self.oxlint_notices());
+        notices.extend(self.oxfmt_notices());
         notices.extend(self.project_check_notices());
         ProjectView {
             root: self.root.clone(),
@@ -974,9 +979,10 @@ impl Project {
         }
     }
 
-    /// Writes an open file in the background, as it is now. Edits made
-    /// while it is written stay unsaved; a failed write adds a notice.
-    fn save(&mut self, path: PathBuf, jobs: &Jobs) {
+    /// Writes an open file in the background, as it is now: the last step
+    /// of a save (`project/formatting.rs`). Edits made while it is written
+    /// stay unsaved; a failed write adds a notice.
+    fn write_file(&mut self, path: PathBuf, jobs: &Jobs) {
         let Some(editor) = self.open_editor_mut(&path).filter(|e| !e.is_read_only()) else { return };
         let snapshot = editor.start_save();
         let absolute = self.root.join(&snapshot.path);

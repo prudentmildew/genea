@@ -14,6 +14,8 @@
 //!   timers by them ([`LanguageServer::owns`]).
 //! - [`typescript`]: finding tsgo in `node_modules`, and "Add TypeScript 7".
 //! - [`oxc`]: finding Oxlint and Oxfmt, and "Add Oxlint and Oxfmt".
+//! - [`formatting`]: `textDocument/formatting` (Oxfmt) and Oxlint's
+//!   `source.fixAll.oxc`, for format and fix on save (#50).
 //! - [`watch`]: the globs a server registers for
 //!   `workspace/didChangeWatchedFiles`, fed from the project watcher.
 //! - [`text`]: URIs, language ids and positions.
@@ -35,6 +37,7 @@
 
 pub(crate) mod actions;
 mod connection;
+pub(crate) mod formatting;
 pub(crate) mod oxc;
 pub(crate) mod symbols;
 pub(crate) mod navigation;
@@ -44,7 +47,7 @@ pub(crate) mod watch;
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -105,6 +108,12 @@ pub(crate) struct ServerSpec {
     /// Shown while it runs, e.g. `TypeScript 7.0.2`, until the server names
     /// its own version.
     pub(crate) label: String,
+    /// The open files it gets, by their language id
+    /// ([`text::language_id`] for the first-class languages); `None` leaves
+    /// a file out.
+    pub(crate) languages: fn(&Path) -> Option<&'static str>,
+    /// Whether to pull its diagnostics (Oxfmt has none).
+    pub(crate) pull_diagnostics: bool,
 }
 
 /// What the project must do after a server event or a sync.
@@ -125,6 +134,9 @@ pub(crate) enum Output {
     CodeActions { ticket: u64, fixes: Vec<actions::CodeActionFix> },
     /// A navigation or rename answer (ticket #44).
     Navigation(navigation::Answer),
+    /// The answer to [`format`](LanguageServer::format) with this ticket:
+    /// the edits that format the document, none if it failed (ticket #50).
+    Formatted { ticket: u64, edits: Vec<actions::TextEdit> },
 }
 
 /// A request waiting for its answer.
@@ -140,6 +152,8 @@ pub(crate) enum Pending {
     CodeActions(u64),
     /// Go to definition, find usages or rename (ticket #44).
     Navigation(navigation::Ask),
+    /// `textDocument/formatting`, with the asker's ticket (ticket #50).
+    Formatting(u64),
 }
 
 /// A timer of a server's, on the host clock.
@@ -334,7 +348,7 @@ impl LanguageServer {
         let mut changed = false;
         for editor in editors {
             let path = editor.path();
-            let Some(language) = text::language_id(path) else { continue };
+            let Some(language) = (self.spec.languages)(path) else { continue };
             if editor.is_large() || !editor.is_loaded() {
                 continue;
             }
@@ -376,7 +390,7 @@ impl LanguageServer {
             }
         }
         for (path, document) in &mut self.documents {
-            if document.wanted && document.pulling.is_none() {
+            if self.spec.pull_diagnostics && document.wanted && document.pulling.is_none() {
                 document.wanted = false;
                 let id = connection.request("textDocument/diagnostic", json!({ "textDocument": { "uri": document.uri } }));
                 document.pulling = Some(id);
@@ -431,6 +445,7 @@ impl LanguageServer {
                 }
                 Some(Pending::CodeActions(ticket)) => self.code_actions_answered(ticket, result),
                 Some(Pending::Navigation(ask)) => navigation::answered(ask, result),
+                Some(Pending::Formatting(ticket)) => formatting::answered(ticket, result),
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
@@ -646,6 +661,15 @@ impl LanguageServer {
                 }))
             }),
         );
+    }
+
+    /// Stops `settle` waiting for the answer to request `id`, which may
+    /// never come (ticket #50: a save gave up on it). A late answer is
+    /// still handled.
+    pub(crate) fn forget(&self, id: i64) {
+        if let Some(connection) = &self.connection {
+            connection.forget(id);
+        }
     }
 
     /// Sends a request to a ready server, remembering what it is for; the

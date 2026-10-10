@@ -168,7 +168,8 @@ impl LanguageServer {
     }
 }
 
-fn text_edit(edit: &Value) -> Option<TextEdit> {
+/// An LSP `TextEdit`.
+pub(super) fn text_edit(edit: &Value) -> Option<TextEdit> {
     let point = |p: &Value| Some((p["line"].as_u64()? as u32, p["character"].as_u64()? as u32));
     Some(TextEdit {
         start: point(&edit["range"]["start"])?,

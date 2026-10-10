@@ -69,6 +69,11 @@ impl Linting {
     pub(super) fn owns(&self, generation: u64) -> bool {
         self.server.as_ref().is_some_and(|(server, _)| server.owns(generation))
     }
+
+    /// `oxlint --lsp`, while it runs (fix on save asks it, ticket #50).
+    pub(super) fn server_mut(&mut self) -> Option<&mut LanguageServer> {
+        self.server.as_mut().map(|(server, _)| server)
+    }
 }
 
 impl Project {
@@ -235,6 +240,8 @@ impl Project {
                 }
                 Output::Clear(path) => self.problems.replace_file(source, &path, Vec::new()),
                 Output::ClearAll => self.problems.replace(source, Vec::new()),
+                // Fix on save's safe fixes (ticket #50).
+                Output::CodeActions { ticket, fixes } => self.oxlint_code_actions(ticket, fixes),
                 #[allow(unreachable_patterns)] // Requests Oxlint isn't sent yet (#45, #50).
                 _ => {}
             }
@@ -293,5 +300,7 @@ fn spec(root: &Path, launch: &Launch) -> ServerSpec {
             "options": { "typeAware": oxlint.type_aware },
         }]),
         label: format!("{NAME} {}", oxlint.version),
+        languages: text::language_id,
+        pull_diagnostics: true,
     }
 }

@@ -76,6 +76,58 @@ pub(crate) fn detect(root: &Path) -> OxcDetection {
     OxcDetection::Found(Oxlint { script, version, type_aware: type_aware(root) })
 }
 
+/// An installed Oxfmt (ticket #50).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Oxfmt {
+    /// `node_modules/oxfmt/bin/oxfmt` (absolute), run by the runtime.
+    pub(crate) script: PathBuf,
+    /// The package's version, e.g. `0.72.0`.
+    pub(crate) version: String,
+}
+
+/// The launcher inside the `oxfmt` package.
+const OXFMT_SCRIPT: &str = "bin/oxfmt";
+
+/// Looks for an installed Oxfmt: `None` unless `package.json` lists both
+/// Oxlint and Oxfmt (the role) and `node_modules/oxfmt` has its launcher.
+/// Reads the disk: call it in the background.
+pub(crate) fn detect_oxfmt(root: &Path) -> Option<Oxfmt> {
+    let text = fs::read_to_string(root.join("package.json")).ok()?;
+    let package: Value = serde_json::from_str(&text).ok()?;
+    if !declares(&package, "oxlint") || !declares(&package, "oxfmt") {
+        return None;
+    }
+    let folder = root.join("node_modules/oxfmt");
+    let script = folder.join(OXFMT_SCRIPT);
+    if !script.is_file() {
+        return None;
+    }
+    let version = fs::read_to_string(folder.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|package| package["version"].as_str().map(str::to_owned))
+        .unwrap_or_default();
+    Some(Oxfmt { script, version })
+}
+
+/// The language id of a file Oxfmt formats (ticket #50): the first-class
+/// languages, JSON, CSS, YAML, Markdown and HTML. Not `.env`.
+pub(crate) fn oxfmt_language_id(path: &Path) -> Option<&'static str> {
+    if let Some(id) = super::text::language_id(path) {
+        return Some(id);
+    }
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "json" => "json",
+        "jsonc" => "jsonc",
+        "css" => "css",
+        "yaml" | "yml" => "yaml",
+        "md" | "markdown" => "markdown",
+        "html" | "htm" => "html",
+        _ => return None,
+    })
+}
+
 /// Whether any dependency section of `package` lists `name`.
 fn declares(package: &Value, name: &str) -> bool {
     SECTIONS.iter().any(|section| package[section].get(name).is_some())

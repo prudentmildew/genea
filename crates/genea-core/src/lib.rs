@@ -65,6 +65,7 @@ pub use syntax::Highlight;
 pub use environment::LOGIN_SHELL_TIMEOUT;
 pub use terminal::SCRIPT_STOP_TIMEOUT;
 pub use lsp::{MAX_RESTARTS, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT};
+pub use project::FORMAT_TIMEOUT;
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
 pub use grid::{GridPiece, grid_pieces};
