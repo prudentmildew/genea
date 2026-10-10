@@ -15,7 +15,10 @@
 //! launch the harness deletes the workspace's review baseline store, so
 //! Genea snapshots every file in review in the background while it starts.
 //! The budget then shows that the snapshot doesn't delay content visible,
-//! and a run fails if Genea didn't start the snapshot.
+//! and a run fails if Genea didn't start the snapshot. It also bounds a
+//! later open's rescan (ticket #54), which runs in the same background op
+//! and does a subset of the snapshot's work (it walks and stats every file
+//! but reads only those whose size or mtime moved).
 //!
 //! Every Genea start also restores a session (ticket #59): the harness's
 //! `quit` saves the workspace's session as ⌘Q does, so each launch (after
@@ -156,12 +159,12 @@ fn forget_review_baseline(workspace: &Path) -> Result<(), String> {
     }
 }
 
-fn can_purge() -> bool {
+pub(super) fn can_purge() -> bool {
     Command::new("sudo").args(["-n", "true"]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
 /// Drops the file cache so binaries and libraries come from disk.
-fn purge() -> Result<(), String> {
+pub(super) fn purge() -> Result<(), String> {
     let status = Command::new("sudo").args(["-n", "purge"]).status().map_err(|e| format!("purge: {e}"))?;
     if !status.success() {
         return Err(format!("purge failed: {status}"));

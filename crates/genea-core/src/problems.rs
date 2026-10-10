@@ -31,6 +31,8 @@ pub enum ProblemSource {
     Toolchain,
     /// tsgo's live diagnostics for open files (ticket #42).
     TypeScript,
+    /// `oxlint --lsp`'s live diagnostics for open files (ticket #49).
+    Oxlint,
     /// The last project check's results (ticket #48): `tsc -b --noEmit`
     /// over the whole project, kept until the next check.
     ProjectCheck,

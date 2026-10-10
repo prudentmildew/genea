@@ -28,6 +28,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use crate::{
     ChangeMark, ChangeRow, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, QuickFixPopup, ScriptRow,
     SearchRow, TabEntry, Theme, app::with_app,
+    assist::HoverPointer,
     dialogs, fonts,
     keys::{Modifiers, PopupKey},
     links,
@@ -102,6 +103,8 @@ pub struct WindowController {
     terminal_url: Option<String>,
     /// The Usages view and the rename prompt (ticket #44).
     pub navigation: Navigation,
+    /// The pointer resting over text, for hover (ticket #43).
+    hover: HoverPointer,
 }
 
 /// How far left of the text a press still hits a git gutter marker: its
@@ -171,6 +174,7 @@ impl WindowController {
             terminal_tab: 0,
             terminal_url: None,
             navigation,
+            hover: HoverPointer::default(),
         })
     }
 
@@ -313,6 +317,37 @@ impl WindowController {
         let (line, column) = self.surfaces[pane].cell_under(&self.window, x, y);
         self.last_double_click = Some((Instant::now(), line));
         self.dispatch(workbench, Command::SelectWord { line, column });
+    }
+
+    /// The pointer moved over a pane's text (not dragging): after a rest,
+    /// the cell under it gets its hover (ticket #43).
+    pub fn pointer_moved(&mut self, pane: usize, x: f32, y: f32) {
+        let (line, column) = self.surfaces[pane].cell_under(&self.window, x, y);
+        self.hover.moved(self.key, pane, line, column);
+    }
+
+    pub fn pointer_left(&mut self) {
+        self.hover.left();
+    }
+
+    /// The pointer rested on a cell: asks for its hover, in the focused
+    /// pane (popups show there only).
+    pub fn hover(&mut self, workbench: &mut Workbench, pane: usize, line: usize, column: usize) {
+        if pane == self.focused_pane && !self.terminal_focused {
+            self.dispatch(workbench, Command::HoverAt { line, column });
+        }
+    }
+
+    /// The command for a key that an open popup takes (↑/↓, Return and Tab
+    /// in the completion list, Esc), if any.
+    pub fn popup_command(&self, text: &str, modifiers: Modifiers) -> Option<Command> {
+        self.surfaces[self.focused_pane].popups().command_for(text, modifiers)
+    }
+
+    /// A click on a completion: inserts it.
+    pub fn click_completion(&mut self, workbench: &mut Workbench, index: usize) {
+        workbench.dispatch(self.project, Command::SelectCompletionItem(index));
+        self.dispatch(workbench, Command::AcceptCompletion);
     }
 
     /// A press in a pane without the focus focuses it first.
@@ -612,6 +647,8 @@ impl WindowController {
         // terminal too; when it closes, the focused pane or the terminal
         // gets it back.
         let finder_closed = self.sync_finder(view.finder.as_ref());
+        // Everything is in Slint now: what the harness waits for (ticket #63).
+        crate::journal::check_view(&view);
         if view.focused_pane != self.focused_pane || view.terminal.focused != self.terminal_focused || finder_closed {
             self.focused_pane = view.focused_pane;
             self.terminal_focused = view.terminal.focused;

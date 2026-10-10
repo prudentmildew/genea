@@ -88,4 +88,7 @@ pub use view::QuickFixesView;
 pub use view::{PackageScripts, Script, ScriptLink};
 pub use view::{RenamePrompt, UsagesView};
 pub use view::{DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, WindowFrame, WindowLayout};
+pub use view::{
+    CompletionItem, CompletionKind, CompletionView, HoverView, MAX_COMPLETION_ITEMS, MarkupBlock, SignatureHelpView,
+};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

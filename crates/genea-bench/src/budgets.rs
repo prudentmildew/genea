@@ -7,8 +7,8 @@
 //! dead-key composition) is a budget of zero mismatches.
 //!
 //! The table below is #6 as revised by #18 (spec #19, Benchmark harness).
-//! #63 adds its rows (navigation, memory with workspaces open, end-to-end
-//! targets) here.
+//! #63 added navigation, memory with workspaces open, and the language
+//! server's end-to-end targets.
 
 use serde_json::{Value, json};
 
@@ -132,6 +132,143 @@ pub const OPEN_100MB: Budget = Budget {
 pub const OPEN_100MB_STALL: Budget = Budget {
     id: "open.100mb.stall",
     title: "Opening a 100 MB file: longest main-thread stall",
+    limit: 16.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+
+// Navigation (ticket #63), on the Typical and Large reference workspaces.
+// The reaction times are Genea's work, as for keystrokes: from the key, the
+// request or the write on disk to the view state in Slint, plus the frame
+// that shows it (the wait for the display-link tick in between is left out).
+pub const FINDER_TYPICAL: Budget = Budget {
+    id: "finder.keystroke.typical",
+    title: "Fuzzy finder: keystroke to its results shown, Typical (p95)",
+    limit: 16.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const FINDER_LARGE: Budget = Budget {
+    id: "finder.keystroke.large",
+    title: "Fuzzy finder: keystroke to its results shown, Large (p95)",
+    limit: 50.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const SEARCH_FIRST_TYPICAL: Budget = Budget {
+    id: "search.first.typical",
+    title: "Project search: first results shown, Typical (p95)",
+    limit: 100.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const SEARCH_DONE_TYPICAL: Budget = Budget {
+    id: "search.complete.typical",
+    title: "Project search: complete, Typical (p95)",
+    limit: 500.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const SEARCH_FIRST_LARGE: Budget = Budget {
+    id: "search.first.large",
+    title: "Project search: first results shown, Large (p95)",
+    limit: 250.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const SEARCH_DONE_LARGE: Budget = Budget {
+    id: "search.complete.large",
+    title: "Project search: complete, Large (p95)",
+    limit: 3000.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const TREE_EXPAND_TYPICAL: Budget = Budget {
+    id: "tree.expand.typical",
+    title: "Files view: folder expanded, Typical (p95)",
+    limit: 16.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const TREE_EXPAND_LARGE: Budget = Budget {
+    id: "tree.expand.large",
+    title: "Files view: folder expanded, Large (p95)",
+    limit: 16.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const EXTERNAL_TYPICAL: Budget = Budget {
+    id: "external.typical",
+    title: "External change shown in the tree and the open editor, Typical (p95)",
+    limit: 200.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+pub const EXTERNAL_LARGE: Budget = Budget {
+    id: "external.large",
+    title: "External change shown in the tree and the open editor, Large (p95)",
+    limit: 500.0,
+    unit: "ms",
+    kind: Kind::Budget,
+};
+// Memory with a workspace open (ticket #63): phys_footprint ≥ 2 s after the
+// last input, 1200×800 pt at 2×, the language server excluded.
+pub const MEMORY_TYPICAL: Budget = Budget {
+    id: "memory.typical",
+    title: "Memory with Typical open, 1200×800 pt at 2× (p95)",
+    limit: 300.0,
+    unit: "MB",
+    kind: Kind::Budget,
+};
+pub const MEMORY_LARGE: Budget = Budget {
+    id: "memory.large",
+    title: "Memory with Large open, 1200×800 pt at 2× (p95)",
+    limit: 1024.0,
+    unit: "MB",
+    kind: Kind::Budget,
+};
+
+// The language server (ticket #63). The end-to-end targets include tsgo,
+// which Genea doesn't control: reported, never failing the run.
+pub const LSP_FIRST_DIAGNOSTICS: Budget = Budget {
+    id: "lsp.first_diagnostics",
+    title: "First diagnostics, cold: launch to the problem shown, Typical (p95)",
+    limit: 2000.0,
+    unit: "ms",
+    kind: Kind::Target,
+};
+pub const LSP_COMPLETION: Budget = Budget {
+    id: "lsp.completion",
+    title: "Completions: tsgo's answer, Typical (p95)",
+    limit: 100.0,
+    unit: "ms",
+    kind: Kind::Target,
+};
+pub const LSP_DEFINITION: Budget = Budget {
+    id: "lsp.definition",
+    title: "Go to definition: tsgo's answer, Typical (p95)",
+    limit: 100.0,
+    unit: "ms",
+    kind: Kind::Target,
+};
+pub const LSP_DIAGNOSTICS_AFTER_EDIT: Budget = Budget {
+    id: "lsp.diagnostics_after_edit",
+    title: "Diagnostics after an edit: keystroke to the problems shown, Typical (p95)",
+    limit: 300.0,
+    unit: "ms",
+    kind: Kind::Target,
+};
+pub const LSP_MEMORY: Budget = Budget {
+    id: "lsp.memory",
+    title: "Language server memory with Typical open (p95)",
+    limit: 1536.0,
+    unit: "MB",
+    kind: Kind::Target,
+};
+/// The one language-server check that fails the run.
+pub const LSP_BLOCKING: Budget = Budget {
+    id: "lsp.never_blocks",
+    title: "A language server never blocks typing or rendering: longest stall or keystroke while tsgo works",
     limit: 16.0,
     unit: "ms",
     kind: Kind::Budget,

@@ -27,6 +27,7 @@
 
 mod about;
 mod app;
+mod assist;
 mod blink;
 mod dialogs;
 mod fonts;

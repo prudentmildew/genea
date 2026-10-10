@@ -42,8 +42,10 @@ impl Output {
     }
 }
 
-/// The machine the results are from (#63 compares them across machines).
-pub fn machine() -> Value {
+/// The machine the results are from (#63 compares them across machines):
+/// model, chip, memory, macOS, displays, and whether the person running
+/// the harness said it is the reference machine (`--reference-machine`).
+pub fn machine(reference: bool) -> Value {
     let run = |program: &str, args: &[&str]| {
         Command::new(program)
             .args(args)
@@ -60,7 +62,50 @@ pub fn machine() -> Value {
         "memory_gb": memory_gb,
         "macos": run("sw_vers", &["-productVersion"]),
         "macos_build": run("sw_vers", &["-buildVersion"]),
+        "displays": run("system_profiler", &["SPDisplaysDataType", "-json"])
+            .and_then(|json| serde_json::from_str::<Value>(&json).ok())
+            .map(|profile| displays(&profile)),
+        "reference": reference,
     })
+}
+
+/// The displays in `system_profiler SPDisplaysDataType -json` output, the
+/// main one first: name, resolution and refresh rate.
+pub fn displays(profile: &Value) -> Vec<String> {
+    let mut found: Vec<(bool, String)> = Vec::new();
+    for gpu in profile["SPDisplaysDataType"].as_array().into_iter().flatten() {
+        for display in gpu["spdisplays_ndrvs"].as_array().into_iter().flatten() {
+            let name = display["_name"].as_str().unwrap_or("display");
+            let mode = display["_spdisplays_resolution"].as_str().or(display["spdisplays_resolution"].as_str());
+            let main = display["spdisplays_main"] == "spdisplays_yes";
+            found.push((main, mode.map_or(name.to_string(), |mode| format!("{name} {mode}"))));
+        }
+    }
+    found.sort_by_key(|(main, _)| !main);
+    found.into_iter().map(|(_, display)| display).collect()
+}
+
+/// The machine in one line for the summary, saying plainly whether it is
+/// the reference machine (spec #19, Further Notes).
+pub fn machine_line(machine: &Value) -> String {
+    let s = |k: &str| machine[k].as_str().unwrap_or("?").to_string();
+    let mut hardware = vec![s("chip")];
+    if let Some(cores) = machine["cores"].as_u64() {
+        hardware.push(format!("{cores} cores"));
+    }
+    if let Some(gb) = machine["memory_gb"].as_f64() {
+        hardware.push(format!("{} GB", gb.round()));
+    }
+    let mut line = format!("{} ({}), macOS {}", s("model"), hardware.join(", "), s("macos"));
+    for display in machine["displays"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        line.push_str(&format!(", {display}"));
+    }
+    line.push_str(if machine["reference"] == true {
+        "; the reference machine"
+    } else {
+        "; a dev machine, NOT the reference machine"
+    });
+    line
 }
 
 /// The commit `dir`'s git repository is at, if it is one.

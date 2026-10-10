@@ -8,6 +8,11 @@
 
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
+mod assist;
+pub use assist::{
+    CompletionItem, CompletionKind, CompletionView, HoverView, MAX_COMPLETION_ITEMS, MarkupBlock, SignatureHelpView,
+};
+
 use crate::{
     Highlight,
     action::Action,
@@ -213,6 +218,8 @@ pub struct FinderView {
     /// Best first. While a new query is being matched, these are the last
     /// query's results.
     pub items: Vec<FinderItem>,
+    /// `query` is still being matched: `items` are the last query's.
+    pub matching: bool,
     /// Index into `items` of the result Return opens or runs; `None`
     /// without results.
     pub selected: Option<usize>,
@@ -474,6 +481,15 @@ pub struct EditorView {
     /// Rollback. Typing, a click in the text and most other commands close
     /// it (`Command::HideHunk` does too); scrolling doesn't.
     pub hunk: Option<HunkView>,
+    /// The completion list (ticket #43): while typing a word, after a
+    /// trigger character like `.`, or on ⌃Space.
+    pub completion: Option<CompletionView>,
+    /// Hover information for the code under the pointer, or under the
+    /// caret on Quick Documentation (F1, ⌃J).
+    pub hover: Option<HoverView>,
+    /// Parameter info inside a call's arguments: after `(` or `,`, or on
+    /// ⌘P, until the caret leaves the call.
+    pub signature_help: Option<SignatureHelpView>,
 }
 
 /// A change against HEAD, as its popover shows it.
