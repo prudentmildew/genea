@@ -31,7 +31,7 @@ libc = "0.2.190"
 # links, so these add features, not crates.
 objc2 = "0.6.5"
 block2 = "0.6.2"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSValue"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSNotification", "NSObject", "NSOperation", "NSString", "NSURL", "NSUserDefaults", "NSValue"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std", "block2", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace",
     "NSEvent", "NSScreen",

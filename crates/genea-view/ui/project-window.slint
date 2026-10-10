@@ -143,6 +143,10 @@ export component ProjectWindow inherits Window {
     in property <[string]> status-script-links;
     in-out property <length> terminal-width: 520px;
     in-out property <length> terminal-height: 260px;
+    // The left column's width, dragged at its edge (ticket #59). Like the
+    // terminal's size it is the view's own, kept in the session through
+    // `layout-changed`.
+    in-out property <length> left-column-width: 300px;
     out property <length> terminal-char-width: terminal.char-width;
     out property <length> terminal-grid-width: terminal.grid-width;
     out property <length> terminal-grid-height: terminal.grid-height;
@@ -251,6 +255,11 @@ export component ProjectWindow inherits Window {
     callback committed(text: string);
     callback preedit-changed(text: string);
     callback viewport-changed();
+    // The window's size or a splitter moved: the session keeps the layout
+    // (ticket #59).
+    callback layout-changed();
+    // View › Zoom In (1), Zoom Out (-1) and Reset Zoom (0) (ticket #59).
+    callback zoom(int);
     // The shown git change's buttons (ticket #56).
     callback rollback-hunk();
     callback hide-hunk();
@@ -275,6 +284,21 @@ export component ProjectWindow inherits Window {
     }
     changed terminal-grid-height => {
         root.terminal-size-changed();
+    }
+    changed width => {
+        root.layout-changed();
+    }
+    changed height => {
+        root.layout-changed();
+    }
+    changed left-column-width => {
+        root.layout-changed();
+    }
+    changed terminal-width => {
+        root.layout-changed();
+    }
+    changed terminal-height => {
+        root.layout-changed();
     }
 
     // Gives the finder's query the keyboard focus, when it opens.
@@ -591,6 +615,34 @@ export component ProjectWindow inherits Window {
                     root.new-terminal-tab();
                 }
             }
+
+            MenuSeparator { }
+
+            // The editor's and the terminal's font (ticket #59). ⌘= also
+            // zooms in (src/keys.rs), for keyboards where + needs ⇧.
+            MenuItem {
+                title: "Zoom In";
+                shortcut: @keys(Control + "+");
+                activated => {
+                    root.zoom(1);
+                }
+            }
+
+            MenuItem {
+                title: "Zoom Out";
+                shortcut: @keys(Control + "-");
+                activated => {
+                    root.zoom(-1);
+                }
+            }
+
+            MenuItem {
+                title: "Reset Zoom";
+                shortcut: @keys(Control + "0");
+                activated => {
+                    root.zoom(0);
+                }
+            }
         }
 
         Menu {
@@ -819,7 +871,7 @@ export component ProjectWindow inherits Window {
                     vertical-stretch: 1;
 
                     if root.left-column-visible: LeftColumn {
-                        width: 300px;
+                        width: root.left-column-width;
                         view: root.left-view;
                         problems: root.problems;
                         files: root.files;
@@ -874,9 +926,24 @@ export component ProjectWindow inherits Window {
                         }
                     }
 
+                    // The left column's edge: drag it to resize the column.
                     if root.left-column-visible: Rectangle {
                         width: 1px;
                         background: Theme.chrome-border;
+
+                        TouchArea {
+                            x: -2px;
+                            width: 5px;
+                            mouse-cursor: col-resize;
+                            moved => {
+                                if self.pressed {
+                                    root.left-column-width = clamp(
+                                        root.left-column-width + (self.mouse-x - self.pressed-x),
+                                        160px,
+                                        max(160px, root.width - 400px));
+                                }
+                            }
+                        }
                     }
 
                     left := EditorPane {
@@ -943,7 +1010,9 @@ export component ProjectWindow inherits Window {
                     }
 
                     right := EditorPane {
-                        horizontal-stretch: 1;
+                        // Hidden, it takes no room from the left pane.
+                        horizontal-stretch: root.split ? 1 : 0;
+                        max-width: root.split ? 100000px : 0px;
                         visible: root.split;
                         tabs: root.right-tabs;
                         focused: root.focused-pane == 1;

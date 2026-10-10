@@ -6,8 +6,10 @@
 // `follow-system` and `pinned-dark` per window (src/window.rs). Each window
 // has its own instance of this global.
 //
-// The editor font is Menlo 13 pt with a line height of 1.2 (spec #19). Keep
-// line-height in step with LINE_HEIGHT in src/surface.rs.
+// The editor font is Menlo 13 pt with a line height of 1.2 (spec #19). Zoom
+// (ticket #59) changes `editor-font-size` per window, from the core's
+// `ProjectView::font_size`; the editor and the terminal both follow it, and
+// Rust reads `line-height` back (src/surface.rs, `line_height`).
 
 import { Palette } from "std-widgets.slint";
 
@@ -19,8 +21,8 @@ export global Theme {
     out property <bool> dark: root.follow-system ? Palette.color-scheme == ColorScheme.dark : root.pinned-dark;
 
     out property <string> editor-font: "Menlo";
-    out property <length> editor-font-size: 13px;
-    out property <length> line-height: 15.6px;
+    in-out property <length> editor-font-size: 13px;
+    out property <length> line-height: root.editor-font-size * 1.2;
     // Line numbers, then git markers (#56), then fold markers (#25).
     out property <length> gutter-width: 64px;
 

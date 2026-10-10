@@ -17,7 +17,24 @@ pub struct Modifiers {
     pub ctrl: bool,
 }
 
+/// ⌘+ (or ⌘=, where + needs ⇧), ⌘− and ⌘0: zoom (ticket #59), in case
+/// the View menu doesn't take them. From the editor and the terminal alike.
+pub fn zoom(text: &str, m: Modifiers) -> Option<Command> {
+    if !m.cmd || m.ctrl || m.alt {
+        return None;
+    }
+    match text {
+        "+" | "=" => Some(Command::ZoomIn),
+        "-" | "−" => Some(Command::ZoomOut),
+        "0" if !m.shift => Some(Command::ResetZoom),
+        _ => None,
+    }
+}
+
 pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
+    if let Some(command) = zoom(text, m) {
+        return Some(command);
+    }
     if let Some(movement) = movement(text, m) {
         return Some(if m.shift { Command::Select(movement) } else { Command::MoveCaret(movement) });
     }

@@ -103,17 +103,66 @@ pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint
     });
 
     with_app(move |app| {
-        if let Some(folder) = folder
-            && let Some(key) = app.open_project(None, &folder)
-            && let Some(file) = file
-        {
-            app.dispatch(key, Command::OpenFile(file));
+        match folder {
+            Some(folder) => {
+                if let Some(key) = app.open_project(None, &folder)
+                    && let Some(file) = file
+                {
+                    app.dispatch(key, Command::OpenFile(file));
+                }
+            }
+            // The projects that were open when Genea quit (ticket #59).
+            None => {
+                app.workbench.restore_session();
+                app.open_new_windows();
+            }
         }
         app.sync_welcome();
+        // ⌘Q ends the process from AppKit's terminate: the session is
+        // saved before that.
+        quit_on_terminate();
         // The core waits a little and checks in the background (#64).
         app.workbench.start_update_checks(env!("CARGO_PKG_VERSION"));
     });
     Ok(())
+}
+
+/// Saves the session as Genea quits (ticket #59): see [`App::quit`]. If the
+/// app is busy (a quit from inside one of its callbacks), the newest
+/// background save stands.
+pub fn quit() {
+    APP.with(|cell| {
+        if let Ok(mut app) = cell.try_borrow_mut()
+            && let Some(app) = app.as_mut()
+        {
+            app.quit();
+        }
+    });
+}
+
+/// Calls [`quit`] when AppKit is about to end the process: ⌘Q (the app
+/// menu's Quit is `terminate:`), logging out, the Dock's Quit. Nothing
+/// after the event loop runs then.
+fn quit_on_terminate() {
+    use std::ptr::NonNull;
+
+    use block2::RcBlock;
+    use objc2_app_kit::NSApplicationWillTerminateNotification;
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+
+    let block = RcBlock::new(|_: NonNull<NSNotification>| quit());
+    // SAFETY: a framework constant, and a block that touches nothing but
+    // the main thread's app (the notification is posted on the main thread).
+    let observer = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSApplicationWillTerminateNotification),
+            None,
+            None,
+            &block,
+        )
+    };
+    // Observed for as long as the app runs.
+    std::mem::forget(observer);
 }
 
 impl App {
@@ -214,7 +263,7 @@ impl App {
         self.sync_new_project();
     }
 
-    fn sync(&mut self, key: WindowKey) {
+    pub fn sync(&mut self, key: WindowKey) {
         let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
         controller.sync(&mut self.workbench);
     }
@@ -264,6 +313,8 @@ impl App {
         self.next_key += 1;
         let controller = WindowController::new(key, project)?;
         wire(&controller);
+        // Where the session left it (ticket #59), before it shows.
+        controller.restore_layout(&self.workbench);
         controller.show();
         self.windows.push(controller);
         self.sync(key);
@@ -273,10 +324,30 @@ impl App {
     fn window_closed(&mut self, key: WindowKey) {
         let Some(index) = self.windows.iter().position(|c| c.key == key) else { return };
         let controller = self.windows.remove(index);
+        // The session keeps where the window was (ticket #59).
+        self.workbench.dispatch(controller.project, Command::SetWindowLayout(controller.layout()));
         self.workbench.close_project(controller.project);
         // Drop the component outside the close handler that is running on it.
         slint::Timer::single_shot(Duration::ZERO, move || drop(controller));
         self.sync_welcome();
+    }
+
+    /// Genea is quitting (⌘Q, the welcome closing, the harness): the
+    /// session is saved at once, with every window where it is now
+    /// (ticket #59). The projects stay open in the core, so the next start
+    /// reopens them.
+    pub fn quit(&mut self) {
+        for controller in &self.windows {
+            self.workbench.dispatch(controller.project, Command::SetWindowLayout(controller.layout()));
+        }
+        self.workbench.quit();
+    }
+
+    /// The window's size or a splitter moved: the session keeps it.
+    fn layout_changed(&mut self, key: WindowKey) {
+        let Some(controller) = self.windows.iter().find(|c| c.key == key) else { return };
+        // Nothing to draw: no sync.
+        self.workbench.dispatch(controller.project, Command::SetWindowLayout(controller.layout()));
     }
 
     fn welcome_closed(&mut self) {
@@ -383,8 +454,11 @@ fn wire(controller: &WindowController) {
     // Panes and tabs arrive as Slint ints; they are never negative.
     let index = |i: i32| usize::try_from(i).unwrap_or(0);
     window.on_scrolled(move |pane, delta_y| {
-        let rows = -(delta_y / crate::surface::LINE_HEIGHT) as f64;
-        with_app(move |app| app.dispatch(key, Command::ScrollPane { pane: index(pane), rows }));
+        with_app(move |app| {
+            let Some(controller) = app.controller(key) else { return };
+            let rows = -(delta_y / crate::surface::line_height(&controller.window)) as f64;
+            app.dispatch(key, Command::ScrollPane { pane: index(pane), rows });
+        });
     });
     window.on_pressed(move |pane, x, y, shift, alt| {
         with_app(move |app| {
@@ -752,6 +826,16 @@ fn wire(controller: &WindowController) {
     });
     window.on_picker_cancelled(menu(Command::CloseToolchainPicker));
     window.on_viewport_changed(move || with_app(move |app| app.sync(key)));
+    // Session state (ticket #59).
+    window.on_layout_changed(move || with_app(move |app| app.layout_changed(key)));
+    window.on_zoom(move |direction| {
+        let command = match direction {
+            1 => Command::ZoomIn,
+            -1 => Command::ZoomOut,
+            _ => Command::ResetZoom,
+        };
+        with_app(move |app| app.dispatch(key, command));
+    });
     window.window().on_close_requested(move || {
         with_app(move |app| app.window_closed(key));
         CloseRequestResponse::HideWindow

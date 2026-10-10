@@ -11,14 +11,16 @@
 use std::{ops::Range, rc::Rc};
 
 use genea_core::{EditorView, Fold, Highlight, HighlightSpan, HunkView, LineChange, Severity, grid_pieces};
-use slint::{Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use unicode_width::UnicodeWidthChar;
 
-use crate::{HunkPopup, Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry};
+use crate::{HunkPopup, Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry, Theme};
 
-/// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
-/// ui/theme.slint.
-pub const LINE_HEIGHT: f32 = 15.6;
+/// A text row's height in the editor and the terminal: the zoomed font
+/// size × 1.2 (spec #19; `Theme.line-height` in ui/theme.slint).
+pub fn line_height(window: &ProjectWindow) -> f32 {
+    window.global::<Theme>().get_line_height().max(1.0)
+}
 
 /// Lines at HEAD a change's popover lists; it says how many more there are.
 const MAX_HUNK_LINES: usize = 20;
@@ -79,7 +81,7 @@ impl Surface {
 
     /// The viewport's height in rows, if it changed since the last call.
     pub fn take_viewport_change(&mut self, window: &ProjectWindow) -> Option<f64> {
-        let rows = (window.get_viewport_height() / LINE_HEIGHT).max(1.0) as f64;
+        let rows = (window.get_viewport_height() / line_height(window)).max(1.0) as f64;
         (rows != self.rows).then(|| {
             self.rows = rows;
             rows
@@ -89,7 +91,7 @@ impl Surface {
     /// The grid cell (line, display column) under a point in surface
     /// coordinates, rounding to the nearest cell boundary like a click.
     pub fn cell_at(&self, window: &ProjectWindow, x: f32, y: f32) -> (usize, usize) {
-        let row = (self.scroll_top + (y / LINE_HEIGHT) as f64).floor().max(0.0) as usize;
+        let row = (self.scroll_top + (y / line_height(window)) as f64).floor().max(0.0) as usize;
         let char_width = window.get_char_width().max(1.0);
         let column = ((x - window.get_text_left()) / char_width).round().max(0.0) as usize;
         (self.line_at_row(row), column)
@@ -131,7 +133,7 @@ impl Surface {
         if x >= text_left || x < text_left - FOLD_MARKER_WIDTH {
             return None;
         }
-        let row = (self.scroll_top + (y / LINE_HEIGHT) as f64).floor().max(0.0) as usize;
+        let row = (self.scroll_top + (y / line_height(window)) as f64).floor().max(0.0) as usize;
         self.slots.iter().flatten().find(|s| s.row == row && s.fold != 0).map(|s| s.index)
     }
 
@@ -200,7 +202,7 @@ impl Surface {
             let row = match &state {
                 None => Line { y: -1000.0, ..Line::default() },
                 Some(s) => Line {
-                    y: (s.row - s.base) as f32 * LINE_HEIGHT,
+                    y: (s.row - s.base) as f32 * line_height(window),
                     number: (s.index + 1).to_string().into(),
                     fold: s.fold,
                     fold_x: s.text.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>() as f32 * char_width,
@@ -256,7 +258,7 @@ impl Surface {
 
         let base = self.base as f64;
         let mut geometry = if self.pane == 0 { window.get_left_geometry() } else { window.get_right_geometry() };
-        geometry.offset_y = -((self.scroll_top - base) * LINE_HEIGHT as f64) as f32;
+        geometry.offset_y = -((self.scroll_top - base) * line_height(window) as f64) as f32;
         if let Some(editor) = editor {
             // While composing, the caret is drawn after the preedit.
             let preedit = editor.preedit.map_or(0, |p| p.width);
@@ -269,7 +271,7 @@ impl Surface {
                 None if editor.lines.first().is_some_and(|l| editor.caret.line < l.index) => base - 1e6,
                 None => base + 1e6,
             };
-            geometry.caret_y = ((caret_row - base) * LINE_HEIGHT as f64) as f32;
+            geometry.caret_y = ((caret_row - base) * line_height(window) as f64) as f32;
         }
         set_geometry(window, self.pane, geometry);
         self.sync_hunk(window, editor.and_then(|e| e.hunk.as_ref()));
@@ -280,7 +282,7 @@ impl Surface {
     fn sync_hunk(&mut self, window: &ProjectWindow, hunk: Option<&HunkView>) {
         let wanted = hunk.map(|h| {
             let below = if h.lines.is_empty() { h.lines.start } else { h.lines.end };
-            (h.clone(), (self.row_of_line(below) - self.base as f64) as f32 * LINE_HEIGHT)
+            (h.clone(), (self.row_of_line(below) - self.base as f64) as f32 * line_height(window))
         });
         if wanted == self.hunk {
             return;
