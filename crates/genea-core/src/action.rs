@@ -57,12 +57,17 @@ pub enum Action {
     CloseSplit,
     SelectNextTab,
     SelectPreviousTab,
+    GoToDefinition,
+    GoToTypeDefinition,
+    GoToImplementation,
+    FindUsages,
+    Rename,
 }
 
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 41] = [
+    pub const ALL: [Action; 46] = [
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
@@ -104,6 +109,11 @@ impl Action {
         Action::CloseSplit,
         Action::SelectNextTab,
         Action::SelectPreviousTab,
+        Action::GoToDefinition,
+        Action::GoToTypeDefinition,
+        Action::GoToImplementation,
+        Action::FindUsages,
+        Action::Rename,
     ];
 
     /// The action's name, as menus show it.
@@ -150,6 +160,11 @@ impl Action {
             Action::CloseSplit => "Close Split",
             Action::SelectNextTab => "Select Next Tab",
             Action::SelectPreviousTab => "Select Previous Tab",
+            Action::GoToDefinition => "Go to Definition",
+            Action::GoToTypeDefinition => "Go to Type Definition",
+            Action::GoToImplementation => "Go to Implementation",
+            Action::FindUsages => "Find Usages",
+            Action::Rename => "Rename…",
         }
     }
 
@@ -186,6 +201,11 @@ impl Action {
             Action::ShowTerminal => "⌥F12",
             Action::SelectNextTab => "⇧⌘]",
             Action::SelectPreviousTab => "⇧⌘[",
+            Action::GoToDefinition => "⌘B",
+            Action::GoToTypeDefinition => "⇧⌘B",
+            Action::GoToImplementation => "⌥⌘B",
+            Action::FindUsages => "⌥F7",
+            Action::Rename => "⇧F6",
             Action::OpenConfig
             | Action::ReloadEnvironment
             | Action::InstallDependencies
@@ -225,6 +245,11 @@ impl Action {
                 | Action::CollapseFold
                 | Action::ExpandAllFolds
                 | Action::CollapseAllFolds
+                | Action::GoToDefinition
+                | Action::GoToTypeDefinition
+                | Action::GoToImplementation
+                | Action::FindUsages
+                | Action::Rename
         )
     }
 
@@ -269,6 +294,11 @@ impl Action {
             Action::ShowTerminal => Command::ToggleTerminal,
             Action::SplitRight => Command::SplitRight,
             Action::CloseSplit => Command::CloseSplit,
+            Action::GoToDefinition => Command::GoToDefinition,
+            Action::GoToTypeDefinition => Command::GoToTypeDefinition,
+            Action::GoToImplementation => Command::GoToImplementation,
+            Action::FindUsages => Command::FindUsages,
+            Action::Rename => Command::StartRename,
             Action::CloseTab | Action::MoveTabToOtherSide | Action::SelectNextTab | Action::SelectPreviousTab => {
                 return None;
             }

@@ -237,6 +237,23 @@ fn find_usages_lists_every_reference_by_file_and_a_click_opens_one() {
 }
 
 #[test]
+fn find_action_runs_navigation_by_name_with_its_shortcut() {
+    let fake = FakeLsp::new();
+    let mut session = open(greeting_project().build(), &fake);
+    session.open_at("src/main.ts", 2, 14);
+
+    session.dispatch(Command::OpenFinder(genea_core::FinderMode::Actions));
+    session.dispatch(Command::SetFinderQuery("find usages".into()));
+    session.settle();
+    let item = session.view().finder.unwrap().items[0].clone();
+    assert_eq!((item.label.as_str(), item.shortcut.as_deref()), ("Find Usages", Some("⌥F7")));
+    session.dispatch(Command::AcceptFinder);
+    session.settle();
+
+    assert_eq!(session.view().usages.unwrap().title, "Usages of greet");
+}
+
+#[test]
 fn find_usages_says_so_while_waiting_and_when_there_are_none() {
     let fake = FakeLsp::new();
     let mut session = open(typescript_project().file("src/lonely.ts", "export const lonely = 1;\n").build(), &fake);
