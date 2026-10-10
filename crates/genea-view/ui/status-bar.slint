@@ -15,6 +15,8 @@ export component StatusBar inherits Rectangle {
     in property <bool> has-errors;
     // Toolchain download progress (ticket #35).
     in property <string> toolchain;
+    // "Checking project…" while a project check runs (ticket #48).
+    in property <string> project-check;
     // The git branch (ticket #56), or empty outside a repository.
     in property <string> branch;
     in property <string> caret;
@@ -107,6 +109,13 @@ export component StatusBar inherits Rectangle {
                     }
                 }
             }
+        }
+
+        if root.project-check != "": Text {
+            text: root.project-check;
+            color: Theme.chrome-muted;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
         }
 
         Text {

@@ -470,6 +470,34 @@ tsgo in the harness's `typing-silent-lsp`. The slow lane
 `tests/language_server_slow.rs` (`-- --ignored`) installs TypeScript 7 with
 pnpm and checks real diagnostics.
 
+### Project check
+
+`genea-core/src/project_check.rs` (ticket #48) runs and reads the check,
+and `project/check.rs` is a project's side of it. `Command::RunProjectCheck`
+runs `tsc -b --noEmit --pretty false` with the binary tsgo runs from, in
+the project environment, on a background thread (a new check stops a
+running one; closing the project kills it); `StatusBar::project_check`
+shows it running. Its output (`file(line,col): error TS…`, columns in
+UTF-16 units, indented continuation lines) becomes
+`ProblemSource::ProjectCheck`, replacing the last check's. Results are
+hidden in files open on the language server (`Problems::set_live`, kept in
+step after every command and Apply), and marked stale
+(`ProblemItem::stale`, drawn dimmed) in files the watcher sees change after
+the check started, until the next check. A failed check keeps the last
+results and says why in a notice.
+
+**TS6310**: TypeScript 7 won't check a project that references other
+projects under `-b --noEmit` ("Referenced project may not disable emit", at
+the referencing `tsconfig.json`; probed with 7.0.2: those projects are
+skipped, the others checked). Nothing is wrong in the user's config and no
+flag avoids it without writing build output, so TS6310 isn't listed as a
+problem: a notice names the skipped `tsconfig.json`s. Live diagnostics
+there are unaffected.
+
+Tests play `tsc` with `genea_testkit::FakeTsc`, which hands `--lsp` starts
+to a `FakeLsp` and answers the rest with scripted output; the slow lane
+`tests/project_check_slow.rs` runs the real one on a references project.
+
 ## Tests
 
 Behaviour is tested only through the core API (spec #19, Testing Decisions).

@@ -115,7 +115,8 @@ fn a_project_check_fills_problems_with_errors_from_unopened_files() {
 
 #[test]
 fn a_second_check_replaces_the_first_ones_results() {
-    let fixture = typescript_project().file("src/main.ts", "let a: number = \"oops\";\n").file("src/b.ts", "x;\n").build();
+    let fixture =
+        typescript_project().file("src/main.ts", "let a: number = \"oops\";\n").file("src/b.ts", "x;\n").build();
     let tsc = FakeTsc::new().reports(&format!("src/main.ts(1,17): error TS2322: {TYPE_ERROR}\n"), 1);
     let mut session = open(fixture, &tsc);
     session.check();
@@ -182,7 +183,8 @@ fn open_files_show_live_diagnostics_instead_of_the_checks() {
     session.dispatch(Command::OpenFile("src/main.ts".into()));
     session.settle();
 
-    let live = (ProblemSource::TypeScript, "src/main.ts".into(), "1:17".into(), Severity::Error, "Live: not a number.".into());
+    let live =
+        (ProblemSource::TypeScript, "src/main.ts".into(), "1:17".into(), Severity::Error, "Live: not a number.".into());
     assert_eq!(session.problems(), [live, error("src/other.ts", "1:17", TYPE_ERROR)]);
     let inline: Vec<String> = session.view().editor.unwrap().problems.into_iter().map(|p| p.message).collect();
     assert_eq!(inline, ["Live: not a number."]);
@@ -351,7 +353,8 @@ fn without_typescript_7_a_check_says_it_needs_it() {
     workbench.settle().unwrap();
 
     let notices: Vec<String> = workbench.project(project).unwrap().notices.into_iter().map(|n| n.message).collect();
-    assert!(notices.contains(&"The project check needs TypeScript 7 installed in this project.".to_owned()), "{notices:?}");
+    let needs = "The project check needs TypeScript 7 installed in this project.".to_owned();
+    assert!(notices.contains(&needs), "{notices:?}");
     assert_eq!(workbench.project(project).unwrap().status.project_check, None);
 }
 

@@ -55,6 +55,8 @@ export component ProjectWindow inherits Window {
     in property <string> status-indentation;
     in property <string> status-notice-action;
     in property <string> status-toolchain;
+    // "Checking project…" while a project check runs (ticket #48).
+    in property <string> status-project-check;
     in property <string> status-update;
     // The git branch (ticket #56), or empty outside a repository.
     in property <string> status-branch;
@@ -130,6 +132,7 @@ export component ProjectWindow inherits Window {
     callback reload-environment();
     callback install-dependencies();
     callback restart-language-server();
+    callback run-project-check();
     // The Code menu's structural editing items (ticket #25).
     callback structural(StructuralAction);
     // Toolchain commands (ticket #37).
@@ -297,6 +300,14 @@ export component ProjectWindow inherits Window {
                 title: "Restart Language Server";
                 activated => {
                     root.restart-language-server();
+                }
+            }
+
+            // `tsc -b --noEmit` over the whole project (#48).
+            MenuItem {
+                title: "Run Project Check";
+                activated => {
+                    root.run-project-check();
                 }
             }
 
@@ -789,6 +800,7 @@ export component ProjectWindow inherits Window {
                 root.notice-action();
             }
             toolchain: root.status-toolchain;
+            project-check: root.status-project-check;
             branch: root.status-branch;
             caret: root.status-caret;
             encoding: root.status-encoding;
