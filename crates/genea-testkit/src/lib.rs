@@ -18,12 +18,14 @@
 //! core's tests and core itself agree on one copy of every core type.
 
 mod download_server;
+pub mod fake_lsp;
 mod fixture;
 mod host;
 mod pty;
 mod tools;
 
 pub use download_server::DownloadServer;
+pub use fake_lsp::{FakeLsp, LspScript, Marker, Received};
 pub use fixture::{FixtureBuilder, FixtureProject};
 pub use host::{FakeProcess, ManualClock, ScriptedDownloads, ScriptedProcesses, TestClipboard, TestHost};
 pub use pty::{FakePty, ScriptedPtys};

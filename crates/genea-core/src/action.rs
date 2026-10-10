@@ -22,6 +22,7 @@ pub enum Action {
     OpenConfig,
     ReloadEnvironment,
     InstallDependencies,
+    RestartLanguageServer,
     SetRuntime,
     SetPackageManager,
     UpdateToolchain,
@@ -62,13 +63,14 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 41] = [
+    pub const ALL: [Action; 42] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
         Action::ReloadEnvironment,
         Action::InstallDependencies,
+        Action::RestartLanguageServer,
         Action::SetRuntime,
         Action::SetPackageManager,
         Action::UpdateToolchain,
@@ -115,6 +117,7 @@ impl Action {
             Action::OpenConfig => "Open Config",
             Action::ReloadEnvironment => "Reload Environment",
             Action::InstallDependencies => "Install Dependencies",
+            Action::RestartLanguageServer => "Restart Language Server",
             Action::SetRuntime => "Set Runtime…",
             Action::SetPackageManager => "Set Package Manager…",
             Action::UpdateToolchain => "Update Toolchain…",
@@ -190,6 +193,7 @@ impl Action {
             | Action::OpenConfig
             | Action::ReloadEnvironment
             | Action::InstallDependencies
+            | Action::RestartLanguageServer
             | Action::SetRuntime
             | Action::SetPackageManager
             | Action::UpdateToolchain
@@ -237,6 +241,7 @@ impl Action {
             Action::OpenConfig => Command::OpenConfig,
             Action::ReloadEnvironment => Command::ReloadEnvironment,
             Action::InstallDependencies => Command::InstallDependencies,
+            Action::RestartLanguageServer => Command::RestartLanguageServer,
             Action::SetRuntime => Command::OpenToolchainPicker(ToolchainPickerKind::Runtime),
             Action::SetPackageManager => Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager),
             Action::UpdateToolchain => Command::OpenToolchainPicker(ToolchainPickerKind::Update),

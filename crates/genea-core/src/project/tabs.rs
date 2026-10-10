@@ -46,6 +46,13 @@ struct Pane {
     view: Option<EditorView>,
 }
 
+impl Panes {
+    /// The open files other than the focused one.
+    pub(super) fn parked(&self) -> &[Editor] {
+        &self.parked
+    }
+}
+
 impl Pane {
     fn position(&self, path: &Path) -> Option<usize> {
         self.tabs.iter().position(|t| t.path == path)

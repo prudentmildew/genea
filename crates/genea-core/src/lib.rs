@@ -34,6 +34,7 @@ mod grid;
 mod history;
 mod indentation;
 mod jobs;
+mod lsp;
 mod new_project;
 mod problems;
 mod project;
@@ -59,6 +60,7 @@ pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
 pub use problems::{ProblemSource, Severity, TextPosition};
 pub use syntax::Highlight;
 pub use environment::LOGIN_SHELL_TIMEOUT;
+pub use lsp::{MAX_RESTARTS, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT};
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
 pub use grid::{GridPiece, grid_pieces};
@@ -66,13 +68,15 @@ pub use new_project::{NewProjectCommand, NewProjectDialog, NewProjectOption};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
-    Caret, EditorView, Fold, GutterMark, HighlightSpan, HunkView, InlineProblem, LeftColumnView, LineChange, Notice,
-    NoticeAction, Preedit, ProblemItem, ProjectView, RecentProject, StatusBar, ToolState, ToolView, ToolchainOption,
-    ToolchainPicker, ToolchainPickerKind, ToolchainView, VisibleLine, WelcomeView,
+    Caret, EditorView, Fold, GutterMark, HighlightSpan, HunkView, InlineProblem, LanguageServerState,
+    LanguageServerStatus, LeftColumnView, LineChange, Notice, NoticeAction, Preedit, ProblemItem, ProjectView,
+    RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
+    ToolchainView, VisibleLine, WelcomeView,
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use view::{
-    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalTab, TerminalView,
+    TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle,
+    TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

@@ -1,6 +1,7 @@
 //! One open project: its folder and what its window shows.
 
 mod external;
+mod language;
 mod finder;
 mod tabs;
 
@@ -36,6 +37,7 @@ use crate::{
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use language::Language;
 use tabs::Panes;
 
 /// The status-bar item for a large file.
@@ -91,6 +93,8 @@ pub(crate) struct Project {
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
+    /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
+    language: Language,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
@@ -120,6 +124,7 @@ impl Project {
             id,
             files: FileIndex::new(id, root.clone()),
             git: Git::new(id, root.clone()),
+            terminal: Terminal::new(id, root.clone()),
             dependencies: Dependencies::new(id, &root),
             search: Search::new(id, root.clone()),
             root,
@@ -130,6 +135,7 @@ impl Project {
             open_generation: 0,
             toolchain: None,
             environment: None,
+            language: Language::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -140,7 +146,6 @@ impl Project {
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
             shown_hunk: None,
-            terminal: Terminal::new(id),
             install_requested: false,
             finder: None,
             finder_generation: 0,
@@ -184,6 +189,7 @@ impl Project {
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
         self.dependencies.files_changed(&changes, jobs);
+        self.language_files_changed(&changes);
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
             self.git.reload(open, jobs);
@@ -457,6 +463,12 @@ impl Project {
                 self.terminal.unfocus();
                 self.open_file(path, Some(at), jobs)
             }
+            Command::OpenTerminalLink { line, column } => {
+                if let Some((path, at)) = self.terminal.file_link_at(line, column) {
+                    self.terminal.unfocus();
+                    self.open_file(path, Some(at), jobs)
+                }
+            }
             Command::CloseTab { .. }
             | Command::ResolveClose(_)
             | Command::SplitRight
@@ -472,8 +484,12 @@ impl Project {
             | Command::TerminalKey(..)
             | Command::ScrollTerminal { .. }
             | Command::TerminalMouse { .. }
-            | Command::TerminalPaste => self.terminal.command(command, host),
+            | Command::TerminalPaste
+            | Command::NewTerminalTab
+            | Command::CloseTerminalTab(_) => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
+            Command::RestartLanguageServer => self.restart_language_server(),
+            Command::AddTypeScript => self.add_typescript(jobs),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
             | Command::MoveFinderSelection(_)
@@ -702,6 +718,7 @@ impl Project {
             self.diff_file(&path, jobs);
         }
         self.refresh_views();
+        self.sync_language();
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
@@ -775,11 +792,13 @@ impl Project {
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
+            language_servers: self.language_status(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
         notices.extend(self.install_notice());
         notices.extend(self.environment.iter().flat_map(Environment::notices));
+        notices.extend(self.language_notices());
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

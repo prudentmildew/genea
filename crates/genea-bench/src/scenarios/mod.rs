@@ -40,6 +40,7 @@ pub fn all() -> Vec<Box<dyn Scenario>> {
     vec![
         Box::new(start::Start),
         Box::new(typing::Typing),
+        Box::new(typing::TypingSilentServer),
         Box::new(scroll::Scroll),
         Box::new(dead_keys::DeadKeys),
         Box::new(idle::Idle),
@@ -100,6 +101,9 @@ impl Options {
 pub struct Context {
     pub genea: PathBuf,
     pub floor: PathBuf,
+    /// `genea-fake-lsp`, which stands in for tsgo where a scenario needs a
+    /// language server that misbehaves.
+    pub fake_lsp: PathBuf,
     pub workspace: PathBuf,
     pub options: Options,
     pub out: Output,

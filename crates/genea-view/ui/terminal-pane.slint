@@ -1,5 +1,6 @@
-// The terminal pane (ticket #38): a header over the terminal's grid, drawn
-// like the editor surface (a Rust-driven grid of Text items, ADR 0004).
+// The terminal pane (tickets #38 and #39): a strip of tabs over the active
+// tab's grid, drawn like the editor surface (a Rust-driven grid of Text
+// items, ADR 0004).
 // Rust (src/terminal.rs) fills one slot per visible row and pushes only the
 // rows that changed, so an idle terminal never repaints.
 //
@@ -27,9 +28,16 @@ export struct TermRun {
     link: bool,
 }
 
+// A `path:line:col` reference, underlined; ⌘-click opens the file.
+export struct TermLink {
+    x: length,
+    width: length,
+}
+
 export struct TermRow {
     y: length,
     runs: [TermRun],
+    links: [TermLink],
 }
 
 // Where the cursor and the preedit are, placed by Rust.
@@ -65,6 +73,8 @@ export component TerminalPane inherits Rectangle {
 
     callback focus-requested();
     callback tab-clicked(index: int);
+    callback tab-closed(index: int);
+    callback new-tab();
     callback key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
     callback committed(text: string);
     callback preedit-changed(text: string);
@@ -99,19 +109,16 @@ export component TerminalPane inherits Rectangle {
                 background: Theme.chrome-border;
             }
 
-            // One tab shows as the pane's title; several as a strip, like
-            // the editor's.
             HorizontalLayout {
                 alignment: start;
 
                 for tab[index] in root.tabs: Rectangle {
-                    background: tab.active && root.tabs.length > 1 ? Theme.terminal-palette[1] : transparent;
+                    background: tab.active ? Theme.terminal-palette[1] : Theme.chrome-background;
 
                     Rectangle {
                         x: parent.width - 1px;
                         width: 1px;
                         background: Theme.chrome-border;
-                        visible: root.tabs.length > 1;
                     }
 
                     // The focused pane's marker, as on the editor's tabs.
@@ -122,7 +129,7 @@ export component TerminalPane inherits Rectangle {
                         visible: tab.active && root.focused;
                     }
 
-                    TouchArea {
+                    select := TouchArea {
                         clicked => {
                             root.tab-clicked(index);
                         }
@@ -130,15 +137,53 @@ export component TerminalPane inherits Rectangle {
 
                     HorizontalLayout {
                         padding-left: 12px;
-                        padding-right: 12px;
+                        padding-right: 6px;
+                        spacing: 6px;
 
                         Text {
+                            max-width: 180px;
                             text: tab.title;
                             color: tab.active && root.focused ? Theme.chrome-foreground : Theme.chrome-muted;
                             opacity: tab.ended ? 0.6 : 1;
                             vertical-alignment: center;
                             overflow: elide;
                         }
+
+                        // The close button shows under the pointer.
+                        Rectangle {
+                            width: 16px;
+
+                            close := TouchArea {
+                                clicked => {
+                                    root.tab-closed(index);
+                                }
+                            }
+
+                            Text {
+                                text: close.has-hover || select.has-hover || tab.active ? "×" : "";
+                                color: close.has-hover ? Theme.chrome-foreground : Theme.chrome-muted;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // A new tab.
+                Rectangle {
+                    width: 28px;
+
+                    add := TouchArea {
+                        clicked => {
+                            root.new-tab();
+                        }
+                    }
+
+                    Text {
+                        text: "+";
+                        color: add.has-hover ? Theme.chrome-foreground : Theme.chrome-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }
@@ -190,6 +235,14 @@ export component TerminalPane inherits Rectangle {
                             background: run.fg-index < 0 ? run.fg : Theme.terminal-palette[run.fg-index];
                             visible: run.strikeout;
                         }
+                    }
+
+                    for link in row.links: Rectangle {
+                        x: link.x;
+                        y: Theme.line-height - 2px;
+                        width: link.width;
+                        height: 1px;
+                        background: Theme.terminal-palette[0];
                     }
                 }
 

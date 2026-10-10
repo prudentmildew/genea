@@ -437,6 +437,40 @@ pub struct StatusBar {
     /// [`crate::LARGE_FILE_BYTES`]): says why it has no highlighting or
     /// language intelligence.
     pub large_file: Option<String>,
+    /// The project's language servers (tsgo now; Oxlint and Oxfmt later),
+    /// one item each. Empty for a folder without a root `package.json`.
+    pub language_servers: Vec<LanguageServerStatus>,
+}
+
+/// A language server's status-bar item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanguageServerStatus {
+    /// What the user calls it: `TypeScript`.
+    pub name: String,
+    pub state: LanguageServerState,
+    /// What the item says, e.g. `TypeScript 7.0.2`, `TypeScript starting…`
+    /// or `TypeScript stopped`.
+    pub label: String,
+}
+
+/// Where a language server is. "Restart language server"
+/// (`Command::RestartLanguageServer`) works in every state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanguageServerState {
+    /// Started, not initialized yet.
+    Starting,
+    Ready,
+    /// It hasn't answered `initialize` for a while (`START_TIMEOUT`). It
+    /// keeps running and is used as soon as it answers.
+    NotResponding,
+    /// It crashed and starts again in a moment.
+    Restarting,
+    /// It crashed too often (3 restarts in 5 minutes): it stays stopped
+    /// until "Restart language server". A notice says why.
+    Failed,
+    /// Language intelligence is off: the project has no TypeScript 7 in
+    /// `node_modules`. A notice says what to do.
+    Off,
 }
 
 /// A message for the user.
@@ -549,8 +583,10 @@ pub struct RecentProject {
     pub name: String,
 }
 
-/// The terminal pane next to the editor (ticket #38): tabs, the showing
-/// one drawn on a grid like the editor. The first tab is the shell.
+/// The terminal pane next to the editor (tickets #38, #39, #41): tabs, the
+/// showing one drawn on a grid like the editor. The first tab is a shell.
+/// With no tabs (the user closed the last), the showing tab's fields are
+/// blank and the pane is collapsed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalView {
     /// The pane is showing; ⌥F12 collapses it.
@@ -620,6 +656,22 @@ pub struct TerminalLine {
     /// The row in stretches of one style, left to right, covering `text`
     /// and any blank cells after it that have a background colour.
     pub runs: Vec<TerminalRun>,
+    /// The `path:line:col` references in the row (ticket #39), left to
+    /// right; `Command::OpenTerminalLink` on one opens the file there.
+    pub links: Vec<TerminalFileLink>,
+}
+
+/// A `path:line:col` reference in terminal output, such as
+/// `src/app.ts:12:5` in a compiler error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalFileLink {
+    /// The grid columns it covers, path to the last number.
+    pub columns: Range<usize>,
+    /// The path as printed: relative ones are relative to the tab's
+    /// directory.
+    pub path: PathBuf,
+    /// The printed line and column (column 1 if none), 0-based.
+    pub at: TextPosition,
 }
 
 /// A stretch of a terminal row in one style.

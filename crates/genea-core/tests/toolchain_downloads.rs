@@ -11,13 +11,19 @@ use std::{
     time::Duration,
 };
 
-use genea_core::{Command, ProjectId, ProjectView, ToolState, ToolView, Workbench};
+use genea_core::{Command, Notice, ProjectId, ProjectView, ToolState, ToolView, Workbench};
 use genea_testkit::{FixtureProject, TestHost};
 
 /// A project with this root `package.json`, its dependencies installed (so
 /// the only notices are the toolchain's).
 fn project(package_json: &str) -> FixtureProject {
     FixtureProject::new().file("package.json", package_json).dir("node_modules").build()
+}
+
+/// The project's notices without TypeScript 7's: these projects don't have
+/// it, and `tests/language_server.rs` covers that notice.
+fn notices(notices: &[Notice]) -> Vec<Notice> {
+    notices.iter().filter(|n| !n.message.starts_with("Language intelligence is off")).cloned().collect()
 }
 
 fn pins(runtime: &str, runtime_version: &str, package_manager: &str) -> String {
@@ -168,8 +174,9 @@ fn a_checksum_mismatch_fails_the_download_with_retry_and_leaves_nothing_in_the_s
         Some(ToolView { tool: "Node".into(), version: "24.18.0".into(), state: ToolState::Failed })
     );
     assert_eq!(view.toolchain.package_manager, ready("pnpm", "12.10.1"));
-    assert_eq!(view.notices.len(), 1, "{:?}", view.notices);
-    let notice = &view.notices[0];
+    let shown = notices(&view.notices);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    let notice = &shown[0];
     assert!(notice.message.starts_with("Couldn't download Node 24.18.0"), "{}", notice.message);
     assert!(notice.message.contains("checksum"), "{}", notice.message);
     let retry = notice.action.as_ref().expect("a Retry action");
@@ -187,7 +194,7 @@ fn a_checksum_mismatch_fails_the_download_with_retry_and_leaves_nothing_in_the_s
 
     let view = workbench.project(project).unwrap();
     assert_eq!(view.toolchain.runtime, ready("Node", "24.18.0"));
-    assert!(view.notices.is_empty(), "{:?}", view.notices);
+    assert!(notices(&view.notices).is_empty(), "{:?}", view.notices);
     assert_eq!(installed(&host), ["node/24.18.0", "pnpm/12.10.1"]);
 }
 
@@ -221,7 +228,7 @@ fn a_version_that_isnt_published_fails_only_its_role() {
     let view = workbench.project(project).unwrap();
     assert_eq!(view.toolchain.runtime.unwrap().state, ToolState::Failed);
     assert_eq!(view.toolchain.package_manager, ready("pnpm", "12.10.1"));
-    assert_eq!(view.notices.len(), 1);
+    assert_eq!(notices(&view.notices).len(), 1);
     assert_eq!(view.notices[0].action.as_ref().unwrap().label, "Retry");
     assert_eq!(installed(&host), ["pnpm/12.10.1"]);
 }
@@ -424,7 +431,7 @@ fn an_unpinned_project_gets_the_defaults_and_a_notice_offering_to_pin_them() {
     let view = workbench.project(project).unwrap();
     assert_eq!(view.toolchain.runtime, ready("Node", DEFAULT_NODE));
     assert_eq!(view.toolchain.package_manager, ready("pnpm", DEFAULT_PNPM));
-    assert_eq!(view.notices.len(), 1, "{:?}", view.notices);
+    assert_eq!(notices(&view.notices).len(), 1, "{:?}", view.notices);
     assert_eq!(
         view.notices[0].message,
         "This project doesn't pin its runtime or package manager, so Genea uses Node 24.21.0 and pnpm 12.10.1."
@@ -452,7 +459,7 @@ fn an_unpinned_project_gets_the_defaults_and_a_notice_offering_to_pin_them() {
 "#
     );
     let view = workbench.project(project).unwrap();
-    assert!(view.notices.is_empty(), "{:?}", view.notices);
+    assert!(notices(&view.notices).is_empty(), "{:?}", view.notices);
     assert_eq!(view.toolchain.runtime, ready("Node", DEFAULT_NODE));
     assert_eq!(installed(&host), ["node/24.21.0", "pnpm/12.10.1"]);
 }
@@ -470,7 +477,7 @@ fn pinning_the_defaults_writes_only_the_unpinned_role_and_keeps_the_rest_of_the_
     let project = workbench.open_project(fixture.root()).unwrap();
     workbench.settle().unwrap();
     let view = workbench.project(project).unwrap();
-    assert_eq!(view.notices.len(), 1, "{:?}", view.notices);
+    assert_eq!(notices(&view.notices).len(), 1, "{:?}", view.notices);
     assert_eq!(
         view.notices[0].message,
         "This project doesn't pin its package manager, so Genea uses pnpm 12.10.1."
@@ -497,7 +504,7 @@ fn pinning_the_defaults_writes_only_the_unpinned_role_and_keeps_the_rest_of_the_
         "}",
     ];
     assert_eq!(fixture.read("package.json"), expected.join("\n"));
-    assert!(workbench.project(project).unwrap().notices.is_empty());
+    assert!(notices(&workbench.project(project).unwrap().notices).is_empty());
 }
 
 #[test]
@@ -547,7 +554,7 @@ fn a_pin_that_isnt_a_version_shows_a_notice_without_retry() {
     let view = workbench.project(project).unwrap();
     assert_eq!(view.toolchain.runtime.unwrap().state, ToolState::Failed);
     assert_eq!(view.toolchain.package_manager, ready("pnpm", "12.10.1"));
-    assert_eq!(view.notices.len(), 1);
+    assert_eq!(notices(&view.notices).len(), 1);
     assert!(view.notices[0].message.contains("\"latest-ish\", which isn't a version"), "{:?}", view.notices);
     assert_eq!(view.notices[0].action, None);
 }

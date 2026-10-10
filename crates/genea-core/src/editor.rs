@@ -1065,6 +1065,16 @@ impl Editor {
         self.version != self.saved_version
     }
 
+    /// The text (a cheap clone of the rope is a snapshot).
+    pub(crate) fn text(&self) -> &Rope {
+        &self.text
+    }
+
+    /// The whole file is in, not only its first screen (ticket #27).
+    pub(crate) fn is_loaded(&self) -> bool {
+        self.loading.is_none()
+    }
+
     pub(crate) fn cursor(&self) -> Cursor {
         Cursor {
             carets: self.carets.clone(),
