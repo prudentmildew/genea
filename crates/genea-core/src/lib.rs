@@ -76,4 +76,5 @@ pub use view::{
     TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
+pub use view::QuickFixesView;
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

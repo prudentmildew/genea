@@ -3,6 +3,7 @@
 mod external;
 mod language;
 mod finder;
+mod quick_fixes;
 mod tabs;
 
 use std::{
@@ -38,6 +39,7 @@ use crate::{
     workbench::ProjectId,
 };
 use language::Language;
+use quick_fixes::QuickFixes;
 use tabs::Panes;
 
 /// The status-bar item for a large file.
@@ -113,6 +115,8 @@ pub(crate) struct Project {
     finder_files: u64,
     /// Files opened lately, most recent first: Recent Files (⌘E).
     recent_files: Vec<PathBuf>,
+    /// Code-action requests and the quick-fix popup (ticket #45).
+    quick_fixes: QuickFixes,
 }
 
 impl Project {
@@ -145,6 +149,7 @@ impl Project {
             terminal: Terminal::new(id),
             install_requested: false,
             finder: None,
+            quick_fixes: QuickFixes::default(),
             finder_generation: 0,
             finder_files: 0,
             recent_files: Vec::new(),
@@ -422,6 +427,7 @@ impl Project {
         // A shown change closes on anything but scrolling.
         let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
         let shown = if scrolling { None } else { self.shown_hunk.take() };
+        self.quick_fixes_before(&command);
         match command {
             Command::ShowHunk { line } => {
                 self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
@@ -472,6 +478,11 @@ impl Project {
             | Command::TerminalPaste => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::RestartLanguageServer => self.restart_language_server(),
+            Command::ShowQuickFixes
+            | Command::MoveQuickFixSelection(_)
+            | Command::ApplyQuickFix(_)
+            | Command::CloseQuickFixes
+            | Command::OrganizeImports => self.quick_fix_command(command, now, jobs),
             Command::AddTypeScript => self.add_typescript(jobs),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
@@ -799,6 +810,7 @@ impl Project {
             files: self.files.rows(),
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
+            quick_fixes: self.quick_fixes_view(),
         }
     }
 

@@ -29,6 +29,7 @@
 //! the last [`LanguageServer::sync`], which runs after every command and
 //! every background result.
 
+pub(crate) mod actions;
 mod connection;
 pub(crate) mod text;
 pub(crate) mod typescript;
@@ -106,6 +107,9 @@ pub(crate) enum Output {
     Clear(PathBuf),
     /// Drop every file's diagnostics: the server is gone.
     ClearAll,
+    /// The answer to [`code_actions`](LanguageServer::code_actions) with
+    /// this ticket: the actions Genea can apply (ticket #45).
+    CodeActions { ticket: u64, fixes: Vec<actions::CodeActionFix> },
 }
 
 /// A request waiting for its answer.
@@ -114,6 +118,8 @@ pub(crate) enum Pending {
     Initialize,
     /// `textDocument/diagnostic` for an open file.
     Diagnostics(PathBuf),
+    /// `textDocument/codeAction`, with the asker's ticket (ticket #45).
+    CodeActions(u64),
 }
 
 /// A timer of a server's, on the host clock.
@@ -154,6 +160,8 @@ struct Document {
     /// The diagnostics request in flight, if any. One at a time per file;
     /// the next goes out once it is answered.
     pulling: Option<i64>,
+    /// What the server last reported for it, for asking for quick fixes.
+    diagnostics: Vec<Diagnostic>,
 }
 
 /// One language server of a project, on the main thread.
@@ -309,7 +317,7 @@ impl LanguageServer {
                     let uri = text::uri(&self.root.join(path));
                     connection.open(uri.clone(), language, 1, editor.text().clone());
                     let document =
-                        Document { uri, version: 1, editor_version: editor.version(), wanted: true, pulling: None };
+                        Document { uri, version: 1, editor_version: editor.version(), wanted: true, pulling: None, diagnostics: Vec::new() };
                     self.documents.insert(path.to_owned(), document);
                 }
                 Some(document) if document.editor_version != editor.version() => {
@@ -380,15 +388,18 @@ impl LanguageServer {
         if generation != self.generation {
             return Vec::new();
         }
-        match event {
+        let outputs = match event {
             Event::Response { id, result } => match self.requests.remove(&id) {
                 Some(Pending::Initialize) => self.initialized(result),
                 Some(Pending::Diagnostics(path)) => self.diagnostics_answered(path, id, result),
+                Some(Pending::CodeActions(ticket)) => self.code_actions_answered(ticket, result),
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
             Event::Exited { reason } => self.crashed(reason),
-        }
+        };
+        self.remember_diagnostics(&outputs);
+        outputs
     }
 
     /// A timer of this server's came due.
@@ -455,6 +466,7 @@ impl LanguageServer {
                     version_support: Some(true),
                     ..Default::default()
                 }),
+                code_action: Some(actions::client_capabilities()),
                 ..Default::default()
             }),
             ..Default::default()

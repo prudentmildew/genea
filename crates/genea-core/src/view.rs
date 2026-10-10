@@ -61,6 +61,20 @@ pub struct ProjectView {
     pub search: SearchView,
     /// The fuzzy finder overlay, while it is open (ticket #33).
     pub finder: Option<FinderView>,
+    /// The quick-fix popup at the primary caret (⌥⏎, ticket #45), once the
+    /// language servers have answered, until a fix is chosen or anything
+    /// else happens.
+    pub quick_fixes: Option<QuickFixesView>,
+}
+
+/// The quick-fix popup: what the language servers offer at the caret.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuickFixesView {
+    /// The fixes' titles, in the order the servers offered them. Empty:
+    /// there are none here, and the popup says so.
+    pub items: Vec<String>,
+    /// Index into `items` of the fix Return applies (0 without items).
+    pub selected: usize,
 }
 
 /// The fuzzy finder overlay: a query and the results matching it.

@@ -17,6 +17,7 @@ use crate::{
     command::Command,
     jobs::Jobs,
     lsp::{
+        actions::ActionKind,
         Event, LanguageServer, Output, START_TIMEOUT, ServerSpec, Timer,
         text::{self, Encoding},
         typescript::{self, Detection},
@@ -222,7 +223,16 @@ impl Project {
                 }
                 Output::Clear(path) => self.problems.replace_file(source, &path, Vec::new()),
                 Output::ClearAll => self.problems.replace(source, Vec::new()),
+                Output::CodeActions { ticket, fixes } => self.code_actions_answered(ticket, fixes),
             }
+        }
+    }
+
+    /// The servers to ask for code actions of a kind (ticket #45): quick
+    /// fixes from every server, organize imports from tsgo's alone.
+    pub(super) fn language_servers_mut(&mut self, kind: ActionKind) -> impl Iterator<Item = &mut LanguageServer> {
+        match kind {
+            ActionKind::QuickFix | ActionKind::OrganizeImports => self.language.typescript.iter_mut(),
         }
     }
 

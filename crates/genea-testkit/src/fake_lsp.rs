@@ -34,6 +34,9 @@ use serde_json::{Value, json};
 
 use crate::{FakeProcess, TestHost};
 
+mod code_actions;
+pub use code_actions::ScriptedAction;
+
 /// How long [`FakeLsp::wait_for`] waits before failing the test. Real
 /// time: it only guards against hangs.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -56,6 +59,8 @@ pub struct LspScript {
     /// Glob patterns registered for `workspace/didChangeWatchedFiles`
     /// (`client/registerCapability`) once the client says `initialized`.
     pub watch: Vec<String>,
+    /// What `textDocument/codeAction` offers (ticket #45).
+    pub code_actions: Vec<ScriptedAction>,
 }
 
 /// Text the fake reports wherever it occurs.
@@ -83,6 +88,7 @@ impl LspScript {
             "delayMs": self.delay.as_millis() as u64,
             "flood": self.flood,
             "watch": self.watch,
+            "codeActions": self.code_actions.iter().map(ScriptedAction::to_json).collect::<Vec<_>>(),
         })
         .to_string()
     }
@@ -109,6 +115,7 @@ impl LspScript {
             delay: Duration::from_millis(value["delayMs"].as_u64().unwrap_or(0)),
             flood: value["flood"].as_u64().unwrap_or(0) as usize,
             watch: value["watch"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect(),
+            code_actions: value["codeActions"].as_array().into_iter().flatten().map(ScriptedAction::from_json).collect(),
         })
     }
 }
@@ -200,6 +207,27 @@ impl FakeLsp {
     /// initialized, as tsgo does for the files it depends on.
     pub fn watch(self, glob: &str) -> Self {
         self.script.lock().unwrap().watch.push(glob.into());
+        self
+    }
+
+    /// Offers a quick fix titled `title` when asked at an occurrence of
+    /// `at`. Choosing it replaces the first occurrence of each edit's find
+    /// text with its replacement (an empty find inserts at the start).
+    pub fn quick_fix(self, title: &str, at: &str, edits: &[(&str, &str)]) -> Self {
+        self.code_action("quickfix", title, at, edits)
+    }
+
+    /// Offers "Organize Imports" (`source.organizeImports`) anywhere, with
+    /// these edits, as [`quick_fix`](Self::quick_fix) has them.
+    pub fn organize_imports(self, edits: &[(&str, &str)]) -> Self {
+        self.code_action("source.organizeImports", "Organize Imports", "", edits)
+    }
+
+    /// Offers a code action of any kind.
+    pub fn code_action(self, kind: &str, title: &str, at: &str, edits: &[(&str, &str)]) -> Self {
+        let edits = edits.iter().map(|(find, replace)| ((*find).to_owned(), (*replace).to_owned())).collect();
+        let action = ScriptedAction { kind: kind.into(), title: title.into(), at: at.into(), edits };
+        self.script.lock().unwrap().code_actions.push(action);
         self
     }
 
@@ -346,6 +374,11 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
                 let text = documents.get(uri).map(String::as_str).unwrap_or_default();
                 answer(&mut out, json!({ "kind": "full", "items": diagnostics(script, text, utf8) }));
+            }
+            "textDocument/codeAction" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let text = documents.get(uri).map(String::as_str).unwrap_or_default();
+                answer(&mut out, code_actions::code_actions(&script.code_actions, &params, text, utf8));
             }
             "shutdown" => answer(&mut out, Value::Null),
             "exit" => return 0,
@@ -532,6 +565,12 @@ mod tests {
             delay: Duration::from_millis(5),
             flood: 3,
             watch: vec!["**/*.ts".into()],
+            code_actions: vec![ScriptedAction {
+                kind: "quickfix".into(),
+                title: "Fix".into(),
+                at: "x".into(),
+                edits: vec![("x".into(), "y".into())],
+            }],
         };
         assert_eq!(LspScript::from_json(&script.to_json()).unwrap(), script);
     }
