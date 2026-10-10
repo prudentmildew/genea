@@ -39,11 +39,13 @@ pub(crate) struct Workspace {
     foreign_configs: Vec<ForeignConfig>,
     /// Bumped by every read, so a slow one can't replace a newer one.
     generation: u64,
+    /// A read has landed, so `foreign_configs` is known.
+    discovered: bool,
 }
 
 impl Workspace {
     pub(crate) fn new(project: ProjectId, root: PathBuf) -> Self {
-        Workspace { project, root, packages: Vec::new(), foreign_configs: Vec::new(), generation: 0 }
+        Workspace { project, root, packages: Vec::new(), foreign_configs: Vec::new(), generation: 0, discovered: false }
     }
 
     /// Finds the packages and reads their scripts in the background.
@@ -60,6 +62,7 @@ impl Workspace {
                 if project.workspace.generation == generation {
                     project.workspace.packages = packages;
                     project.workspace.foreign_configs = foreign_configs;
+                    project.workspace.discovered = true;
                     project.update_foreign_tools();
                 }
             })
@@ -89,6 +92,12 @@ impl Workspace {
     /// The packages, root first.
     pub(crate) fn packages(&self) -> &[PackageScripts] {
         &self.packages
+    }
+
+    /// Whether the packages have been read at least once, so that
+    /// [`foreign_configs`](Self::foreign_configs) is known.
+    pub(crate) fn is_discovered(&self) -> bool {
+        self.discovered
     }
 
     /// Foreign formatter and linter config at the root or a package root.

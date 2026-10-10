@@ -720,7 +720,8 @@ message types. `project/language.rs` is a project's side of it.
   request (releasing `settle`), writes the buffer as it is, and adds a
   notice. A step whose server isn't ready is skipped. `Project::format_on_save`
   and `fix_on_save` also skip both steps while a foreign formatter or
-  linter is configured (#51).
+  linter is configured (#51), and until the workspace's first read has
+  landed (unknown counts as off).
   `Command::ReformatFile` (⌥⌘L) runs the format step alone. tsgo's
   formatter is never asked.
 
