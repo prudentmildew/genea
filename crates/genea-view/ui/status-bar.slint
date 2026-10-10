@@ -9,6 +9,9 @@ export component StatusBar inherits Rectangle {
     in property <string> notice-action;
     // "genea.jsonc has 1 error", while the config has problems (#29).
     in property <string> config-notice;
+    // "Reduced mode: npm, Prettier", while the project uses foreign tools
+    // (ticket #51); Problems says what is off.
+    in property <string> foreign-tools;
     // Problem counts over every source, e.g. "1 error  2 warnings"; empty
     // with none.
     in property <string> problems;
@@ -40,7 +43,7 @@ export component StatusBar inherits Rectangle {
 
     callback notice-action-clicked();
     callback update-clicked();
-    // The config notice or the counts were clicked.
+    // The config notice, the foreign tools or the counts were clicked.
     callback show-problems();
     // The language-server item was clicked while it is an alert.
     callback restart-language-server();
@@ -62,6 +65,20 @@ export component StatusBar inherits Rectangle {
 
         if root.config-notice != "": Text {
             text: root.config-notice;
+            color: Theme.warning;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.show-problems();
+                }
+            }
+        }
+
+        if root.foreign-tools != "": Text {
+            text: root.foreign-tools;
             color: Theme.warning;
             font-size: Theme.chrome-font-size;
             vertical-alignment: center;

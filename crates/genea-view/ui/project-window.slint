@@ -38,6 +38,7 @@ export component ProjectWindow inherits Window {
     in property <string> status-caret;
     in property <string> status-notice;
     in property <string> status-config-notice;
+    in property <string> status-foreign-tools;
     in property <string> status-problems;
     in property <bool> status-has-errors;
 
@@ -148,6 +149,8 @@ export component ProjectWindow inherits Window {
     in property <string> terminal-url;
     // The Scripts view's rows, and the status bar's script links.
     in property <[ScriptRow]> scripts;
+    // Why the script runner is off (a foreign package manager), or empty.
+    in property <string> scripts-off;
     in property <[string]> status-script-links;
     in-out property <length> terminal-width: 520px;
     in-out property <length> terminal-height: 260px;
@@ -960,6 +963,7 @@ export component ProjectWindow inherits Window {
                             root.search-result-clicked(index);
                         }
                         scripts: root.scripts;
+                        scripts-off: root.scripts-off;
                         script-clicked(index) => {
                             root.script-clicked(index);
                         }
@@ -1249,6 +1253,7 @@ export component ProjectWindow inherits Window {
         StatusBar {
             notice: root.status-notice;
             config-notice: root.status-config-notice;
+            foreign-tools: root.status-foreign-tools;
             problems: root.status-problems;
             has-errors: root.status-has-errors;
             notice-action: root.status-notice-action;

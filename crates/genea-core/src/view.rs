@@ -79,6 +79,9 @@ pub struct ProjectView {
     /// The script runner (ticket #40): every package's `package.json`
     /// scripts, the root package first, then the others in path order.
     pub scripts: Vec<PackageScripts>,
+    /// Why the script runner is off, while it is: the project's package
+    /// manager is a foreign one (ticket #51), so `scripts` is empty.
+    pub scripts_off: Option<String>,
     /// The Usages view (ticket #44): the last Find Usages, or the places Go
     /// to Definition, Type Definition or Implementation found when there
     /// were several. `None` until there is one.
@@ -675,6 +678,10 @@ pub struct StatusBar {
     /// first local URL its script printed. Clicking one opens it in the
     /// browser.
     pub script_links: Vec<ScriptLink>,
+    /// Set while the project uses a foreign tool (ticket #51), naming each:
+    /// `Reduced mode: npm, Prettier`. Problems says what is off; clicking
+    /// it shows Problems.
+    pub foreign_tools: Option<String>,
 }
 
 /// A running script's dev-server link: the first `http(s)://` URL on

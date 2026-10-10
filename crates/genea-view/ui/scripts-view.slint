@@ -17,6 +17,9 @@ export struct ScriptRow {
 
 export component ScriptsView inherits Rectangle {
     in property <[ScriptRow]> rows;
+    // Why the script runner is off (ticket #51: a foreign package
+    // manager), shown instead of the scripts; empty while it is on.
+    in property <string> off;
 
     // A script row was clicked: run it.
     callback clicked(int);
@@ -27,7 +30,7 @@ export component ScriptsView inherits Rectangle {
         x: 12px;
         y: 12px;
         width: parent.width - 24px;
-        text: "No package.json scripts.";
+        text: root.off != "" ? root.off : "No package.json scripts.";
         color: Theme.chrome-muted;
         wrap: word-wrap;
     }

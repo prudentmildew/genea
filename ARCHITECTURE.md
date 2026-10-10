@@ -52,7 +52,8 @@ use, and nothing else:
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
 | Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`, then the showing tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `NewTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | Shell tabs, plus a tab per package-manager command (`src/terminal/`, below). |
 | Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
-| Scripts | `ProjectView::scripts` (`PackageScripts`, `Script`), `Command::RunScript`, `StopTerminalTab`, `RerunTerminalTab`, `TerminalView::url`, `StatusBar::script_links`, `SCRIPT_STOP_TIMEOUT` | The workspace model and the script runner (below). |
+| Scripts | `ProjectView::scripts` (`PackageScripts`, `Script`), `ProjectView::scripts_off`, `Command::RunScript`, `StopTerminalTab`, `RerunTerminalTab`, `TerminalView::url`, `StatusBar::script_links`, `SCRIPT_STOP_TIMEOUT` | The workspace model and the script runner (below). |
+| Foreign tools | `StatusBar::foreign_tools`, `ProblemSource::ForeignTools`, `ProjectView::scripts_off` | npm, Yarn, ESLint, Prettier, Biome, dprint (below). |
 | Session | `restore_session() -> Vec<ProjectId>`, `quit()`; `Command::ZoomIn`, `ZoomOut`, `ResetZoom`, `SetWindowLayout(WindowLayout)`; `ProjectView::font_size`, `window_layout` | Ticket #59, below. |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
@@ -435,6 +436,35 @@ lockfile cross-check (root `pnpm-lock.yaml`, `bun.lock`, `bun.lockb` against
 the package-manager role) reports as `ProblemSource::Toolchain` and is
 re-run when the watcher sees a root lockfile change.
 
+**Foreign tools** (ticket #51, ADR 0001; `src/foreign.rs`,
+`src/project/foreign.rs`): Genea never runs them, and each turns off its
+role's features.
+
+- **npm or Yarn**: `packageManager` pins it, or, without a pin, a root
+  `package-lock.json`, `npm-shrinkwrap.json` or `yarn.lock`
+  (`FOREIGN_LOCKFILES`) is there. The package-manager slot is then off
+  (`Toolchain::foreign_package_manager`): no install notice,
+  `InstallDependencies` and `RunScript` only say why, and
+  `ProjectView::scripts` is empty with `scripts_off` saying why. The
+  runtime is still downloaded, so tsgo and the terminal work. A foreign
+  lockfile appearing or going in an unpinned project reloads the
+  toolchain. Beside a pnpm or Bun pin, a foreign lockfile is only the
+  lockfile check's warning (it goes stale).
+- **ESLint, Prettier, Biome or dprint** config at the root or a package
+  root (their config files, or `prettier` / `eslintConfig` in that
+  `package.json`): found by the workspace model in the same job as the
+  packages (`foreign::find`) and again when the watcher sees one of those
+  files change. `Project::format_on_save` and `fix_on_save` are then
+  false; "Reformat file" still runs Oxfmt on request. npm and Yarn
+  workspaces take their package roots from the root `workspaces` field,
+  like Bun.
+
+Each role has one `ProblemSource::ForeignTools` warning (on the lockfile,
+the `packageManager` pin or the first config file), and
+`StatusBar::foreign_tools` names every foreign tool (`Reduced mode: npm,
+Prettier`); `Project::update_foreign_tools` refreshes the warnings after
+the toolchain's or the workspace's background results.
+
 ## The project environment
 
 Every process Genea starts for a project (terminal shells, scripts,
@@ -498,7 +528,7 @@ showing tab is `Terminal::tab() -> Option`).
 - **Scripts** (ticket #40): `src/workspace.rs` is the workspace model.
   The packages are the root package plus the folders matched by
   `pnpm-workspace.yaml`'s `packages` (read with the YAML grammar) or, when
-  the root pins Bun, the root `workspaces` field (`globset`, `!` excludes,
+  the root pins Bun (or npm or Yarn, #51), the root `workspaces` field (`globset`, `!` excludes,
   never inside `node_modules` or `.git`), each with its `package.json`
   scripts in file order; root first, then by path. They are read in a job
   at open and again when the watcher sees `pnpm-workspace.yaml`, any
@@ -681,7 +711,8 @@ message types. `project/language.rs` is a project's side of it.
   hasn't finished within `FORMAT_TIMEOUT` (1 s, host clock) forgets the
   request (releasing `settle`), writes the buffer as it is, and adds a
   notice. A step whose server isn't ready is skipped. `Project::format_on_save`
-  and `fix_on_save` are where other reasons to skip a step go (#51).
+  and `fix_on_save` also skip both steps while a foreign formatter or
+  linter is configured (#51).
   `Command::ReformatFile` (⌥⌘L) runs the format step alone. tsgo's
   formatter is never asked.
 

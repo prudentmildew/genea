@@ -30,6 +30,7 @@ mod editor;
 mod environment;
 mod files;
 mod finder;
+mod foreign;
 mod git;
 mod grid;
 mod history;

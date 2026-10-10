@@ -9,6 +9,7 @@ mod inline_diff;
 mod language;
 mod oxlint;
 mod finder;
+mod foreign;
 mod formatting;
 mod quick_fixes;
 mod session;
@@ -47,7 +48,7 @@ use crate::{
     session::SessionFile,
     syntax::ParseJob,
     terminal::Terminal,
-    toolchain::{LOCKFILES, Toolchain, ToolchainContext},
+    toolchain::{self, Toolchain, ToolchainContext},
     view::{InlineProblem, LeftColumnView, Notice, NoticeAction, ProjectView, StatusBar, WindowLayout},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
@@ -256,7 +257,11 @@ impl Project {
         self.review.files_changed(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if let Some(toolchain) = &mut self.toolchain
-            && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
+            && (changes.rescan
+                || changes.paths.iter().any(|path| {
+                    path.parent() == Some(self.root.as_path())
+                        && path.file_name().and_then(OsStr::to_str).is_some_and(toolchain::is_lockfile)
+                }))
         {
             toolchain.check_lockfiles(jobs);
         }
@@ -463,6 +468,10 @@ impl Project {
     /// Runs a package's script in a terminal tab (ticket #40), which starts
     /// once the environment is ready.
     fn run_script(&mut self, package: &Path, script: &str) {
+        if let Some(reason) = self.scripts_off() {
+            self.notify(reason);
+            return;
+        }
         let Some(found) = self.workspace.package(package) else { return };
         if !found.scripts.iter().any(|s| s.name == script) {
             return;
@@ -927,6 +936,7 @@ impl Project {
             language_servers: self.language_status().into_iter().chain(self.oxlint_status()).chain(self.oxfmt_status()).collect(),
             project_check: self.project_check_status(),
             script_links: self.terminal.script_links(),
+            foreign_tools: self.foreign_tools_status(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
@@ -958,7 +968,8 @@ impl Project {
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
             quick_fixes: self.quick_fixes_view(),
-            scripts: self.workspace.packages().to_vec(),
+            scripts: if self.scripts_off().is_some() { Vec::new() } else { self.workspace.packages().to_vec() },
+            scripts_off: self.scripts_off(),
             usages: self.usages_view(),
             rename: self.rename_prompt(),
             hint: self.hint(),
