@@ -179,7 +179,7 @@ pub(crate) fn read_file(path: &Path, store: Option<(&Store, &mut Budget)>) -> io
         Err(error) => return Err(error),
     };
     let store = store.and_then(|(store, budget)| budget.take(metadata.len()).then_some(store));
-    let mtime = metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    let mtime = mtime(&metadata);
     let mut file = File::open(path)?;
     let mut copy = match store {
         Some(store) => {
@@ -215,7 +215,19 @@ pub(crate) fn read_file(path: &Path, store: Option<(&Store, &mut Budget)>) -> io
         drop(temp);
         stored = store.keep_blob(&temp_path, &hash).is_ok();
     }
-    Ok(Some(FileState { hash, size, mtime: mtime as u64, text, stored }))
+    Ok(Some(FileState { hash, size, mtime, text, stored }))
+}
+
+/// Whether the regular file at `path` still has `state`'s size and mtime,
+/// so it can be taken as unchanged without reading it.
+pub(crate) fn unmoved(path: &Path, state: &FileState) -> bool {
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == state.size && mtime(&metadata) == state.mtime)
+}
+
+/// Modification time, in nanoseconds since the Unix epoch (0 if unknown).
+fn mtime(metadata: &fs::Metadata) -> u64 {
+    metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64)
 }
 
 /// Puts the file at `path` into the store if it still holds the content

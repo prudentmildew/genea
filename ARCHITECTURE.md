@@ -98,7 +98,12 @@ use, and nothing else:
   baseline in a per-project store under `<support>/review/<key>/`
   (`store.rs`: SHA-256 blobs plus `index.json` of path → hash, size, mtime,
   text, stored). The first open snapshots every file in the background; a
-  later open loads the index (#54 adds the rescan). Watcher batches become
+  later open loads the index and, in the same background op, rescans
+  (#54): it walks the scope afresh and hashes only files whose size or
+  mtime differ from the index (and files with no baseline), so changes
+  made while Genea was closed, and unreviewed ones from before, are listed
+  again; a file found unchanged but touched takes the new mtime into its
+  baseline, keeping later rescans cheap. Watcher batches become
   checks that hash each changed file (a new or moved-in folder is read
   whole, a gone one marks everything under it gone, a `.gitignore` change
   rescans everything) and compare it with the baseline; a difference is
