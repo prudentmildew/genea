@@ -309,10 +309,7 @@ fn a_project_without_oxlint_and_oxfmt_has_lint_off_and_offers_to_add_them() {
     let notice = session.add_oxc_notice().expect("no notice offering Oxlint and Oxfmt");
     assert_eq!(notice.message, "Lint and format are off: this project doesn't have Oxlint and Oxfmt.");
     assert_eq!(notice.action.unwrap().label, "Add Oxlint and Oxfmt");
-    assert_eq!(
-        session.oxlint_status(),
-        Some(LanguageServerStatus { name: "Oxlint".into(), state: LanguageServerState::Off, label: "Oxlint off".into() })
-    );
+    assert_eq!(session.oxlint_status(), None, "the notice says it's off");
     assert_eq!(session.spawned("node"), []);
     assert_eq!(session.oxlint_problems(), []);
 }

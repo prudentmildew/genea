@@ -34,7 +34,7 @@ use crate::{
     },
     problems::ProblemSource,
     toolchain::Toolchain,
-    view::{LanguageServerState, LanguageServerStatus, Notice, NoticeAction},
+    view::{LanguageServerStatus, Notice, NoticeAction},
     watcher::FileChanges,
 };
 
@@ -240,20 +240,10 @@ impl Project {
         }
     }
 
-    /// Oxlint's status-bar item, if it has one.
+    /// Oxlint's status-bar item, while it runs. When lint is off, a notice
+    /// says why instead.
     pub(super) fn oxlint_status(&self) -> Option<LanguageServerStatus> {
-        let linting = &self.language.oxlint;
-        let off = || LanguageServerStatus {
-            name: NAME.into(),
-            state: LanguageServerState::Off,
-            label: format!("{NAME} off"),
-        };
-        match (&linting.server, &linting.detection) {
-            (Some((server, _)), _) => Some(server.status()),
-            (None, Some(OxcDetection::Missing | OxcDetection::NotInstalled)) => Some(off()),
-            (None, Some(OxcDetection::Found(_))) if linting.runtime_problem.is_some() => Some(off()),
-            _ => None,
-        }
+        self.language.oxlint.server.as_ref().map(|(server, _)| server.status())
     }
 
     /// Why lint is off, or why Oxlint stopped.
