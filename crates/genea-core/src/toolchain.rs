@@ -643,6 +643,21 @@ impl Toolchain {
         }
     }
 
+    /// The runtime's executable in the store (`node` or `bun`), or why there
+    /// is none (ticket #49: Oxlint and Oxfmt run on it).
+    pub(crate) fn runtime_program(&self) -> Result<PathBuf, String> {
+        let Some(slot) = &self.slots[Role::Runtime.index()] else {
+            return Err("Couldn't read package.json, so Genea doesn't know the runtime.".into());
+        };
+        match (&slot.want, &slot.state) {
+            (Some((tool, _)), SlotState::Ready(installed)) => Ok(installed.bin_dir.join(tool.id())),
+            (_, SlotState::Invalid(reason)) => Err(format!("package.json: {reason}")),
+            (None, _) => Err(format!("Genea doesn't run {}.", slot.name)),
+            (_, SlotState::Failed(reason)) => Err(format!("Couldn't download {} {}: {reason}", slot.name, slot.version)),
+            _ => Err(format!("{} {} isn't downloaded yet.", slot.name, slot.version)),
+        }
+    }
+
     /// Whether every role has settled: its tool is ready, or it failed or
     /// is off. Nothing is being read, resolved or downloaded.
     pub(crate) fn is_settled(&self) -> bool {

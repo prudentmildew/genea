@@ -30,6 +30,7 @@
 //! every background result.
 
 mod connection;
+pub(crate) mod oxc;
 pub(crate) mod text;
 pub(crate) mod typescript;
 pub(crate) mod watch;
@@ -37,7 +38,10 @@ pub(crate) mod watch;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -163,8 +167,9 @@ pub(crate) struct LanguageServer {
     spec: ServerSpec,
     host: SharedHost,
     jobs: Jobs,
-    /// Bumped by every start and stop, so events, answers and timers of an
-    /// earlier process are dropped.
+    /// New with every start and stop, so events, answers and timers of an
+    /// earlier process are dropped. Unique across servers ([`next_generation`]),
+    /// so the project can tell which of its servers an event is for.
     generation: u64,
     connection: Option<Connection>,
     state: State,
@@ -203,7 +208,7 @@ impl LanguageServer {
     /// A running one is stopped first.
     pub(crate) fn start(&mut self, env: &ProcessEnv) -> Vec<Output> {
         let outputs = self.disconnect();
-        self.generation += 1;
+        self.generation = next_generation();
         let generation = self.generation;
         let id = self.project;
         let deliver: Deliver = Arc::new(move |core: &mut Core, event| {
@@ -236,7 +241,7 @@ impl LanguageServer {
     /// Stops the server (closing the project does this).
     pub(crate) fn stop(&mut self) -> Vec<Output> {
         let outputs = self.disconnect();
-        self.generation += 1;
+        self.generation = next_generation();
         self.state = State::Stopped;
         outputs
     }
@@ -251,6 +256,12 @@ impl LanguageServer {
         self.watchers = Watchers::default();
         let had_documents = !std::mem::take(&mut self.documents).is_empty();
         if had_documents { vec![Output::ClearAll] } else { Vec::new() }
+    }
+
+    /// Whether events and timers of `generation` are this server's: its
+    /// current process's.
+    pub(crate) fn owns(&self, generation: u64) -> bool {
+        self.generation == generation
     }
 
     #[allow(dead_code)] // The seam for commands that ask the server (#43–#47).
@@ -565,7 +576,7 @@ impl LanguageServer {
     /// been restarted [`MAX_RESTARTS`] times within [`RESTART_WINDOW`].
     fn crashed(&mut self, reason: String) -> Vec<Output> {
         let outputs = self.disconnect();
-        self.generation += 1;
+        self.generation = next_generation();
         let now = self.host.clock().now();
         self.restarts.retain(|at| now.duration_since(*at) < RESTART_WINDOW);
         if self.restarts.len() < MAX_RESTARTS {
@@ -603,6 +614,13 @@ impl LanguageServer {
         self.requests.insert(id, pending);
         Some(id)
     }
+}
+
+/// A generation no server has had: generations are unique across every
+/// server, so events can be routed by them (ticket #49).
+fn next_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Drop for LanguageServer {

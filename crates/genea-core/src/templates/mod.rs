@@ -14,6 +14,9 @@ mod generate;
 
 /// The TypeScript range templates use; "Add TypeScript 7" writes it too (#42).
 pub(crate) use generate::versions::TYPESCRIPT as TYPESCRIPT_VERSION;
+/// The Oxlint and Oxfmt ranges templates use; "Add Oxlint and Oxfmt" writes
+/// them too (#49).
+pub(crate) use generate::versions::{OXFMT as OXFMT_VERSION, OXLINT as OXLINT_VERSION};
 
 use std::path::PathBuf;
 

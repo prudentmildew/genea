@@ -23,7 +23,7 @@ use crate::templates::TYPESCRIPT_VERSION;
 pub(crate) const PLATFORM_PACKAGE: &str = "@typescript/typescript-darwin-arm64";
 
 /// The dependency sections of a `package.json` that can name TypeScript.
-const SECTIONS: [&str; 4] = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+pub(crate) const SECTIONS: [&str; 4] = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
 
 /// What the project has of TypeScript 7.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,12 +137,17 @@ pub(crate) fn add_typescript(package_json: &str) -> Result<String, String> {
     let deps = object.entry(section).or_insert_with(|| Value::Object(Map::new()));
     let Value::Object(deps) = deps else { return Err(format!("its {section} isn't an object")) };
     deps.insert("typescript".into(), Value::String(TYPESCRIPT_VERSION.into()));
+    write_like(package_json, &json)
+}
 
+/// `json` as `package.json` text, indented like `package_json` (the text it
+/// was read from) and ending in a newline if that did.
+pub(crate) fn write_like(package_json: &str, json: &Value) -> Result<String, String> {
     let indent = text_indentation(package_json);
     let mut out = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
     let mut serializer = serde_json::Serializer::with_formatter(&mut out, formatter);
-    serde::Serialize::serialize(&json, &mut serializer).map_err(|e| e.to_string())?;
+    serde::Serialize::serialize(json, &mut serializer).map_err(|e| e.to_string())?;
     let mut text = String::from_utf8(out).expect("serde_json writes UTF-8");
     if package_json.ends_with('\n') {
         text.push('\n');

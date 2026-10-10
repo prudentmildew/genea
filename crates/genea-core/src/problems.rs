@@ -31,6 +31,8 @@ pub enum ProblemSource {
     Toolchain,
     /// tsgo's live diagnostics for open files (ticket #42).
     TypeScript,
+    /// `oxlint --lsp`'s live diagnostics for open files (ticket #49).
+    Oxlint,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
