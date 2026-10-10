@@ -21,7 +21,7 @@ if [[ ! -d bench/workspaces/out/typical ]]; then
   exit 2
 fi
 
-cargo build --release --bin genea --bin genea-bench --bin genea-floor
+cargo build --release --bin genea --bin genea-bench --bin genea-floor --bin genea-fake-lsp
 
 if [[ " $* " != *" --no-cold "* && " $* " != *" --help "* ]] && sudo -v; then
   # Keep sudo's timestamp fresh for the whole run.

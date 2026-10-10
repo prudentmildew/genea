@@ -188,6 +188,17 @@ pub enum Command {
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
 
+    /// "Restart language server": stops the project's language server and
+    /// starts it again, also after it failed (crashed too often) and while
+    /// it isn't responding. Its crash count starts over.
+    RestartLanguageServer,
+    /// "Add TypeScript 7" (the notice of a project without it): sets
+    /// `typescript` to Genea's TypeScript 7 range in the root
+    /// `package.json`, where the project lists it, else in
+    /// `devDependencies`. Installing it is up to the user; language
+    /// intelligence starts once it is in `node_modules`.
+    AddTypeScript,
+
     // Structural editing (ticket #25).
     /// ⌘/: comments out the lines the carets and selections are on, or
     /// uncomments them if every one that isn't blank is commented. Uses the

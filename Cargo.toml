@@ -51,6 +51,11 @@ tree-sitter-css = "0.25.0"
 tree-sitter-html = "0.23.2"
 tree-sitter-md = "0.5.3"
 tree-sitter-yaml = "0.7.2"
+# The LSP client (ticket #42; spec #19, Building blocks): LSP 3.18 types with
+# hand-rolled JSON-RPC. Pre-1.0, so pinned exactly. `globset` matches the
+# globs servers register for watched files (already in the tree via `ignore`).
+gen-lsp-types = "=0.11.0"
+globset = "0.4.20"
 # The fuzzy finder (ticket #33). MPL-2.0: file-level copyleft, fine in a
 # binary as long as its source stays available; About lists it with its
 # repository (packaging/about.toml).
