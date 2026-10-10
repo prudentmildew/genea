@@ -122,6 +122,12 @@ impl Client {
         self.notify("textDocument/didOpen", json!({ "textDocument": document }))
     }
 
+    /// Replaces an open file's text, as Genea does on every edit.
+    pub fn change(&mut self, path: &Path, version: u64, text: &str) -> Result<(), String> {
+        let document = json!({ "uri": file_uri(path), "version": version });
+        self.notify("textDocument/didChange", json!({ "textDocument": document, "contentChanges": [{ "text": text }] }))
+    }
+
     /// Sends a request and waits for its answer: the result and how long it
     /// took, from writing the request to reading the response.
     pub fn request(&mut self, method: &str, params: Value) -> Result<(Value, Duration), String> {

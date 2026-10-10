@@ -18,8 +18,9 @@
 //!   times, each timed from the key to the first frame showing the problems
 //!   changed.
 //! - **Never blocks**: the longest main-thread stall and the longest
-//!   keystroke (Genea's work) in that Genea, from content visible through
-//!   the edits, while tsgo loads the project and checks every edit. Both
+//!   keystroke (Genea's work) in that Genea, from just after content
+//!   visible (after a warm-up key: Genea's first key stalls, LS or not)
+//!   through the edits, while tsgo loads the project and checks every edit. Both
 //!   within 16 ms.
 //! - **Completions and go-to-definition**: Genea has neither yet (#43,
 //!   #44), so they are timed against the same tsgo binary directly
@@ -43,8 +44,8 @@ use super::{
 };
 use crate::{
     budgets::{self, Check},
-    genea::Genea,
-    journal::Window,
+    genea::{Genea, Met},
+    journal::{BEFORE_WAITING, Journal, Window},
     keys,
     lsp::{self, Client},
     stats::{Summary, summary_json},
@@ -104,24 +105,36 @@ fn measure(cx: &mut Context, path: &Path) -> Result<Vec<Check>, String> {
         }
         let mut genea = Genea::launch(&cx.genea, cx.workspace(), FILE, true)?;
         genea.expect("diagnostics", &format!("problems {FILE} 1"))?;
-        let met = genea.await_met("diagnostics", DIAGNOSTICS_TIMEOUT).map_err(|e| format!("no diagnostics: {e}"))?;
-        let journal = genea.journal()?;
-        let (_, to_present) =
-            reaction_ms(&journal, journal.process_start, met).ok_or("the journal has no frame showing the error")?;
-        cx.record("run", json!({ "run": run, "first_diagnostics_ms": crate::stats::round(to_present), "after_purge": cold }));
-        first.push(to_present);
-        if run + 1 == runs {
-            last = Some(genea);
+        let warm_up = if run + 1 == runs {
+            // The first key Genea gets stalls its main thread for some
+            // 30 ms, language server or not (`typing` sees it too): press
+            // one that edits nothing while tsgo loads, and start watching
+            // for stalls after it.
+            genea.wait_content()?;
+            let at = now_ns();
+            genea.key(keys::RIGHT)?;
+            Some(at)
         } else {
-            genea.quit();
-        }
+            None
+        };
+        let met = genea.await_met("diagnostics", DIAGNOSTICS_TIMEOUT).map_err(|e| format!("no diagnostics: {e}"))?;
         eprint!(".");
+        if let Some(warm_up) = warm_up {
+            // The edits go on in this one. Its journal is read at the end:
+            // dumping it is work on the main thread, a stall of its own.
+            last = Some((genea, met, warm_up));
+            break;
+        }
+        let journal = genea.journal()?;
+        genea.quit();
+        first.push(first_diagnostics(cx, run, cold, &journal, met)?);
     }
     eprintln!();
-    let mut genea = last.ok_or("no Genea ran")?;
+    let (mut genea, met, warm_up) = last.ok_or("no Genea ran")?;
     let tsgo = language_servers(&mut genea)?.first().and_then(|&pid| sys::executable(pid));
-    let (after_edit, blocking, blocking_note) = edit(cx, &mut genea)?;
+    let (journal, after_edit, blocking, blocking_note) = edit(cx, &mut genea, warm_up)?;
     genea.quit();
+    first.push(first_diagnostics(cx, runs - 1, cold, &journal, met)?);
 
     let tsgo = tsgo.ok_or("Genea ran no tsgo")?;
     let (completion, definition) = requests(cx, &tsgo, path)?;
@@ -152,10 +165,19 @@ fn measure(cx: &mut Context, path: &Path) -> Result<Vec<Check>, String> {
     ])
 }
 
+/// Process start to the first frame showing the error, recorded as a run.
+fn first_diagnostics(cx: &mut Context, run: usize, cold: bool, journal: &Journal, met: Met) -> Result<f64, String> {
+    let (_, to_present) =
+        reaction_ms(journal, journal.process_start, met).ok_or("the journal has no frame showing the error")?;
+    cx.record("run", json!({ "run": run, "first_diagnostics_ms": crate::stats::round(to_present), "after_purge": cold }));
+    Ok(to_present)
+}
+
 /// Types a second error and deletes it, `lsp_edits` times in all. Returns
-/// each edit's key-to-problems-shown time, the longest stall or keystroke
-/// from content visible on, and what that was.
-fn edit(cx: &mut Context, genea: &mut Genea) -> Result<(Vec<f64>, f64, String), String> {
+/// the journal, each edit's key-to-problems-shown time, the longest stall
+/// or keystroke from the warm-up key (sent at `warm_up`) on, and what that
+/// was.
+fn edit(cx: &mut Context, genea: &mut Genea, warm_up: u64) -> Result<(Journal, Vec<f64>, f64, String), String> {
     let (line, column) = position(11, "benchTotal", "benchTotal".len());
     genea.place_caret(line, column)?;
     sleep(Duration::from_millis(500));
@@ -174,15 +196,22 @@ fn edit(cx: &mut Context, genea: &mut Genea) -> Result<(Vec<f64>, f64, String), 
         genea.key(keys::BACKSPACE)?;
         sleep(Duration::from_millis(300));
     }
-    let journal = genea.journal()?;
     let to = now_ns();
+    let journal = genea.journal()?;
     let mut after_edit = Vec::new();
     for (at, met) in edits {
         let key = journal.key_after(at).ok_or("the journal has no key the harness pressed")?;
         let (_, to_present) = reaction_ms(&journal, key, met).ok_or("the journal has no frame showing the problems")?;
         after_edit.push(to_present);
     }
-    let from = journal.content_visible().ok_or("the journal has no content visible")?;
+    // From the end of the busy span that took the warm-up key, a moment
+    // after content visible, while tsgo loads the project.
+    let key = journal.key_after(warm_up).ok_or("the journal has no warm-up key")?;
+    let from = journal
+        .activities
+        .iter()
+        .find(|&&(t, activity)| t >= key && activity == BEFORE_WAITING)
+        .map_or(key, |&(t, _)| t + 1);
     let window = Window { from, to };
     let stalls = journal.stalls(window);
     let keys: Vec<f64> = journal.keystrokes(window).iter().map(|k| k.genea_work_ms()).collect();
@@ -197,12 +226,12 @@ fn edit(cx: &mut Context, genea: &mut Genea) -> Result<(Vec<f64>, f64, String), 
         }),
     );
     let note = format!(
-        "longest stall {} ms, longest of {} keystrokes {} ms, from content visible through the edits",
+        "longest stall {} ms, longest of {} keystrokes {} ms, from just after content visible through the edits",
         crate::stats::round(stalls.max_ms),
         keys.len(),
         crate::stats::round(longest_key)
     );
-    Ok((after_edit, stalls.max_ms.max(longest_key), note))
+    Ok((journal, after_edit, stalls.max_ms.max(longest_key), note))
 }
 
 /// Times completions after `order.` and go-to-definition on `benchTotal`
@@ -217,13 +246,24 @@ fn requests(cx: &mut Context, tsgo: &PathBuf, path: &Path) -> Result<(Vec<f64>, 
     // The first request waits for tsgo to load the project: not timed.
     client.request("textDocument/definition", definition_at.clone())?;
     let (mut completion, mut definition) = (Vec::new(), Vec::new());
+    // An edit before each request, as a user types before asking, so tsgo
+    // can't answer from what it worked out for the last one. A line break
+    // at the end moves nothing the requests point at.
+    let mut version = 1;
+    let mut edit = |client: &mut Client| {
+        version += 1;
+        let text = if version % 2 == 0 { format!("{TEXT}\n") } else { TEXT.to_string() };
+        client.change(path, version, &text)
+    };
     for _ in 0..cx.options.lsp_requests {
+        edit(&mut client)?;
         let (items, took) = client.request("textDocument/completion", completion_at.clone())?;
         let count = items["items"].as_array().or(items.as_array()).map_or(0, Vec::len);
         if count == 0 {
             return Err("tsgo offered no completions after `order.`".into());
         }
         completion.push(took.as_secs_f64() * 1000.0);
+        edit(&mut client)?;
         let (target, took) = client.request("textDocument/definition", definition_at.clone())?;
         if target.is_null() || target.as_array().is_some_and(Vec::is_empty) {
             return Err("tsgo found no definition of benchTotal".into());
