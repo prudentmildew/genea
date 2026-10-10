@@ -88,3 +88,41 @@ fn the_diff_against_head_shows_the_files_changes_since_the_last_commit() {
     // No Keep and Revert: HEAD isn't a review.
     assert_eq!(diff.change, None);
 }
+
+#[test]
+fn an_untracked_file_shows_as_all_added() {
+    let fixture = repository(FixtureProject::new().file("main.ts", "one\n"));
+    fixture.write("src/new.ts", "alpha\nbeta\n");
+    let (mut workbench, project) = open(&fixture, "src/new.ts");
+
+    workbench.dispatch(project, Command::ShowDiffAgainstHead);
+    workbench.settle().unwrap();
+
+    assert_eq!(rows(&editor(&workbench, project)), ["+alpha", "+beta", " "]);
+}
+
+#[test]
+fn in_a_repository_without_a_commit_every_file_is_all_added() {
+    let fixture = FixtureProject::new().file("main.ts", "one\n").build();
+    git(fixture.root(), &["init", "--quiet"]);
+    let (mut workbench, project) = open(&fixture, "main.ts");
+
+    workbench.dispatch(project, Command::ShowDiffAgainstHead);
+    workbench.settle().unwrap();
+
+    assert_eq!(rows(&editor(&workbench, project)), ["+one", " "]);
+}
+
+#[test]
+fn outside_a_repository_a_notice_says_so_and_the_file_shows_plainly() {
+    let fixture = FixtureProject::new().file("main.ts", "one\n").build();
+    let (mut workbench, project) = open(&fixture, "main.ts");
+
+    workbench.dispatch(project, Command::ShowDiffAgainstHead);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.editor.unwrap().inline_diff, None);
+    let notices: Vec<_> = view.notices.iter().map(|n| n.message.as_str()).collect();
+    assert_eq!(notices, ["Can't show main.ts against HEAD: the project isn't in a git repository."]);
+}
