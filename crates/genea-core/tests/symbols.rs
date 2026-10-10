@@ -174,3 +174,24 @@ fn file_symbols_asked_for_while_the_server_restarts_come_once_it_is_ready() {
     session.workbench.settle().unwrap();
     assert_eq!(session.results(), ["Shape", "area  Shape", "Circle", "radius  Circle", "area  Circle", "circle"]);
 }
+
+#[test]
+fn file_structure_and_go_to_symbol_are_actions_with_their_shortcuts() {
+    let mut session = open(typescript_project().file("src/shapes.ts", SHAPES));
+    session.dispatch(Command::OpenFile("src/shapes.ts".into()));
+
+    session.dispatch(Command::OpenFinder(FinderMode::Actions));
+    session.dispatch(Command::SetFinderQuery("file structure".into()));
+    let finder = session.workbench.project(session.project).unwrap().finder.unwrap();
+    assert_eq!((finder.items[0].label.as_str(), finder.items[0].shortcut.as_deref()), ("File Structure", Some("⌘F12")));
+    session.dispatch(Command::AcceptFinder);
+    assert_eq!(session.workbench.project(session.project).unwrap().finder.unwrap().mode, FinderMode::FileSymbols);
+    assert_eq!(session.results()[0], "Shape");
+
+    session.dispatch(Command::OpenFinder(FinderMode::Actions));
+    session.dispatch(Command::SetFinderQuery("go to symbol".into()));
+    let finder = session.workbench.project(session.project).unwrap().finder.unwrap();
+    assert_eq!((finder.items[0].label.as_str(), finder.items[0].shortcut.as_deref()), ("Go to Symbol…", Some("⌥⌘O")));
+    session.dispatch(Command::AcceptFinder);
+    assert_eq!(session.workbench.project(session.project).unwrap().finder.unwrap().mode, FinderMode::ProjectSymbols);
+}
