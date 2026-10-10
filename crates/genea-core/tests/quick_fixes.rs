@@ -203,3 +203,60 @@ fn a_fix_for_a_file_that_changed_on_disk_since_is_not_applied() {
     let notices: Vec<String> = session.view().notices.into_iter().map(|n| n.message).collect();
     assert!(notices.iter().any(|n| n.contains("changed since")), "{notices:?}");
 }
+
+const UNSORTED: &str = "import { b } from \"./b.js\";\nimport { a } from \"./a.js\";\nconsole.log(a, b);\n";
+const SORTED: &str = "import { a } from \"./a.js\";\nimport { b } from \"./b.js\";\nconsole.log(a, b);\n";
+
+/// tsgo organizing `UNSORTED` as it does: one edit rewriting the first
+/// import line as both, sorted, and one deleting the second line.
+fn organizer() -> FakeLsp {
+    FakeLsp::new().organize_imports(&[
+        ("import { b } from \"./b.js\";\n", "import { a } from \"./a.js\";\nimport { b } from \"./b.js\";\n"),
+        ("import { a } from \"./a.js\";\n", ""),
+    ])
+}
+
+#[test]
+fn ctrl_alt_o_organizes_the_imports_of_the_current_file_as_one_undo_step() {
+    let fake = organizer();
+    let mut session = open(typescript_project(UNSORTED), &fake);
+    session.dispatch(Command::PlaceCaret { line: 2, column: 4 });
+
+    session.dispatch(Command::OrganizeImports);
+    session.settle();
+
+    assert_eq!(session.text(), SORTED);
+    assert_eq!(session.caret(), (2, 4));
+    let request = &fake.received("textDocument/codeAction")[0];
+    assert_eq!(request["context"]["only"], json!(["source.organizeImports"]));
+
+    session.dispatch(Command::Undo);
+    assert_eq!(session.text(), UNSORTED);
+}
+
+#[test]
+fn imports_are_not_organized_if_the_file_changes_before_the_server_answers() {
+    let fake = organizer().delay(std::time::Duration::from_millis(200));
+    let mut session = open(typescript_project(UNSORTED), &fake);
+    session.dispatch(Command::MoveCaret(genea_core::CaretMove::DocumentEnd));
+
+    session.dispatch(Command::OrganizeImports);
+    session.dispatch(Command::InsertText("//".into()));
+    session.settle();
+
+    assert_eq!(session.text(), format!("{UNSORTED}//"));
+}
+
+#[test]
+fn saving_never_organizes_imports() {
+    let fake = organizer();
+    let mut session = open(typescript_project(UNSORTED), &fake);
+    session.dispatch(Command::MoveCaret(genea_core::CaretMove::DocumentEnd));
+    session.dispatch(Command::InsertText("// edited\n".into()));
+
+    session.dispatch(Command::Save);
+    session.settle();
+
+    assert_eq!(session.fixture.read("src/main.ts"), format!("{UNSORTED}// edited\n"));
+    assert_eq!(fake.received("textDocument/codeAction"), Vec::<serde_json::Value>::new());
+}
