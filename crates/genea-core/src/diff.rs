@@ -88,22 +88,32 @@ fn fresh_base_id() -> u64 {
 }
 
 impl BaseDiff {
-    /// Replaces the base (`None`: none). Without one there are no hunks.
+    /// Replaces the base (`None`: none). Without one there are no hunks;
+    /// with a different one, none until a diff against it lands. The same
+    /// text again (HEAD moved, but not this file) changes nothing.
     pub(crate) fn set_base(&mut self, base: Option<Rope>) {
-        if base.is_none() {
-            self.hunks.clear();
+        if base.is_some() && base == self.base {
+            return;
         }
+        self.hunks.clear();
+        self.diffed = None;
         self.base = base;
         self.base_id = fresh_base_id();
     }
 
-    pub(crate) fn base(&self) -> Option<&Rope> {
-        self.base.as_ref()
+    /// The hunks last worked out against the current base, which may be
+    /// behind the buffer, and that base. `None` without a base, or until
+    /// the first diff against it lands.
+    pub(crate) fn latest(&self) -> Option<(&[Hunk], &Rope)> {
+        let base = self.base.as_ref()?;
+        let (_, base_id) = self.diffed?;
+        (base_id == self.base_id).then_some((&self.hunks[..], base))
     }
 
-    /// The hunks last worked out, which may be behind the buffer.
+    /// The hunks last worked out against the current base, which may be
+    /// behind the buffer; none until the first diff against it lands.
     pub(crate) fn hunks(&self) -> &[Hunk] {
-        if self.base.is_some() { &self.hunks } else { &[] }
+        self.latest().map_or(&[], |(hunks, _)| hunks)
     }
 
     /// A diff to run, if there is a base, the hunks are behind the buffer
