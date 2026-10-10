@@ -42,6 +42,7 @@ pub enum Action {
     ToggleLineComment,
     ShowQuickFixes,
     OrganizeImports,
+    ReformatFile,
     ExpandSelection,
     ShrinkSelection,
     ExpandFold,
@@ -80,7 +81,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 59] = [
+    pub const ALL: [Action; 60] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -107,6 +108,7 @@ impl Action {
         Action::ToggleLineComment,
         Action::ShowQuickFixes,
         Action::OrganizeImports,
+        Action::ReformatFile,
         Action::ExpandSelection,
         Action::ShrinkSelection,
         Action::ExpandFold,
@@ -171,6 +173,7 @@ impl Action {
             Action::ToggleLineComment => "Comment with Line Comment",
             Action::ShowQuickFixes => "Show Quick Fixes",
             Action::OrganizeImports => "Organize Imports",
+            Action::ReformatFile => "Reformat File",
             Action::ExpandSelection => "Expand Selection",
             Action::ShrinkSelection => "Shrink Selection",
             Action::ExpandFold => "Expand Fold",
@@ -228,6 +231,7 @@ impl Action {
             Action::ToggleLineComment => "⌘/",
             Action::ShowQuickFixes => "⌥↩",
             Action::OrganizeImports => "⌃⌥O",
+            Action::ReformatFile => "⌥⌘L",
             Action::ExpandSelection => "⌥↑",
             Action::ShrinkSelection => "⌥↓",
             Action::ExpandFold => "⌥⌘=",
@@ -294,6 +298,7 @@ impl Action {
                 | Action::ToggleLineComment
                 | Action::ShowQuickFixes
                 | Action::OrganizeImports
+                | Action::ReformatFile
                 | Action::ExpandSelection
                 | Action::ShrinkSelection
                 | Action::ExpandFold
@@ -340,6 +345,7 @@ impl Action {
             Action::ToggleLineComment => Command::ToggleLineComment,
             Action::ShowQuickFixes => Command::ShowQuickFixes,
             Action::OrganizeImports => Command::OrganizeImports,
+            Action::ReformatFile => Command::ReformatFile,
             Action::ExpandSelection => Command::ExpandSelection,
             Action::ShrinkSelection => Command::ShrinkSelection,
             Action::ExpandFold => Command::ExpandFold,

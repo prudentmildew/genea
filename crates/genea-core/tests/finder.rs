@@ -191,6 +191,7 @@ fn find_action_lists_every_action_with_its_shortcut() {
     assert_eq!(shortcut("Terminal"), Some("⌥F12".into()));
     assert_eq!(shortcut("New Terminal Tab"), Some("⌘T".into()));
     assert_eq!(shortcut("Scripts"), None);
+    assert_eq!(shortcut("Reformat File"), Some("⌥⌘L".into()));
     assert_eq!(shortcut("Show Diff Against HEAD"), None);
     assert!(items.iter().all(|item| matches!(item.kind, FinderItemKind::Action(_))));
 }

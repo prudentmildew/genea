@@ -562,6 +562,8 @@ fn wire(controller: &WindowController) {
     // Quick fixes and organize imports (ticket #45), editing items too.
     window.on_show_quick_fixes(edit(Command::ShowQuickFixes));
     window.on_organize_imports(edit(Command::OrganizeImports));
+    // Reformat File (ticket #50), an editing item too.
+    window.on_reformat_file(edit(Command::ReformatFile));
     // The terminal pane (ticket #38).
     window.on_toggle_terminal(menu(Command::ToggleTerminal));
     window.on_terminal_focus(move || {
