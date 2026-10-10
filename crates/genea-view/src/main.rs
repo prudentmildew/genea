@@ -12,6 +12,7 @@
 //! - `about`: the About window's third-party licences;
 //! - `window`: one project window's view-state → Slint sync;
 //! - `welcome`: the welcome window's sync;
+//! - `new_project`: the New Project dialog's sync (its own window);
 //! - `surface`: the editor surface's ring of line slots;
 //! - `terminal`: the terminal pane's rows, keys and mouse;
 //! - `fonts`: registers the emoji font the first time an emoji is shown;
@@ -30,6 +31,7 @@ mod fonts;
 mod journal;
 mod keys;
 mod links;
+mod new_project;
 mod pasteboard;
 mod remote;
 mod surface;

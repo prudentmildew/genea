@@ -10,7 +10,8 @@
 use std::path::Path;
 
 use genea_core::{
-    Command, FinderMode, NewProjectCommand, NewProjectDialog, NewProjectOption, PackageManagerPin, ProjectId, RuntimePin, Template, Workbench,
+    Command, FinderMode, NewProjectCommand, NewProjectDialog, NewProjectOption, PackageManagerPin, ProjectId,
+    RuntimePin, Template, Workbench,
 };
 use genea_testkit::{FixtureProject, TestHost};
 use serde_json::{Value, json};
@@ -241,7 +242,10 @@ fn the_pickers_offer_the_newest_release_of_each_major_version_with_the_defaults_
             ("Bun 1.4.2", "default"),
         ]
     );
-    assert_eq!(labels(&dialog.package_managers), [("pnpm 12.10.1", "default"), ("pnpm 11.4.0", ""), ("Bun 1.5.0", ""), ("Bun 1.4.2", "default")]);
+    assert_eq!(
+        labels(&dialog.package_managers),
+        [("pnpm 12.10.1", "default"), ("pnpm 11.4.0", ""), ("Bun 1.5.0", ""), ("Bun 1.4.2", "default")]
+    );
     assert_eq!(dialog.runtimes[4].pin, RuntimePin::Bun("1.5.0".into()));
     assert_eq!(dialog.package_managers[1].pin, PackageManagerPin::Pnpm("11.4.0".into()));
 }
