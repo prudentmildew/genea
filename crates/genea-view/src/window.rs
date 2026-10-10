@@ -652,6 +652,8 @@ fn finder_title(mode: FinderMode) -> &'static str {
         FinderMode::RecentFiles => "Recent Files",
         FinderMode::Actions => "Find Action",
         FinderMode::Everywhere => "Search Everywhere",
+        FinderMode::FileSymbols => "File Structure",
+        FinderMode::ProjectSymbols => "Go to Symbol",
     }
 }
 
