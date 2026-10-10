@@ -20,10 +20,14 @@ fn project(package_json: &str) -> FixtureProject {
     FixtureProject::new().file("package.json", package_json).dir("node_modules").build()
 }
 
-/// The project's notices without TypeScript 7's: these projects don't have
-/// it, and `tests/language_server.rs` covers that notice.
+/// The project's notices without TypeScript 7's and Oxlint's: these projects
+/// don't have them, and `tests/language_server.rs` and `tests/oxlint.rs`
+/// cover those notices.
 fn notices(notices: &[Notice]) -> Vec<Notice> {
-    notices.iter().filter(|n| !n.message.starts_with("Language intelligence is off")).cloned().collect()
+    let language = |n: &&Notice| {
+        n.message.starts_with("Language intelligence is off") || n.message.starts_with("Lint and format are off")
+    };
+    notices.iter().filter(|n| !language(n)).cloned().collect()
 }
 
 fn pins(runtime: &str, runtime_version: &str, package_manager: &str) -> String {

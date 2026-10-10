@@ -202,6 +202,12 @@ pub enum Command {
     /// `devDependencies`. Installing it is up to the user; language
     /// intelligence starts once it is in `node_modules`.
     AddTypeScript,
+    /// "Add Oxlint and Oxfmt" (the notice of a project without them, ticket
+    /// #49): adds Genea's Oxlint and Oxfmt ranges to `devDependencies` in
+    /// the root `package.json`, for whichever of the two it doesn't list.
+    /// Installing them is up to the user; lint starts once Oxlint is in
+    /// `node_modules`.
+    AddOxlintAndOxfmt,
     /// "Run project check" (ticket #48): type-checks the whole project in
     /// the background with `tsc -b --noEmit` from its TypeScript 7.
     /// `StatusBar::project_check` shows it running. Its results replace the

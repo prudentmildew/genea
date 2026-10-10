@@ -4,6 +4,7 @@ mod changes;
 mod check;
 mod external;
 mod language;
+mod oxlint;
 mod finder;
 mod quick_fixes;
 mod symbols;
@@ -538,14 +539,18 @@ impl Project {
             Command::RevertChange(path) => self.review.revert(Some(path), jobs),
             Command::KeepAllChanges => self.review.keep(None, jobs),
             Command::RevertAllChanges => self.review.revert(None, jobs),
-            Command::RestartLanguageServer => self.restart_language_server(),
             Command::ShowQuickFixes
             | Command::MoveQuickFixSelection(_)
             | Command::ApplyQuickFix(_)
             | Command::CloseQuickFixes
             | Command::OrganizeImports => self.quick_fix_command(command, now, jobs),
-            Command::AddTypeScript => self.add_typescript(jobs),
             Command::RunProjectCheck => self.run_project_check(),
+            Command::RestartLanguageServer => {
+                self.restart_language_server();
+                self.restart_oxlint();
+            }
+            Command::AddTypeScript => self.add_typescript(jobs),
+            Command::AddOxlintAndOxfmt => self.add_oxc(jobs),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
             | Command::MoveFinderSelection(_)
@@ -857,7 +862,7 @@ impl Project {
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
-            language_servers: self.language_status(),
+            language_servers: self.language_status().into_iter().chain(self.oxlint_status()).collect(),
             project_check: self.project_check_status(),
             script_links: self.terminal.script_links(),
         };
@@ -866,6 +871,7 @@ impl Project {
         notices.extend(self.install_notice());
         notices.extend(self.environment.iter().flat_map(Environment::notices));
         notices.extend(self.language_notices());
+        notices.extend(self.oxlint_notices());
         notices.extend(self.project_check_notices());
         ProjectView {
             root: self.root.clone(),

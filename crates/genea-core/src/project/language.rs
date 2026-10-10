@@ -15,7 +15,7 @@ use gen_lsp_types::{Diagnostic, DiagnosticSeverity, FileEvent, Message};
 use genea_host::{ProcessSpec, SharedHost};
 use serde_json::json;
 
-use super::Project;
+use super::{Project, oxlint::Linting};
 use crate::{
     command::Command,
     jobs::Jobs,
@@ -49,6 +49,15 @@ pub(crate) struct Language {
     start_overdue: bool,
     /// Go to definition, find usages and rename (#44).
     navigation: navigation::Navigation,
+    /// Oxlint (ticket #49, `project/oxlint.rs`).
+    pub(super) oxlint: Linting,
+}
+
+impl Language {
+    /// The host and jobs, once `start_language` has run.
+    pub(super) fn context(&self) -> Option<(SharedHost, Jobs)> {
+        self.context.clone()
+    }
 }
 
 impl Project {
@@ -70,6 +79,7 @@ impl Project {
         );
         self.language.context = Some((host, jobs.clone()));
         self.detect_typescript();
+        self.detect_oxc();
     }
 
     /// [`START_TIMEOUT`] has passed since the project opened.
@@ -141,6 +151,9 @@ impl Project {
 
     /// What a language server sent (from its connection's batch).
     pub(crate) fn language_event(&mut self, generation: u64, event: Event) {
+        if self.language.oxlint.owns(generation) {
+            return self.oxlint_event(generation, event);
+        }
         let Some(server) = &mut self.language.typescript else { return };
         let outputs = server.event(generation, event);
         self.language_outputs(outputs);
@@ -148,6 +161,9 @@ impl Project {
 
     /// A language server's timer came due.
     pub(crate) fn language_timer(&mut self, generation: u64, timer: Timer) {
+        if self.language.oxlint.owns(generation) {
+            return self.oxlint_timer(generation, timer);
+        }
         let env = self.process_env();
         let Some(server) = &mut self.language.typescript else { return };
         let outputs = server.timer(generation, timer, &env);
@@ -157,6 +173,7 @@ impl Project {
     /// Brings the language server's documents in line with the open
     /// editors. Runs after every command and every background result.
     pub(crate) fn sync_language(&mut self) {
+        self.sync_oxlint();
         let Some(server) = &mut self.language.typescript else { return };
         let editors = self.editor.iter().chain(self.panes.parked());
         let outputs = server.sync(editors);
@@ -179,6 +196,7 @@ impl Project {
     /// to `package.json` or the top of `node_modules` look for TypeScript
     /// 7 again (it may have been installed or removed).
     pub(super) fn language_files_changed(&mut self, changes: &FileChanges) {
+        self.oxlint_files_changed(changes);
         if let Some(server) = &self.language.typescript {
             server.files_changed(&changes.paths, &changes.created);
         }
@@ -197,6 +215,9 @@ impl Project {
 
     /// Watched-file events matched in the background.
     pub(crate) fn language_files_events(&mut self, generation: u64, events: Vec<FileEvent>) {
+        if self.language.oxlint.owns(generation) {
+            return self.oxlint_files_events(generation, events);
+        }
         if let Some(server) = &self.language.typescript {
             server.send_file_events(generation, events);
         }
@@ -321,7 +342,7 @@ impl Project {
 
 /// A server's diagnostic as a Problem in `path`, or `None` for information
 /// and hints, which Problems doesn't show.
-fn problem(path: &Path, text: &ropey::Rope, diagnostic: &Diagnostic, encoding: Encoding) -> Option<Problem> {
+pub(super) fn problem(path: &Path, text: &ropey::Rope, diagnostic: &Diagnostic, encoding: Encoding) -> Option<Problem> {
     let severity = match diagnostic.severity {
         None | Some(DiagnosticSeverity::Error) => Severity::Error,
         Some(DiagnosticSeverity::Warning) => Severity::Warning,
