@@ -29,7 +29,6 @@ fn missing_import() -> FakeLsp {
 }
 
 struct Session {
-    #[allow(dead_code)] // Keeps the temp folder.
     fixture: FixtureProject,
     workbench: Workbench,
     project: ProjectId,
@@ -67,10 +66,25 @@ impl Session {
     fn quick_fixes(&self) -> Option<QuickFixesView> {
         self.view().quick_fixes
     }
-}
 
-fn titles(view: Option<QuickFixesView>) -> Vec<String> {
-    view.expect("the quick fixes are showing").items
+    /// The focused file's text.
+    fn text(&self) -> String {
+        let lines: Vec<String> = self.view().editor.unwrap().lines.into_iter().map(|line| line.text).collect();
+        lines.join("\n")
+    }
+
+    /// The primary caret: (line, column).
+    fn caret(&self) -> (usize, usize) {
+        let caret = self.view().editor.unwrap().caret;
+        (caret.line, caret.column)
+    }
+
+    /// Opens the popup at a place and waits for the servers.
+    fn show_quick_fixes_at(&mut self, line: usize, column: usize) {
+        self.dispatch(Command::PlaceCaret { line, column });
+        self.dispatch(Command::ShowQuickFixes);
+        self.settle();
+    }
 }
 
 #[test]
@@ -87,4 +101,105 @@ fn alt_enter_lists_the_servers_fixes_for_the_problem_at_the_caret() {
     let request = &fake.received("textDocument/codeAction")[0];
     assert_eq!(request["context"]["diagnostics"][0]["code"], json!(2304));
     assert_eq!(request["range"]["start"], json!({ "line": 0, "character": 19 }));
+}
+
+#[test]
+fn choosing_a_fix_applies_its_edit_as_one_undo_step() {
+    let fake = missing_import();
+    let mut session = open(typescript_project("export const x = helper();\n"), &fake);
+    session.show_quick_fixes_at(0, 19);
+
+    session.dispatch(Command::ApplyQuickFix(0));
+    session.settle();
+
+    assert_eq!(session.text(), format!("{IMPORT}export const x = helper();\n"));
+    assert_eq!(session.caret(), (1, 19), "the caret stays on its code");
+    assert_eq!(session.quick_fixes(), None, "the popup closes");
+
+    session.dispatch(Command::Undo);
+    assert_eq!(session.text(), "export const x = helper();\n");
+}
+
+#[test]
+fn the_popup_says_when_there_are_no_fixes() {
+    let fake = missing_import();
+    let mut session = open(typescript_project("export const x = helper();\nlet y = 2;\n"), &fake);
+
+    session.show_quick_fixes_at(1, 4);
+
+    assert_eq!(session.quick_fixes(), Some(QuickFixesView { items: vec![], selected: 0 }));
+}
+
+#[test]
+fn without_a_language_server_the_popup_says_there_are_no_fixes() {
+    let fixture = FixtureProject::new().file("package.json", "{}").file("src/main.ts", "let a = 1;\n").build();
+    let host = TestHost::new();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.dispatch(project, Command::OpenFile("src/main.ts".into()));
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::ShowQuickFixes);
+
+    assert_eq!(workbench.project(project).unwrap().quick_fixes, Some(QuickFixesView { items: vec![], selected: 0 }));
+}
+
+#[test]
+fn up_and_down_move_the_selection_around_the_fixes() {
+    let fake = missing_import().quick_fix("Add all missing imports", "helper", &[("", IMPORT)]);
+    let mut session = open(typescript_project("export const x = helper();\n"), &fake);
+    session.show_quick_fixes_at(0, 19);
+    assert_eq!(session.quick_fixes().unwrap().items, [ADD_IMPORT, "Add all missing imports"]);
+
+    session.dispatch(Command::MoveQuickFixSelection(1));
+    assert_eq!(session.quick_fixes().unwrap().selected, 1);
+    session.dispatch(Command::MoveQuickFixSelection(1));
+    assert_eq!(session.quick_fixes().unwrap().selected, 0, "it wraps around");
+    session.dispatch(Command::MoveQuickFixSelection(-1));
+    assert_eq!(session.quick_fixes().unwrap().selected, 1);
+}
+
+#[test]
+fn any_other_command_closes_the_popup() {
+    let fake = missing_import();
+    let mut session = open(typescript_project("export const x = helper();\n"), &fake);
+    session.show_quick_fixes_at(0, 19);
+
+    session.dispatch(Command::InsertText("h".into()));
+    session.settle();
+    assert_eq!(session.quick_fixes(), None);
+
+    session.show_quick_fixes_at(0, 19);
+    session.dispatch(Command::CloseQuickFixes);
+    assert_eq!(session.quick_fixes(), None);
+}
+
+#[test]
+fn an_answer_that_comes_after_the_popup_closed_is_dropped() {
+    let fake = missing_import().delay(std::time::Duration::from_millis(200));
+    let mut session = open(typescript_project("export const x = helper();\n"), &fake);
+    session.dispatch(Command::PlaceCaret { line: 0, column: 19 });
+
+    session.dispatch(Command::ShowQuickFixes);
+    session.dispatch(Command::CloseQuickFixes);
+    session.settle();
+
+    assert_eq!(session.quick_fixes(), None);
+}
+
+#[test]
+fn a_fix_for_a_file_that_changed_on_disk_since_is_not_applied() {
+    let fake = missing_import();
+    let mut session = open(typescript_project("export const x = helper();\n"), &fake);
+    session.show_quick_fixes_at(0, 19);
+
+    // The file is reloaded under the open popup.
+    session.fixture.write("src/main.ts", "export const z = helper();\n");
+    session.settle();
+    session.dispatch(Command::ApplyQuickFix(0));
+    session.settle();
+
+    assert_eq!(session.text(), "export const z = helper();\n");
+    let notices: Vec<String> = session.view().notices.into_iter().map(|n| n.message).collect();
+    assert!(notices.iter().any(|n| n.contains("changed since")), "{notices:?}");
 }
