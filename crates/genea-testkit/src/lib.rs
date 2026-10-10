@@ -27,7 +27,7 @@ mod pty;
 mod tools;
 
 pub use download_server::DownloadServer;
-pub use fake_lsp::{FakeLsp, LspScript, Marker, Received};
+pub use fake_lsp::{AssistScript, FakeLsp, FakeSignature, LspScript, Marker, Received};
 pub use fake_tsc::FakeTsc;
 pub use fixture::{FixtureBuilder, FixtureProject};
 pub use host::{FakeProcess, ManualClock, ScriptedDownloads, ScriptedProcesses, TestClipboard, TestHost};

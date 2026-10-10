@@ -12,6 +12,7 @@
 //! - [`scenarios`]: what runs, one module per scenario;
 //! - [`genea`]: launching and commanding Genea; [`keys`]: key codes and the
 //!   keyboard layout; [`sys`]: kernel clocks and process accounting;
+//!   [`lsp`]: a language-server client that times tsgo directly;
 //!   [`report`]: the JSONL results and the machine they came from.
 //!
 //! The start floor is the `genea-floor` binary (`src/floor.rs`).
@@ -20,6 +21,7 @@ pub mod budgets;
 pub mod genea;
 pub mod journal;
 pub mod keys;
+pub mod lsp;
 pub mod report;
 pub mod scenarios;
 pub mod stats;

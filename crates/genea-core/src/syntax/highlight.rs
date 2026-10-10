@@ -60,10 +60,13 @@ pub enum Highlight {
     Link,
     /// Markdown code spans and code blocks.
     Literal,
+    /// Inlay hints and code lenses (ticket #46): text the editor shows
+    /// that isn't in the file.
+    Hint,
 }
 
 impl Highlight {
-    const ALL: [Highlight; 25] = [
+    const ALL: [Highlight; 26] = [
         Highlight::Comment,
         Highlight::Keyword,
         Highlight::Operator,
@@ -89,6 +92,7 @@ impl Highlight {
         Highlight::Strong,
         Highlight::Link,
         Highlight::Literal,
+        Highlight::Hint,
     ];
 
     fn from_paint(paint: Paint) -> Option<Highlight> {
@@ -182,6 +186,22 @@ impl Spans {
             }
             start = end;
         }
+        Spans(spans)
+    }
+
+    /// Spans from any list: sorted, with empty ones and ones overlapping
+    /// an earlier one left out.
+    pub(crate) fn from_spans(spans: impl IntoIterator<Item = Span>) -> Self {
+        let mut spans: Vec<Span> = spans.into_iter().filter(|s| s.start < s.end).collect();
+        spans.sort_by_key(|s| s.start);
+        let mut end = 0;
+        spans.retain(|s| {
+            let keep = s.start >= end;
+            if keep {
+                end = s.end;
+            }
+            keep
+        });
         Spans(spans)
     }
 

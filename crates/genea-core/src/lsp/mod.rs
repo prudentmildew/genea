@@ -8,14 +8,18 @@
 //!   main thread: starting and initializing, the restart policy (up to
 //!   [`MAX_RESTARTS`] within [`RESTART_WINDOW`] on the host clock, then
 //!   failed until "Restart language server"), document sync and pulled
-//!   diagnostics. It is generic: tsgo now, `oxlint --lsp` and `oxfmt --lsp`
-//!   later (#49, #50) as more instances with their own [`ServerSpec`].
+//!   diagnostics. It is generic: tsgo, `oxlint --lsp` (#49) and later
+//!   `oxfmt --lsp` (#50) are instances with their own [`ServerSpec`].
+//!   Generations are unique across servers, so a project routes events and
+//!   timers by them ([`LanguageServer::owns`]).
 //! - [`typescript`]: finding tsgo in `node_modules`, and "Add TypeScript 7".
+//! - [`oxc`]: finding Oxlint and Oxfmt, and "Add Oxlint and Oxfmt".
 //! - [`watch`]: the globs a server registers for
 //!   `workspace/didChangeWatchedFiles`, fed from the project watcher.
 //! - [`text`]: URIs, language ids and positions.
 //!
-//! The project glue (`project/language.rs`) owns the servers, feeds them the
+//! The project glue (`project/language.rs`, and `project/oxlint.rs` for
+//! Oxlint) owns the servers, feeds them the
 //! open editors and the watcher's changes, and turns their [`Output`] into
 //! Problems. **Typing never waits on a server**: edits apply on the main
 //! thread as always; syncing a document only queues its text (a cheap rope
@@ -30,9 +34,12 @@
 //! every background result.
 
 pub(crate) mod actions;
+pub(crate) mod assist;
 mod connection;
+pub(crate) mod oxc;
 pub(crate) mod symbols;
 pub(crate) mod navigation;
+pub(crate) mod decorations;
 pub(crate) mod text;
 pub(crate) mod typescript;
 pub(crate) mod watch;
@@ -40,7 +47,10 @@ pub(crate) mod watch;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -117,6 +127,12 @@ pub(crate) enum Output {
     CodeActions { ticket: u64, fixes: Vec<actions::CodeActionFix> },
     /// A navigation or rename answer (ticket #44).
     Navigation(navigation::Answer),
+    /// Semantic tokens, inlay hints and code lenses for an open editor
+    /// (ticket #46).
+    Decorations(decorations::Output),
+    /// The answer to a completion, hover or signature help request
+    /// (ticket #43), by the tag it was sent with.
+    Assist { tag: u64, result: Result<Value, String> },
 }
 
 /// A request waiting for its answer.
@@ -132,6 +148,10 @@ pub(crate) enum Pending {
     CodeActions(u64),
     /// Go to definition, find usages or rename (ticket #44).
     Navigation(navigation::Ask),
+    /// Semantic tokens, inlay hints or code lenses (ticket #46).
+    Decorations(decorations::Pending),
+    /// Completion, hover or signature help (ticket #43): the project's tag.
+    Assist(u64),
 }
 
 /// A timer of a server's, on the host clock.
@@ -183,8 +203,9 @@ pub(crate) struct LanguageServer {
     spec: ServerSpec,
     host: SharedHost,
     jobs: Jobs,
-    /// Bumped by every start and stop, so events, answers and timers of an
-    /// earlier process are dropped.
+    /// New with every start and stop, so events, answers and timers of an
+    /// earlier process are dropped. Unique across servers ([`next_generation`]),
+    /// so the project can tell which of its servers an event is for.
     generation: u64,
     connection: Option<Connection>,
     state: State,
@@ -196,6 +217,10 @@ pub(crate) struct LanguageServer {
     documents: BTreeMap<PathBuf, Document>,
     requests: HashMap<i64, Pending>,
     watchers: Watchers,
+    /// Semantic tokens, inlay hints and code lenses (ticket #46).
+    decorations: decorations::Decorations,
+    /// What the server offers for completion, hover and signature help.
+    assist: assist::AssistCapabilities,
 }
 
 impl LanguageServer {
@@ -216,6 +241,8 @@ impl LanguageServer {
             documents: BTreeMap::new(),
             requests: HashMap::new(),
             watchers: Watchers::default(),
+            decorations: decorations::Decorations::default(),
+            assist: assist::AssistCapabilities::default(),
         }
     }
 
@@ -223,7 +250,7 @@ impl LanguageServer {
     /// A running one is stopped first.
     pub(crate) fn start(&mut self, env: &ProcessEnv) -> Vec<Output> {
         let outputs = self.disconnect();
-        self.generation += 1;
+        self.generation = next_generation();
         let generation = self.generation;
         let id = self.project;
         let deliver: Deliver = Arc::new(move |core: &mut Core, event| {
@@ -256,7 +283,7 @@ impl LanguageServer {
     /// Stops the server (closing the project does this).
     pub(crate) fn stop(&mut self) -> Vec<Output> {
         let outputs = self.disconnect();
-        self.generation += 1;
+        self.generation = next_generation();
         self.state = State::Stopped;
         outputs
     }
@@ -269,8 +296,19 @@ impl LanguageServer {
         }
         self.requests.clear();
         self.watchers = Watchers::default();
+        self.decorations = decorations::Decorations::default();
         let had_documents = !std::mem::take(&mut self.documents).is_empty();
-        if had_documents { vec![Output::ClearAll] } else { Vec::new() }
+        if had_documents {
+            vec![Output::ClearAll, Output::Decorations(decorations::Output::ClearAll)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Whether events and timers of `generation` are this server's: its
+    /// current process's.
+    pub(crate) fn owns(&self, generation: u64) -> bool {
+        self.generation == generation
     }
 
     #[allow(dead_code)] // The seam for commands that ask the server (#43–#47).
@@ -278,9 +316,25 @@ impl LanguageServer {
         self.state == State::Ready
     }
 
+    /// Which decorations the config shows (ticket #46): inlay hints, code
+    /// lenses.
+    pub(crate) fn show_decorations(&mut self, hints: bool, lenses: bool) {
+        self.decorations.show(hints, lenses);
+    }
+
     /// The server's columns: positions it sends and expects are in these.
     pub(crate) fn encoding(&self) -> Encoding {
         self.encoding
+    }
+
+    /// What it offers for completion, hover and signature help.
+    pub(crate) fn assist_capabilities(&self) -> &assist::AssistCapabilities {
+        &self.assist
+    }
+
+    /// The URI a file of the project's has on the server.
+    pub(crate) fn uri(&self, path: &std::path::Path) -> String {
+        text::uri(&self.root.join(path))
     }
 
     /// The status-bar item.
@@ -328,6 +382,7 @@ impl LanguageServer {
                 None => {
                     let uri = text::uri(&self.root.join(path));
                     connection.open(uri.clone(), language, 1, editor.text().clone());
+                    self.decorations.changed(path, editor.text().len_lines());
                     let document = Document {
                         uri,
                         version: 1,
@@ -342,6 +397,7 @@ impl LanguageServer {
                     document.version += 1;
                     document.editor_version = editor.version();
                     connection.change(document.uri.clone(), document.version, editor.text().clone());
+                    self.decorations.changed(path, editor.text().len_lines());
                     changed = true;
                 }
                 Some(_) => {}
@@ -351,6 +407,7 @@ impl LanguageServer {
         for path in closed {
             if let Some(document) = self.documents.remove(&path) {
                 connection.notify("textDocument/didClose", json!({ "textDocument": { "uri": document.uri } }));
+                self.decorations.closed(&path);
                 outputs.push(Output::Clear(path));
             }
         }
@@ -368,6 +425,7 @@ impl LanguageServer {
                 self.requests.insert(id, Pending::Diagnostics(path.clone()));
             }
         }
+        self.decorations.request(connection, &self.documents, &mut self.requests);
         outputs
     }
 
@@ -416,6 +474,10 @@ impl LanguageServer {
                 }
                 Some(Pending::CodeActions(ticket)) => self.code_actions_answered(ticket, result),
                 Some(Pending::Navigation(ask)) => navigation::answered(ask, result),
+                Some(Pending::Decorations(pending)) => {
+                    self.decorations.answered(pending, id, result, self.encoding).into_iter().map(Output::Decorations).collect()
+                }
+                Some(Pending::Assist(tag)) => vec![Output::Assist { tag, result: result.map_err(|e| e.message) }],
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
@@ -511,16 +573,23 @@ impl LanguageServer {
             },
             ..Default::default()
         };
-        serde_json::to_value(params).expect("initialize params are JSON")
+        let mut params = serde_json::to_value(params).expect("initialize params are JSON");
+        decorations::add_capabilities(&mut params);
+        assist::client_capabilities(&mut params["capabilities"]["textDocument"]);
+        params
     }
 
     fn initialized(&mut self, result: Result<Value, ResponseError>) -> Vec<Output> {
+        if let Ok(result) = &result {
+            self.decorations.initialized(result);
+        }
         let result = result
             .map_err(|error| format!("it refused to start: {}", error.message))
             .and_then(|result| serde_json::from_value::<InitializeResult>(result).map_err(|e| e.to_string()));
         match result {
             Ok(result) => {
                 self.encoding = Encoding::from_lsp(result.capabilities.position_encoding.as_ref().map(|k| k.as_str()));
+                self.assist = assist::AssistCapabilities::new(&result.capabilities);
                 if let Some(version) = result.server_info.and_then(|info| info.version) {
                     self.label = format!("{} {version}", self.spec.name);
                 }
@@ -578,6 +647,7 @@ impl LanguageServer {
                     }
                 }
             }
+            method if self.decorations.refresh(method) => {}
             "workspace/diagnostic/refresh" => {
                 for document in self.documents.values_mut() {
                     document.wanted = true;
@@ -605,7 +675,7 @@ impl LanguageServer {
     /// been restarted [`MAX_RESTARTS`] times within [`RESTART_WINDOW`].
     fn crashed(&mut self, reason: String) -> Vec<Output> {
         let outputs = self.disconnect();
-        self.generation += 1;
+        self.generation = next_generation();
         let now = self.host.clock().now();
         self.restarts.retain(|at| now.duration_since(*at) < RESTART_WINDOW);
         if self.restarts.len() < MAX_RESTARTS {
@@ -636,13 +706,19 @@ impl LanguageServer {
     /// Sends a request to a ready server, remembering what it is for; the
     /// answer comes back to [`event`](Self::event) as that [`Pending`].
     /// `None` while the server isn't ready.
-    #[allow(dead_code)] // The seam for completion, hover, … (#43–#47).
     pub(crate) fn request(&mut self, method: &str, params: Value, pending: Pending) -> Option<i64> {
         let connection = self.connection.as_mut().filter(|_| self.state == State::Ready)?;
         let id = connection.request(method, params);
         self.requests.insert(id, pending);
         Some(id)
     }
+}
+
+/// A generation no server has had: generations are unique across every
+/// server, so events can be routed by them (ticket #49).
+fn next_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Drop for LanguageServer {

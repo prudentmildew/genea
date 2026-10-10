@@ -19,6 +19,7 @@ pub const OPTION: u64 = 1 << 19;
 pub const RETURN: Key = Key { code: 36, flags: 0 };
 pub const BACKSPACE: Key = Key { code: 51, flags: 0 };
 pub const SPACE: Key = Key { code: 49, flags: 0 };
+pub const RIGHT: Key = Key { code: 124, flags: 0 };
 
 /// The key that types a lowercase letter, or Space for `' '`.
 pub fn letter(c: char) -> Option<Key> {

@@ -2,9 +2,12 @@
 
 mod changes;
 mod check;
+mod decorations;
+mod assist;
 mod external;
 mod inline_diff;
 mod language;
+mod oxlint;
 mod finder;
 mod quick_fixes;
 mod symbols;
@@ -49,6 +52,7 @@ use crate::{
 };
 use check::Check;
 use inline_diff::InlineDiffs;
+use assist::Assist;
 use language::Language;
 use quick_fixes::QuickFixes;
 use tabs::Panes;
@@ -112,6 +116,8 @@ pub(crate) struct Project {
     language: Language,
     /// The project check (ticket #48).
     check: Check,
+    /// Completion, hover and signature help (ticket #43).
+    assist: Assist,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
@@ -162,6 +168,7 @@ impl Project {
             environment: None,
             language: Language::default(),
             check: Check::default(),
+            assist: Assist::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -480,6 +487,7 @@ impl Project {
         if !scrolling {
             self.clear_hint();
         }
+        let assist = assist::Trigger::of(&command);
         match command {
             Command::ShowHunk { line } => {
                 self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
@@ -548,14 +556,28 @@ impl Project {
                 self.inline_diff_command(command, jobs)
             }
             Command::CloseInlineDiff => self.inline_diff_command(command, jobs),
-            Command::RestartLanguageServer => self.restart_language_server(),
             Command::ShowQuickFixes
             | Command::MoveQuickFixSelection(_)
             | Command::ApplyQuickFix(_)
             | Command::CloseQuickFixes
             | Command::OrganizeImports => self.quick_fix_command(command, now, jobs),
-            Command::AddTypeScript => self.add_typescript(jobs),
             Command::RunProjectCheck => self.run_project_check(),
+            Command::RestartLanguageServer => {
+                self.restart_language_server();
+                self.restart_oxlint();
+            }
+            Command::ShowCompletion
+            | Command::MoveCompletionSelection(_)
+            | Command::SelectCompletionItem(_)
+            | Command::AcceptCompletion
+            | Command::CloseCompletion
+            | Command::HoverAt { .. }
+            | Command::ShowHover
+            | Command::HideHover
+            | Command::ShowSignatureHelp
+            | Command::HideSignatureHelp => self.assist_command(command, now),
+            Command::AddTypeScript => self.add_typescript(jobs),
+            Command::AddOxlintAndOxfmt => self.add_oxc(jobs),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
             | Command::MoveFinderSelection(_)
@@ -794,6 +816,7 @@ impl Project {
         self.refresh_views();
         self.sync_language();
         self.sync_project_check();
+        self.assist_after(assist);
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
@@ -845,6 +868,7 @@ impl Project {
                 .filter(|(path, _)| path == e.path())
                 .and_then(|(path, line)| self.git.hunk_view(path, e.version(), *line));
             self.complete_inline_diff(&mut view);
+            self.assist_view(e, &mut view);
             view
         });
         let mut tabs = self.tabs_view(editor.as_ref());
@@ -860,7 +884,7 @@ impl Project {
         }
         let (errors, warnings) = self.problems.counts();
         let status = StatusBar {
-            caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
+            caret: self.editor.as_ref().map(Editor::caret_label),
             errors,
             warnings,
             config_notice: self.config_notice(),
@@ -870,7 +894,7 @@ impl Project {
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
-            language_servers: self.language_status(),
+            language_servers: self.language_status().into_iter().chain(self.oxlint_status()).collect(),
             project_check: self.project_check_status(),
             script_links: self.terminal.script_links(),
         };
@@ -879,6 +903,7 @@ impl Project {
         notices.extend(self.install_notice());
         notices.extend(self.environment.iter().flat_map(Environment::notices));
         notices.extend(self.language_notices());
+        notices.extend(self.oxlint_notices());
         notices.extend(self.project_check_notices());
         ProjectView {
             root: self.root.clone(),

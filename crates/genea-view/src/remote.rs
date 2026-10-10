@@ -22,7 +22,30 @@
 //! | `caret-line` | the caret's line as the editor shows it, and the caret |
 //! | `open PATH` | once a frame showing the file (relative to the project root) is presented |
 //! | `editor` | the focused file: path, line count, whether it is still loading or large |
+//! | `finder MODE` | after opening the finder (`files`, `recent`, `actions`, `everywhere`) or closing it (`close`) |
+//! | `search TEXT` | after showing the Search view and searching for TEXT (literal, any case): `at`, when |
+//! | `toggle-folder PATH` | after expanding or collapsing a folder in the Files view: `at`, when |
+//! | `expect NAME CONDITION…` | at once; from now on, notes when a synced view first meets the condition |
+//! | `check CONDITION…` | whether the first window's view meets the condition now: `holds` |
+//! | `await NAME MS` | once a frame drawn after the view met NAME's condition is presented: `met`, when it was met; after MS ms, `met` and `"presented":false` if it was met but no frame came (nothing on screen changed), else an error |
+//! | `processes` | the pids of Genea's child processes and theirs (language servers, shells) |
 //! | `quit` | exits |
+//!
+//! Times are `mach_absolute_time` in ns since boot, the journal's clock. The
+//! conditions `expect` takes (ticket #63), on the first window's view state:
+//!
+//! | Condition | Met when |
+//! |---|---|
+//! | `finder QUERY` | the finder shows the results for QUERY (the rest of the line, maybe empty) |
+//! | `search-results QUERY` | the Search view shows a match for QUERY, or has finished without one |
+//! | `search-done QUERY` | the search for QUERY has finished |
+//! | `expanded PATH`, `collapsed PATH` | the Files view shows the folder PATH expanded, collapsed |
+//! | `tree-has PATH`, `tree-lacks PATH` | the Files view shows PATH, doesn't |
+//! | `editor-has PATH TEXT`, `editor-lacks PATH TEXT` | an editor showing PATH has (hasn't) TEXT in its visible lines |
+//! | `problems PATH N` | Problems lists exactly N TypeScript problems in PATH |
+//! | `server STATE` | a language server is `ready`, `off`, `failed`, `starting`, … |
+//!
+//! Paths are relative to the project root, without spaces.
 //!
 //! `key` takes a virtual key code and `CGEventFlags` (⇧ `1<<17`, ⌥ `1<<19`).
 //! It builds a keyboard `CGEvent`, wraps it in an `NSEvent` and posts that to
@@ -41,8 +64,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use genea_core::Command;
-use objc2::{ClassType, MainThreadMarker, msg_send, rc::Retained};
+use genea_core::{
+    Command, FileRowKind, FinderMode, LanguageServerState, LeftColumnView, ProblemSource, ProjectView, SearchQuery,
+};
+use objc2::{
+    ClassType, MainThreadMarker,
+    encode::{Encoding, RefEncode},
+    msg_send,
+    rc::Retained,
+};
 use objc2_app_kit::{NSApplication, NSApplicationOcclusionState, NSEvent};
 use slint::ComponentHandle;
 
@@ -144,12 +174,173 @@ fn handle(line: &str) {
                 view.status.large_file.is_some()
             ));
         }),
+        ["finder", mode] => {
+            let command = match *mode {
+                "files" => Command::OpenFinder(FinderMode::Files),
+                "recent" => Command::OpenFinder(FinderMode::RecentFiles),
+                "actions" => Command::OpenFinder(FinderMode::Actions),
+                "everywhere" => Command::OpenFinder(FinderMode::Everywhere),
+                "close" => Command::CloseFinder,
+                _ => return error("finder: unknown mode"),
+            };
+            app::with_app(move |app| match app.first_window() {
+                Some((controller, workbench)) => {
+                    controller.dispatch(workbench, command);
+                    reply(r#"{"ok":true}"#);
+                }
+                None => error("no project window"),
+            });
+        }
+        ["search", ..] => {
+            let text = line["search".len()..].trim().to_string();
+            app::with_app(move |app| match app.first_window() {
+                Some((controller, workbench)) => {
+                    controller.show_view(workbench, LeftColumnView::Search);
+                    let at = journal::now_ns();
+                    controller.dispatch(workbench, Command::Search(SearchQuery { text, ..SearchQuery::default() }));
+                    reply(&format!(r#"{{"at":{at}}}"#));
+                }
+                None => error("no project window"),
+            });
+        }
+        ["toggle-folder", path] => {
+            let path = std::path::PathBuf::from(path);
+            app::with_app(move |app| match app.first_window() {
+                Some((controller, workbench)) => {
+                    let at = journal::now_ns();
+                    controller.dispatch(workbench, Command::ToggleFolder(path));
+                    reply(&format!(r#"{{"at":{at}}}"#));
+                }
+                None => error("no project window"),
+            });
+        }
+        ["expect", name, kind, ..] => {
+            let rest = line.splitn(4, char::is_whitespace).nth(3).unwrap_or("").trim();
+            match condition(kind, rest) {
+                Ok(condition) => {
+                    journal::expect(name.to_string(), condition);
+                    reply(r#"{"ok":true}"#);
+                }
+                Err(message) => error(&format!("expect: {message}")),
+            }
+        }
+        ["check", kind, ..] => {
+            let rest = line.splitn(3, char::is_whitespace).nth(2).unwrap_or("").trim();
+            match condition(kind, rest) {
+                Ok(condition) => app::with_app(move |app| {
+                    let Some((controller, workbench)) = app.first_window() else { return error("no project window") };
+                    let holds = workbench.project(controller.project).is_some_and(|view| condition(&view));
+                    reply(&format!(r#"{{"holds":{holds}}}"#));
+                }),
+                Err(message) => error(&format!("check: {message}")),
+            }
+        }
+        ["await", name, ms] => match ms.parse() {
+            Ok(ms) => wait_for(name.to_string(), Duration::from_millis(ms)),
+            Err(_) => error("await: bad timeout"),
+        },
+        ["processes"] => {
+            let pids: Vec<String> = child_pids(std::process::id()).iter().map(u32::to_string).collect();
+            reply(&format!(r#"{{"pids":[{}]}}"#, pids.join(",")));
+        }
         ["quit"] => {
             reply(r#"{"ok":true}"#);
             std::process::exit(0);
         }
         _ => error(&format!("unknown command: {line}")),
     }
+}
+
+/// A condition `expect` watches for (the table at the top): its kind and
+/// the rest of the command line.
+fn condition(kind: &str, rest: &str) -> Result<Box<dyn Fn(&ProjectView) -> bool>, String> {
+    let rest = rest.to_string();
+    let (first, tail) = match rest.split_once(char::is_whitespace) {
+        Some((first, tail)) => (first.to_string(), tail.trim().to_string()),
+        None => (rest.clone(), String::new()),
+    };
+    let path = std::path::PathBuf::from(&first);
+    Ok(match kind {
+        "finder" => Box::new(move |v| v.finder.as_ref().is_some_and(|f| f.query == rest && !f.matching)),
+        "search-results" => {
+            Box::new(move |v| v.search.query.text == rest && (v.search.match_count > 0 || !v.search.searching))
+        }
+        "search-done" => Box::new(move |v| v.search.query.text == rest && !v.search.searching),
+        "expanded" | "collapsed" => {
+            let expanded = kind == "expanded";
+            Box::new(move |v| v.files.iter().any(|row| row.path == path && row.kind == FileRowKind::Folder { expanded }))
+        }
+        "tree-has" => Box::new(move |v| v.files.iter().any(|row| row.path == path)),
+        "tree-lacks" => Box::new(move |v| !v.files.iter().any(|row| row.path == path)),
+        "editor-has" | "editor-lacks" => {
+            let has = kind == "editor-has";
+            Box::new(move |v| {
+                let mut editors = v.panes.iter().filter_map(|p| p.editor.as_ref()).filter(|e| e.path == path);
+                editors.any(|e| e.lines.iter().any(|l| l.text.contains(tail.as_str())) == has)
+            })
+        }
+        "problems" => {
+            let count: usize = tail.parse().map_err(|_| "problems: bad count".to_string())?;
+            Box::new(move |v| {
+                v.problems.iter().filter(|p| p.source == ProblemSource::TypeScript && p.path == path).count() == count
+            })
+        }
+        "server" => {
+            let state = match first.as_str() {
+                "starting" => LanguageServerState::Starting,
+                "ready" => LanguageServerState::Ready,
+                "not-responding" => LanguageServerState::NotResponding,
+                "restarting" => LanguageServerState::Restarting,
+                "failed" => LanguageServerState::Failed,
+                "off" => LanguageServerState::Off,
+                _ => return Err(format!("server: unknown state {first}")),
+            };
+            Box::new(move |v| v.status.language_servers.iter().any(|s| s.state == state))
+        }
+        _ => return Err(format!("unknown condition {kind}")),
+    })
+}
+
+/// Answers `await`: when the condition watched as `name` was met, once a
+/// frame drawn after that is presented; an error after `timeout`.
+fn wait_for(name: String, timeout: Duration) {
+    let answered = Rc::new(Cell::new(false));
+    let done = answered.clone();
+    let unknown = name.clone();
+    journal::when_presented(&name, move |met| {
+        if done.replace(true) {
+            return;
+        }
+        match met {
+            Some(met) => reply(&format!(r#"{{"met":{met}}}"#)),
+            None => error(&format!("await: nothing expected as {unknown}")),
+        }
+    });
+    slint::Timer::single_shot(timeout, move || {
+        if !answered.replace(true) {
+            journal::forget_presented(&name);
+            // Met, but nothing on screen changed, so no frame came.
+            match journal::met(&name) {
+                Some(met) => reply(&format!(r#"{{"met":{met},"presented":false}}"#)),
+                None => error(&format!("await: {name} not met within {} ms", timeout.as_millis())),
+            }
+        }
+    });
+}
+
+/// The pids of `pid`'s children, and of theirs.
+fn child_pids(pid: u32) -> Vec<u32> {
+    let mut buffer = vec![0i32; 256];
+    // SAFETY: proc_listchildpids writes at most the buffer's size in bytes.
+    let n = unsafe {
+        libc::proc_listchildpids(pid as i32, buffer.as_mut_ptr().cast(), (buffer.len() * size_of::<i32>()) as i32)
+    };
+    let mut found = Vec::new();
+    for &child in buffer.iter().take(n.max(0) as usize).filter(|&&c| c > 0) {
+        found.push(child as u32);
+        found.extend(child_pids(child as u32));
+    }
+    found
 }
 
 fn info() {
@@ -263,7 +454,8 @@ fn post_key(code: u16, flags: u64) {
                 continue;
             }
             CGEventSetFlags(cg_event, flags);
-            let event: Option<Retained<NSEvent>> = msg_send![NSEvent::class(), eventWithCGEvent: cg_event];
+            let event: Option<Retained<NSEvent>> =
+                msg_send![NSEvent::class(), eventWithCGEvent: cg_event.cast::<CGEvent>()];
             CFRelease(cg_event);
             CFRelease(source);
             if let Some(event) = event {
@@ -271,6 +463,18 @@ fn post_key(code: u16, flags: u64) {
             }
         }
     }
+}
+
+/// `CGEventRef`'s pointee, so `eventWithCGEvent:` gets the argument type
+/// its method signature names (objc2 checks it in debug builds).
+#[repr(C)]
+struct CGEvent {
+    _opaque: [u8; 0],
+}
+
+// SAFETY: a `CGEventRef` is a pointer to the opaque `struct __CGEvent`.
+unsafe impl RefEncode for CGEvent {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("__CGEvent", &[]));
 }
 
 /// `kCGEventSourceStateHIDSystemState`.

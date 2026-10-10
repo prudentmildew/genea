@@ -103,6 +103,23 @@ pub(crate) fn text_position(text: &Rope, line: u32, character: u32, encoding: En
     TextPosition { line, column }
 }
 
+/// A char index into `text` as an LSP position (line, column in
+/// `encoding` units). An index past the end is clamped.
+pub(crate) fn lsp_position(text: &Rope, char: usize, encoding: Encoding) -> (u32, u32) {
+    let char = char.min(text.len_chars());
+    let line = text.char_to_line(char);
+    let start = text.line_to_char(line);
+    let units: usize = text.slice(start..char).chars().map(|c| encoding.units(c)).sum();
+    (line as u32, units as u32)
+}
+
+/// A position from the server as a char index into `text`, clamped like
+/// [`text_position`].
+pub(crate) fn char_index(text: &Rope, line: u32, character: u32, encoding: Encoding) -> usize {
+    let position = text_position(text, line, character, encoding);
+    text.line_to_char(position.line) + position.column
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +144,18 @@ mod tests {
         // Past the end of the line, and past the last line.
         assert_eq!(text_position(&text, 0, 99, Encoding::Utf16), TextPosition { line: 0, column: 3 });
         assert_eq!(text_position(&text, 7, 1, Encoding::Utf16), TextPosition { line: 1, column: 1 });
+    }
+
+    #[test]
+    fn char_indices_go_to_the_servers_positions_and_back() {
+        let text = Rope::from_str("ab\né😀x\n");
+        // `x` is char 5: line 1, after `é` (2 bytes, 1 unit) and `😀` (4 bytes, 2 units).
+        assert_eq!(lsp_position(&text, 5, Encoding::Utf8), (1, 6));
+        assert_eq!(lsp_position(&text, 5, Encoding::Utf16), (1, 3));
+        assert_eq!(lsp_position(&text, 5, Encoding::Utf32), (1, 2));
+        assert_eq!(char_index(&text, 1, 6, Encoding::Utf8), 5);
+        assert_eq!(char_index(&text, 1, 3, Encoding::Utf16), 5);
+        assert_eq!(lsp_position(&text, 99, Encoding::Utf16), (2, 0));
     }
 
     #[test]

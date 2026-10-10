@@ -4,6 +4,7 @@
 
 import { Theme } from "theme.slint";
 import { EditorSurface, Line, HunkPopup, QuickFixPopup } from "editor-surface.slint";
+import { AssistPopups } from "assist-popups.slint";
 
 // A tab in the strip.
 export struct TabEntry {
@@ -43,6 +44,7 @@ export component EditorPane inherits Rectangle {
     in property <SurfaceGeometry> geometry;
     in property <HunkPopup> hunk <=> surface.hunk;
     in property <QuickFixPopup> quick-fixes <=> surface.quick-fixes;
+    in property <AssistPopups> assist <=> surface.assist;
     // The file changed on disk while it had unsaved edits (ticket #32):
     // the conflict bar shows over the top of the editor.
     in property <bool> conflict;
@@ -75,6 +77,9 @@ export component EditorPane inherits Rectangle {
     callback rollback-hunk <=> surface.rollback-hunk;
     callback hide-hunk <=> surface.hide-hunk;
     callback quick-fix-clicked <=> surface.quick-fix-clicked;
+    callback completion-clicked <=> surface.completion-clicked;
+    callback pointer-moved <=> surface.pointer-moved;
+    callback pointer-left <=> surface.pointer-left;
 
     public function refocus() {
         surface.refocus();

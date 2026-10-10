@@ -202,6 +202,12 @@ pub enum Command {
     /// `devDependencies`. Installing it is up to the user; language
     /// intelligence starts once it is in `node_modules`.
     AddTypeScript,
+    /// "Add Oxlint and Oxfmt" (the notice of a project without them, ticket
+    /// #49): adds Genea's Oxlint and Oxfmt ranges to `devDependencies` in
+    /// the root `package.json`, for whichever of the two it doesn't list.
+    /// Installing them is up to the user; lint starts once Oxlint is in
+    /// `node_modules`.
+    AddOxlintAndOxfmt,
     /// "Run project check" (ticket #48): type-checks the whole project in
     /// the background with `tsc -b --noEmit` from its TypeScript 7.
     /// `StatusBar::project_check` shows it running. Its results replace the
@@ -422,6 +428,40 @@ pub enum Command {
     Rename(String),
     /// Closes the rename prompt without renaming.
     CancelRename,
+    // Completion, hover and signature help (ticket #43): the popups in
+    // `EditorView`. Each asks the language server in the background; an
+    // answer that comes after the text or the caret moved on is dropped.
+    /// ⌃Space: lists completions at the caret. The list also opens by
+    /// itself while typing a word and after the server's trigger
+    /// characters (`.`, quotes, `/`, …), and typing narrows it.
+    ShowCompletion,
+    /// ↑ and ↓ in the completion list: moves the selection by a number of
+    /// items (negative is up), wrapping around at either end.
+    MoveCompletionSelection(isize),
+    /// Selects a completion by its index (the pointer over it).
+    SelectCompletionItem(usize),
+    /// Return or Tab (or a click) in the completion list: replaces the
+    /// typed word with the selected item, adding its import if it comes
+    /// from another module (an auto-import), as one undo step.
+    AcceptCompletion,
+    /// Esc: closes the completion list.
+    CloseCompletion,
+    /// The pointer rests over a grid cell (0-based line and display
+    /// column): shows what the server says about the code there. A cell
+    /// past the end of a line closes the hover.
+    HoverAt { line: usize, column: usize },
+    /// F1 or ⌃J (Quick Documentation): shows the hover for the code at
+    /// the caret.
+    ShowHover,
+    /// The pointer left, or Esc: closes the hover. Typing and moving the
+    /// caret close it too.
+    HideHover,
+    /// ⌘P (Parameter Info): shows the signature of the call the caret is
+    /// in. It also opens after typing `(` or `,` in a call, and follows the
+    /// caret until it leaves the call.
+    ShowSignatureHelp,
+    /// Esc: closes the signature help.
+    HideSignatureHelp,
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.

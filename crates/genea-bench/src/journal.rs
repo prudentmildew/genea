@@ -330,6 +330,20 @@ impl Journal {
         Some(Open { requested, presented: frame.end })
     }
 
+    /// From something done at `from` (a key, a request, a file written
+    /// outside Genea) to the first frame drawn after the view state showing
+    /// its effect reached Slint at `synced` (ticket #63: the finder, search,
+    /// the tree, external changes, diagnostics). Measured like a keystroke.
+    pub fn reaction(&self, from: u64, synced: u64) -> Option<Keystroke> {
+        let frame = self.frames().into_iter().find(|f| f.before >= synced)?;
+        Some(Keystroke { key: from, synced, frame })
+    }
+
+    /// The first key press or IME commit Genea received at or after `t`.
+    pub fn key_after(&self, t: u64) -> Option<u64> {
+        self.keys.iter().copied().find(|&k| k >= t)
+    }
+
     /// How many window events arrived in `window`.
     pub fn events_in(&self, window: Window) -> usize {
         self.events.iter().filter(|&&t| window.contains(t)).count()
