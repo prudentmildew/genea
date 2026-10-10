@@ -362,6 +362,13 @@ impl Review {
         if baseline.map(|b| b.hash) == hash {
             self.own.seen(&path, hash);
             self.changes.remove(&path);
+            // Same content, touched (a Revert, a checkout): the baseline
+            // takes the new mtime, so the next open's rescan needn't read it.
+            if let (Some(baseline), Some(disk)) = (baseline, disk)
+                && baseline.mtime != disk.mtime
+            {
+                self.set_baseline(path, Some(FileState { mtime: disk.mtime, ..baseline }));
+            }
             return;
         }
         if self.own.is_own(&path, hash) {
