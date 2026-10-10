@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::{
     problems::TextPosition,
     templates::{PackageManagerPin, RuntimePin},
-    view::{FinderMode, LeftColumnView, ToolchainPickerKind},
+    view::{FinderMode, LeftColumnView, ToolchainPickerKind, WindowLayout},
 };
 
 /// Something the user does in a project's window.
@@ -19,6 +19,16 @@ pub enum Command {
     /// or absolute. The file is read in the background: `settle` (tests) or
     /// the change notification (the app) says when it is shown.
     OpenFile(PathBuf),
+    /// ⌘+: makes the editor's and the terminal's font a point larger
+    /// (ticket #59), up to `MAX_FONT_SIZE`. Kept per project.
+    ZoomIn,
+    /// ⌘−: a point smaller, down to `MIN_FONT_SIZE`.
+    ZoomOut,
+    /// ⌘0: back to `DEFAULT_FONT_SIZE`.
+    ResetZoom,
+    /// The view reports where the window is and how it is laid out, so the
+    /// session keeps it (ticket #59).
+    SetWindowLayout(WindowLayout),
     /// Tells the core how many text rows fit in the editor viewport. Fractional:
     /// a partly visible last row counts.
     SetViewport { rows: f64 },

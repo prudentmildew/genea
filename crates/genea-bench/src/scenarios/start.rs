@@ -19,6 +19,11 @@
 //! later open's rescan (ticket #54), which runs in the same background op
 //! and does a subset of the snapshot's work (it walks and stats every file
 //! but reads only those whose size or mtime moved).
+//!
+//! Every Genea start also restores a session (ticket #59): the harness's
+//! `quit` saves the workspace's session as ⌘Q does, so each launch (after
+//! the throwaway one) reopens the window's tabs, terminal and layout from
+//! the run before it, as a user's restart does.
 
 use std::{
     fs,

@@ -21,6 +21,7 @@
 //! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
 //!   system clipboard behind the host's `Clipboard`; `links`: opening web
 //!   links in the browser.
+//! - `screens`: where a restored window may go (ticket #59);
 //! - `journal` and `remote`: the benchmark harness's instrumentation journal
 //!   and control channel, both off unless `GENEA_JOURNAL=1`.
 
@@ -37,6 +38,7 @@ mod new_project;
 mod navigation;
 mod pasteboard;
 mod remote;
+mod screens;
 mod surface;
 mod terminal;
 mod welcome;
@@ -76,7 +78,11 @@ fn main() {
     }
     // Not `run_event_loop`: closing the last project window brings back the
     // welcome instead of quitting. The app quits from the welcome or ⌘Q.
-    if let Err(error) = slint::run_event_loop_until_quit() {
+    let ran = slint::run_event_loop_until_quit();
+    // The welcome closed: the session is saved (ticket #59). ⌘Q never gets
+    // here; `app` saves it on AppKit's terminate.
+    app::quit();
+    if let Err(error) = ran {
         eprintln!("genea: {error}");
         std::process::exit(1);
     }

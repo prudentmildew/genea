@@ -33,6 +33,7 @@ use crate::{
     command::{CaretMove, ConflictChoice},
     disk::{self, Checked, DiskCheck, DiskText, Splice},
     history::{Change, Edit, EditKind, History, Selection},
+    problems::TextPosition,
     syntax::{Highlight, ParseJob, Parsed, Span, Syntax},
     text::{self, LineEnding},
     view::{Caret, EditorView, HighlightSpan, Preedit, VisibleLine},
@@ -1185,6 +1186,42 @@ impl Cursor {
     pub(crate) fn parked(mut self) -> Self {
         self.preedit.clear();
         self
+    }
+
+    pub(crate) fn scroll_top(&self) -> f64 {
+        self.scroll_top
+    }
+}
+
+/// A tab's cursor as positions that outlive the buffer (session state,
+/// ticket #59).
+impl Editor {
+    /// Each of `cursor`'s carets as (anchor, caret) lines and char columns,
+    /// the primary last.
+    pub(crate) fn cursor_positions(&self, cursor: &Cursor) -> Vec<(TextPosition, TextPosition)> {
+        let len = self.text.len_chars();
+        let position = |p: usize| {
+            let (line, column) = self.line_column(p.min(len));
+            TextPosition { line, column }
+        };
+        cursor.carets.iter().map(|c| (position(c.anchor), position(c.caret))).collect()
+    }
+
+    /// A cursor with these selections and scroll position, each clamped to
+    /// the text (the file may have changed since they were saved).
+    pub(crate) fn cursor_at(&self, selections: &[(TextPosition, TextPosition)], scroll_top: f64) -> Cursor {
+        let lines = self.text.len_lines();
+        let offset = |p: TextPosition| {
+            let line = p.line.min(lines - 1);
+            self.text.line_to_char(line) + p.column.min(self.line_len(line))
+        };
+        Cursor {
+            carets: selections.iter().map(|&(a, c)| CaretSelection::selecting(offset(a), offset(c))).collect(),
+            scroll_top: scroll_top.max(0.0),
+            preedit: String::new(),
+            whole_words: None,
+            expansions: None,
+        }
     }
 }
 

@@ -12,6 +12,7 @@ mod finder;
 mod foreign;
 mod formatting;
 mod quick_fixes;
+mod session;
 mod symbols;
 mod tabs;
 
@@ -44,10 +45,11 @@ use crate::{
         store::{hash_bytes, hash_rope},
     },
     search::Search,
+    session::SessionFile,
     syntax::ParseJob,
     terminal::Terminal,
     toolchain::{self, Toolchain, ToolchainContext},
-    view::{InlineProblem, LeftColumnView, Notice, NoticeAction, ProjectView, StatusBar},
+    view::{InlineProblem, LeftColumnView, Notice, NoticeAction, ProjectView, StatusBar, WindowLayout},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
     workspace::Workspace,
@@ -146,13 +148,27 @@ pub(crate) struct Project {
     for_workbench: Vec<Command>,
     /// Code-action requests and the quick-fix popup (ticket #45).
     quick_fixes: QuickFixes,
+    /// Font-size steps from the default (ticket #59).
+    zoom: i32,
+    /// The window's frame and its parts' sizes, as the view last reported
+    /// them (or the session had them).
+    window_layout: Option<WindowLayout>,
+    /// Where the session is saved (ticket #59).
+    session_file: SessionFile,
+    /// The saved session's tabs are back (or there were none), so saving
+    /// may begin.
+    session_restored: bool,
     /// Files shown with an inline diff (ticket #55).
     inline_diffs: InlineDiffs,
 }
 
 impl Project {
-    pub(crate) fn new(id: ProjectId, root: PathBuf, jobs: &Jobs) -> Self {
+    pub(crate) fn new(id: ProjectId, root: PathBuf, jobs: &Jobs, support_dir: &Path) -> Self {
         Project {
+            session_file: SessionFile::new(support_dir, &root),
+            session_restored: false,
+            zoom: 0,
+            window_layout: None,
             id,
             review: Review::new(id, root.clone(), jobs),
             files: FileIndex::new(id, root.clone()),
@@ -490,6 +506,11 @@ impl Project {
     }
 
     pub(crate) fn dispatch(&mut self, command: Command, jobs: &Jobs, host: &dyn Host) {
+        // Only kept for the session: a resize closes no popup.
+        if let Command::SetWindowLayout(layout) = command {
+            self.window_layout = Some(layout);
+            return;
+        }
         let now = host.clock().now();
         // A shown change closes on anything but scrolling.
         let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
@@ -514,6 +535,10 @@ impl Project {
                 }
             }
             Command::OpenConfig => self.open_config(jobs),
+            Command::ZoomIn => self.zoom_by(Some(1)),
+            Command::ZoomOut => self.zoom_by(Some(-1)),
+            Command::ResetZoom => self.zoom_by(None),
+            Command::SetWindowLayout(_) => {}
             Command::ToggleLeftColumn(view) => {
                 self.left_column = if self.left_column == Some(view) { None } else { Some(view) };
             }
@@ -947,6 +972,8 @@ impl Project {
             usages: self.usages_view(),
             rename: self.rename_prompt(),
             hint: self.hint(),
+            font_size: self.font_size(),
+            window_layout: self.window_layout,
         }
     }
 

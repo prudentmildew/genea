@@ -84,6 +84,17 @@ impl RecentProjects {
             .collect()
     }
 
+    /// Saves the list on this thread, if a save is waiting: Genea is
+    /// quitting (ticket #59), so the timer may never fire.
+    pub(crate) fn save_now(&mut self) {
+        let mut pending = self.save.lock().unwrap();
+        if pending.roots.take().is_some()
+            && let Err(error) = write(&self.file, &self.roots)
+        {
+            eprintln!("genea: couldn't save the recent projects to {}: {error}", self.file.display());
+        }
+    }
+
     /// Schedules a save of the current list, unless one is already waiting.
     fn changed(&mut self, jobs: &Jobs, clock: &dyn Clock) {
         let mut pending = self.save.lock().unwrap();
