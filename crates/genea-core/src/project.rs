@@ -789,6 +789,7 @@ impl Project {
         notices.extend(self.install_notice());
         notices.extend(self.environment.iter().flat_map(Environment::notices));
         notices.extend(self.language_notices());
+        notices.extend(self.project_check_notices());
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

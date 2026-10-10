@@ -275,3 +275,110 @@ fn a_change_while_the_check_runs_marks_its_results_stale() {
     assert_eq!(session.checked().len(), 2);
     assert_eq!(session.stale(), [PathBuf::from("src/other.ts")]);
 }
+
+impl Session {
+    /// The project check's notices.
+    fn notices(&self) -> Vec<String> {
+        self.view().notices.into_iter().map(|n| n.message).filter(|m| m.starts_with("The project check")).collect()
+    }
+}
+
+/// What TypeScript 7.0.2 prints for `tsc -b --noEmit` in a project whose
+/// `b` references `a` (probed): `a` is checked, `b` isn't.
+fn references_output(root: &std::path::Path) -> String {
+    format!(
+        "a/src/index.ts(1,14): error TS2322: {TYPE_ERROR}\n\
+         b/tsconfig.json(1,132): error TS6310: Referenced project '{}/a' may not disable emit.\n\
+         c/tsconfig.json(1,90): error TS6310: Referenced project '{}/a' may not disable emit.\n",
+        root.display(),
+        root.display()
+    )
+}
+
+#[test]
+fn projects_that_typescript_7_wont_check_without_emitting_are_named_in_a_notice_not_in_problems() {
+    let fixture = typescript_project().file("a/src/index.ts", "export const a: number = \"x\";\n").build();
+    let tsc = FakeTsc::new();
+    let mut session = open(fixture, &tsc);
+    tsc.set_report(&references_output(session.fixture.root()), 1);
+
+    session.check();
+
+    assert_eq!(session.checked(), [error("a/src/index.ts", "1:14", TYPE_ERROR)]);
+    assert_eq!(
+        session.notices(),
+        ["The project check skipped b/tsconfig.json and c/tsconfig.json: TypeScript 7 won't check a project that \
+          references other projects without emitting their output (TS6310). Their open files still get live \
+          diagnostics."]
+    );
+
+    tsc.set_report("", 0);
+    session.check();
+    assert_eq!(session.notices(), Vec::<String>::new(), "the next check's notices replace the last one's");
+}
+
+#[test]
+fn a_check_that_fails_says_why_and_keeps_the_last_results() {
+    let (fixture, tsc) = two_errors();
+    let mut session = open(fixture, &tsc);
+    session.check();
+
+    let root = session.fixture.root().to_owned();
+    tsc.set_report(&format!("error TS5083: Cannot read file '{}/tsconfig.json'.\n", root.display()), 1);
+    session.check();
+
+    assert_eq!(
+        session.notices(),
+        [format!("The project check failed: Cannot read file '{}/tsconfig.json'.", root.display())]
+    );
+    assert_eq!(session.checked().len(), 2);
+
+    tsc.set_report("Segmentation fault\n", 139);
+    session.check();
+    assert_eq!(session.notices(), ["The project check failed: tsc exited with code 139."]);
+    assert_eq!(session.checked().len(), 2);
+}
+
+#[test]
+fn without_typescript_7_a_check_says_it_needs_it() {
+    let fixture = FixtureProject::new().file("package.json", r#"{ "name": "app" }"#).build();
+    let host = TestHost::new();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::RunProjectCheck);
+    workbench.settle().unwrap();
+
+    let notices: Vec<String> = workbench.project(project).unwrap().notices.into_iter().map(|n| n.message).collect();
+    assert!(notices.contains(&"The project check needs TypeScript 7 installed in this project.".to_owned()), "{notices:?}");
+    assert_eq!(workbench.project(project).unwrap().status.project_check, None);
+}
+
+#[test]
+fn closing_the_project_stops_a_running_check() {
+    let tsc = FakeTsc::new().hold();
+    let mut session = open(typescript_project().build(), &tsc);
+    session.dispatch(Command::RunProjectCheck);
+
+    session.workbench.close_project(session.project);
+    session.settle();
+
+    assert_eq!(tsc.killed(), 1);
+}
+
+#[test]
+fn a_check_started_while_one_runs_replaces_it() {
+    let tsc = FakeTsc::new().hold();
+    let fixture = typescript_project().file("src/b.ts", "x;\n").build();
+    let mut session = open(fixture, &tsc);
+    session.dispatch(Command::RunProjectCheck);
+
+    tsc.set_report("src/b.ts(1,1): error TS2304: Cannot find name 'x'.\n", 1);
+    session.dispatch(Command::RunProjectCheck);
+    tsc.release();
+    session.settle();
+
+    assert_eq!(session.checked(), [error("src/b.ts", "1:1", "Cannot find name 'x'.")]);
+    assert_eq!(session.view().status.project_check, None);
+}
