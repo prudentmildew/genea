@@ -502,6 +502,17 @@ fn adding_typescript_7_from_genea_is_not_listed() {
 }
 
 #[test]
+fn adding_oxlint_and_oxfmt_from_genea_is_not_listed() {
+    let (fixture, mut workbench, project) = open(&[("package.json", "{\n  \"name\": \"app\"\n}\n")]);
+
+    workbench.dispatch(project, Command::AddOxlintAndOxfmt);
+    workbench.settle().unwrap();
+
+    assert!(fixture.read("package.json").contains("oxfmt"));
+    assert_eq!(changes(&workbench, project), []);
+}
+
+#[test]
 fn find_action_shows_the_changes_view() {
     let (_fixture, mut workbench, project) = open(&[("a.ts", "a\n")]);
 

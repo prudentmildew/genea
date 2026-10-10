@@ -33,6 +33,7 @@ use crate::{
         text,
     },
     problems::ProblemSource,
+    review::store::hash_bytes,
     toolchain::Toolchain,
     view::{LanguageServerStatus, Notice, NoticeAction},
     watcher::FileChanges,
@@ -208,11 +209,16 @@ impl Project {
     /// background.
     pub(super) fn add_oxc(&mut self, jobs: &Jobs) {
         let (id, path) = (self.id, self.root.join("package.json"));
+        let own_writes = self.review.own_writes();
         jobs.spawn("add Oxlint and Oxfmt", move || {
             let written = fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|text| oxc::add_oxc(&text))
-                .and_then(|text| fs::write(&path, text).map_err(|e| e.to_string()));
+                .and_then(|text| {
+                    // Review knows this write as Genea's own (ticket #53).
+                    let _writing = own_writes.writing(Path::new("package.json"), Some(hash_bytes(text.as_bytes())));
+                    fs::write(&path, text).map_err(|e| e.to_string())
+                });
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 project.language.oxlint.problem =

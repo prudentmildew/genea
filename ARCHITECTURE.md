@@ -123,7 +123,7 @@ use, and nothing else:
   **Writing a project file from the core**: announce it first with
   `Project::review.own_writes().writing(relative_path, Some(hash))`
   (`review/own.rs`) and hold the guard until the write is done, as saves,
-  "Open config", toolchain pins, "Add TypeScript 7" and Revert do. Review
+  "Open config", toolchain pins, "Add TypeScript 7", "Add Oxlint and Oxfmt" and Revert do. Review
   then knows the content as Genea's own (a file without a pending change
   moves its baseline; one with a pending change stays listed), ignores what
   it read mid-write, and checks the file again when the guard drops.
