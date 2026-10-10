@@ -49,7 +49,7 @@ use, and nothing else:
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
-| Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | The shell tab, plus a tab per package-manager command (`src/terminal/`, below). |
+| Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`, then the showing tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `NewTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | Shell tabs, plus a tab per package-manager command (`src/terminal/`, below). |
 | Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
@@ -376,9 +376,10 @@ opening, after every command and after every background result.
 
 ## The terminal
 
-`genea-core/src/terminal/` (ticket #38): a pane of tabs. The first is
-the shell, the user's `$SHELL -l` in the project root; the others run a
-command (`Launch::PackageManager`, ticket #41). Every tab's program gets
+`genea-core/src/terminal/` (tickets #38, #39, #41): a pane of tabs. The
+first is a shell, the user's `$SHELL -l` in the project root;
+`NewTerminalTab` opens more shells, and others run a command
+(`Launch::PackageManager`, ticket #41). Every tab's program gets
 the project environment, `TERM=xterm-256color` and `COLORTERM=truecolor`,
 on a PTY from `host.ptys()`, emulated by `alacritty_terminal` (only its
 `Term` and the `vte` parser; Genea runs the PTY itself). Scrollback is
@@ -387,7 +388,10 @@ the size and focus are the pane's. A tab's programs start when
 `Project::start_terminal_when_ready` sees the environment ready, and each
 start takes a pane-wide generation, by which its session's Applies find
 their tab. Return restarts an ended shell; a command's tab stays as it
-ended until it is run again.
+ended until it is run again. `CloseTerminalTab` drops the tab's session,
+which hangs up its program; closing the last tab collapses the pane, and
+showing it again opens a new shell (so the pane may have no tabs: the
+showing tab is `Terminal::tab() -> Option`).
 
 - **Install dependencies** (ticket #41, ADR 0005): `src/dependencies.rs`
   stats the root `node_modules` at open and whenever the watcher reports a
@@ -401,11 +405,19 @@ ended until it is run again.
   read (the new-project flow), it waits for it. #40's scripts can run the
   same way, with their own arguments and folder.
 
-- Threads: a reader thread reads the PTY and parses into the `Term` under a
-  mutex, at most 16 KB per lock hold; a writer thread writes input and
-  resizes. Answers the emulator writes back (`Event::PtyWrite`) go to the
+- Links (`links.rs`): `path:line[:col]` references (the last path part
+  has an extension; `file://` paths too; not after another `:`, so URLs
+  and addresses aren't) are found when a grid is copied, across rows that
+  were wrapped, into `TerminalLine::links` (grid columns, the path as
+  printed, a 0-based `TextPosition`). `OpenTerminalLink { line, column }`
+  resolves the one under the cell against the tab's `directory` (lexically,
+  no disk access) and opens it like `OpenFileAt`, relative to the root if
+  it is inside it.
+- Threads (per tab): a reader thread reads the PTY and parses into the
+  `Term` under a mutex, at most 16 KB per lock hold; a writer thread
+  writes input and resizes. Answers the emulator writes back (`Event::PtyWrite`) go to the
   writer; requests (title, OSC 52 copy) wait for an Apply.
-- The grid is copied into view state lazily (`Terminal::screen`, a
+- The grid is copied into view state lazily (`Tab::screen`, a
   `RefCell`): only when view state is read after the emulator changed. The
   reader wakes the main thread only once the last copy has been taken, so a
   flood is copied at most once per read. The app reads at most once a frame
@@ -416,11 +428,17 @@ ended until it is run again.
   `input.rs` encodes keys, mouse reports (SGR, xterm, UTF-8), the wheel and
   pastes for the modes the program set.
 - Synchronized updates (mode 2026) are applied as they arrive.
-- The view: `ui/terminal-pane.slint` and `src/terminal.rs` (a slot per
-  visible row, pushed only when it changed; the palette is
-  `Theme.terminal-palette`). The pane sits right of the editor; its width is
-  view-only state, dragged at the splitter. `terminalPosition: "bottom"`
-  isn't laid out yet.
+- The view: `ui/terminal-pane.slint` and `src/terminal.rs` (a tab strip
+  with close buttons and +, pushed when the tabs change; a slot per visible
+  row, pushed only when it changed, with references underlined; the palette
+  is `Theme.terminal-palette`). The pane sits right of the editor area, or
+  below it (and the left column) with `terminalPosition: "bottom"`: in
+  `project-window.slint` it is placed by hand, and a placeholder of its
+  size in the editor area's layout keeps that clear. Its width and height
+  are view-only state, dragged at the splitter (clamped while dragging:
+  bound to the area's size, the placeholder would be a binding loop). ⌘T is View › New Terminal Tab; with the
+  terminal focused, ⌘W and ⌘⇧[ / ⌘⇧] act on its tabs. ⌘-click opens an
+  OSC 8 hyperlink in the browser, else dispatches `OpenTerminalLink`.
 
 ## Language servers
 

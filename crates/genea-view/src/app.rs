@@ -279,6 +279,26 @@ impl App {
         controller.dispatch(&mut self.workbench, command(pane, active, view.tabs.len()));
     }
 
+    /// A tab menu item (Close Tab, Select Next Tab, …): on the terminal's
+    /// tabs while it has the focus (`terminal` gets the active tab and the
+    /// count), else on the focused editor pane's.
+    fn dispatch_for_focused_tab(
+        &mut self,
+        key: WindowKey,
+        editor: impl FnOnce(usize, usize, usize) -> Command,
+        terminal: impl FnOnce(usize, usize) -> Command,
+    ) {
+        let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
+        if !controller.terminal_focused() {
+            return self.dispatch_for_active_tab(key, editor);
+        }
+        let Some(view) = self.workbench.project(controller.project) else { return };
+        let count = view.terminal.tabs.len();
+        if count > 0 {
+            controller.dispatch(&mut self.workbench, terminal(view.terminal.active_tab, count));
+        }
+    }
+
     /// Opens the update notice's release page in the browser.
     fn open_update(&mut self) {
         if let Some(notice) = self.workbench.update_notice() {
@@ -345,17 +365,27 @@ fn wire(controller: &WindowController) {
         with_app(move |app| app.dispatch(key, Command::MoveTabToOtherSide { pane: index(pane), tab: index(tab) }));
     });
     window.on_close_tab(move || {
-        with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::CloseTab { pane, tab }));
+        with_app(move |app| {
+            app.dispatch_for_focused_tab(
+                key,
+                |pane, tab, _| Command::CloseTab { pane, tab },
+                |tab, _| Command::CloseTerminalTab(tab),
+            )
+        });
     });
     window.on_move_tab(move || {
         with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::MoveTabToOtherSide { pane, tab }));
     });
     window.on_next_tab(move |forward| {
         with_app(move |app| {
-            app.dispatch_for_active_tab(key, |pane, tab, count| {
-                let tab = if forward { (tab + 1) % count } else { (tab + count - 1) % count };
-                Command::SelectTab { pane, tab }
-            })
+            let next = move |tab: usize, count: usize| {
+                if forward { (tab + 1) % count } else { (tab + count - 1) % count }
+            };
+            app.dispatch_for_focused_tab(
+                key,
+                |pane, tab, count| Command::SelectTab { pane, tab: next(tab, count) },
+                |tab, count| Command::SelectTerminalTab(next(tab, count)),
+            )
         });
     });
     // Edits apply synchronously, in order: with_app only defers a key if
@@ -481,6 +511,11 @@ fn wire(controller: &WindowController) {
         });
     });
     window.on_terminal_size_changed(move || with_app(move |app| app.sync(key)));
+    // Terminal tabs (ticket #39).
+    window.on_new_terminal_tab(menu(Command::NewTerminalTab));
+    window.on_terminal_tab_closed(move |tab| {
+        with_app(move |app| app.dispatch(key, Command::CloseTerminalTab(index(tab))));
+    });
     window.on_open_config(menu(Command::OpenConfig));
     window.on_toggle_view(move |view| {
         let view = left_column_view(view);

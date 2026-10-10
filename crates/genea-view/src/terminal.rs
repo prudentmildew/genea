@@ -1,6 +1,7 @@
-//! The terminal pane's Rust half (ticket #38): maps the core's
-//! `TerminalView` onto the pane's row slots in `ui/terminal-pane.slint`,
-//! and turns the pane's keys and mouse into commands.
+//! The terminal pane's Rust half (tickets #38, #39): maps the core's
+//! `TerminalView` onto the pane's tab strip and row slots in
+//! `ui/terminal-pane.slint`, and turns the pane's keys and mouse into
+//! commands.
 //!
 //! Repaint rules as for the editor surface (ADR 0004): each row's last
 //! state is cached and only changed rows are pushed, so an idle terminal
@@ -16,7 +17,8 @@ use slint::{Color, Model, ModelRc, SharedString, VecModel, platform::Key};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    ProjectWindow, TermCursor, TermRow, TermRun as SlintRun, TermTab, fonts, keys::Modifiers, surface::LINE_HEIGHT,
+    ProjectWindow, TermCursor, TermLink, TermRow, TermRun as SlintRun, TermTab, fonts, keys::Modifiers,
+    surface::LINE_HEIGHT,
 };
 
 pub struct TerminalSurface {
@@ -146,6 +148,15 @@ impl TerminalSurface {
                     ModelRc::default()
                 } else {
                     ModelRc::new(VecModel::from(runs(&line.runs, char_width)))
+                },
+                links: if line.links.is_empty() {
+                    ModelRc::default()
+                } else {
+                    let links = line.links.iter().map(|link| TermLink {
+                        x: link.columns.start as f32 * char_width,
+                        width: link.columns.len() as f32 * char_width,
+                    });
+                    ModelRc::new(VecModel::from_iter(links))
                 },
             };
             self.rows.set_row_data(index, row);
