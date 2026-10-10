@@ -122,6 +122,7 @@ impl Project {
             id,
             files: FileIndex::new(id, root.clone()),
             git: Git::new(id, root.clone()),
+            terminal: Terminal::new(id, root.clone()),
             dependencies: Dependencies::new(id, &root),
             search: Search::new(id, root.clone()),
             root,
@@ -143,7 +144,6 @@ impl Project {
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
             shown_hunk: None,
-            terminal: Terminal::new(id),
             install_requested: false,
             finder: None,
             finder_generation: 0,
@@ -455,6 +455,12 @@ impl Project {
                 self.terminal.unfocus();
                 self.open_file(path, Some(at), jobs)
             }
+            Command::OpenTerminalLink { line, column } => {
+                if let Some((path, at)) = self.terminal.file_link_at(line, column) {
+                    self.terminal.unfocus();
+                    self.open_file(path, Some(at), jobs)
+                }
+            }
             Command::CloseTab { .. }
             | Command::ResolveClose(_)
             | Command::SplitRight
@@ -470,7 +476,9 @@ impl Project {
             | Command::TerminalKey(..)
             | Command::ScrollTerminal { .. }
             | Command::TerminalMouse { .. }
-            | Command::TerminalPaste => self.terminal.command(command, host),
+            | Command::TerminalPaste
+            | Command::NewTerminalTab
+            | Command::CloseTerminalTab(_) => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::RestartLanguageServer => {
                 self.restart_language_server();
