@@ -89,6 +89,100 @@ fn go_to_definition_jumps_to_the_declaration_in_another_file() {
     assert_eq!(session.focused(), ("src/greeting.ts".into(), Caret { line: 0, column: 16 }));
 }
 
+const SHAPES: &str = "export interface Shape {\n  area(): number;\n}\n";
+const CIRCLE: &str = "import { Shape } from \"./shapes\";\nexport class Circle implements Shape {\n  area() { return 3; }\n}\n";
+const SQUARE: &str = "import { Shape } from \"./shapes\";\nexport class Square implements Shape {\n  area() { return 4; }\n}\n";
+const DRAW: &str = "import { Circle } from \"./circle\";\nconst shape: Shape = new Circle();\nshape.area();\n";
+
+/// An interface with two implementations, and a variable of its type.
+fn shapes_project() -> FixtureBuilder {
+    typescript_project()
+        .file("src/shapes.ts", SHAPES)
+        .file("src/circle.ts", CIRCLE)
+        .file("src/square.ts", SQUARE)
+        .file("src/draw.ts", DRAW)
+}
+
+#[test]
+fn go_to_type_definition_jumps_to_the_type_of_the_symbol() {
+    let fake = FakeLsp::new();
+    let mut session = open(shapes_project().build(), &fake);
+    // On `shape` in `shape.area()`.
+    session.open_at("src/draw.ts", 2, 2);
+
+    session.dispatch(Command::GoToTypeDefinition);
+    session.settle();
+
+    assert_eq!(session.focused(), ("src/shapes.ts".into(), Caret { line: 0, column: 17 }));
+}
+
+#[test]
+fn several_implementations_are_listed_in_the_usages_view_and_one_opens_at_once() {
+    let fake = FakeLsp::new();
+    let mut session = open(shapes_project().build(), &fake);
+    session.open_at("src/shapes.ts", 0, 18);
+
+    session.dispatch(Command::GoToImplementation);
+    session.settle();
+
+    let view = session.view();
+    assert_eq!(view.editor.as_ref().unwrap().path, PathBuf::from("src/shapes.ts"), "nothing opens yet");
+    assert_eq!(view.left_column, Some(LeftColumnView::Usages));
+    assert_eq!(view.usages.as_ref().unwrap().title, "Implementations of Shape");
+    assert_eq!(
+        usages(&view),
+        [
+            ("src/circle.ts".into(), "2:14".into(), "Circle".into()),
+            ("src/square.ts".into(), "2:14".into(), "Square".into()),
+        ]
+    );
+
+    // With one implementation, it opens.
+    session.dispatch(Command::CloseTab { pane: 0, tab: 0 });
+    std::fs::remove_file(session._fixture.path("src/square.ts")).unwrap();
+    session.open_at("src/shapes.ts", 0, 18);
+    session.dispatch(Command::GoToImplementation);
+    session.settle();
+    assert_eq!(session.focused(), ("src/circle.ts".into(), Caret { line: 1, column: 13 }));
+}
+
+#[test]
+fn nothing_found_or_no_language_server_is_a_hint_until_the_next_command() {
+    let fake = FakeLsp::new();
+    let mut session = open(greeting_project().file("README.md", "# greet\n").build(), &fake);
+    // On `console`, which nothing declares.
+    session.open_at("src/main.ts", 2, 3);
+
+    session.dispatch(Command::GoToDefinition);
+    session.settle();
+
+    assert_eq!(session.focused(), ("src/main.ts".into(), Caret { line: 2, column: 3 }));
+    assert_eq!(session.view().hint.as_deref(), Some("No definition found for `console`."));
+    session.dispatch(Command::MoveCaret(genea_core::CaretMove::Right));
+    assert_eq!(session.view().hint, None);
+
+    session.open_at("README.md", 0, 3);
+    session.dispatch(Command::GoToDefinition);
+    assert_eq!(session.view().hint.as_deref(), Some("Only TypeScript and JavaScript files have code navigation."));
+}
+
+#[test]
+fn without_typescript_there_is_no_navigation() {
+    let fixture = FixtureProject::new().file("package.json", "{}").file("src/main.ts", MAIN).build();
+    let host = TestHost::new();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.dispatch(project, Command::OpenFile("src/main.ts".into()));
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::FindUsages);
+    workbench.settle().unwrap();
+
+    let view = workbench.project(project).unwrap();
+    assert_eq!(view.hint.as_deref(), Some("TypeScript isn't running, so there's no Find Usages."));
+    assert_eq!(view.usages, None);
+}
+
 /// The Usages view's places: (file, `line:column`, the matched text).
 fn usages(view: &ProjectView) -> Vec<(PathBuf, String, String)> {
     let usages = view.usages.as_ref().expect("the Usages view");
