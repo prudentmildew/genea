@@ -49,12 +49,16 @@ export struct TermCursor {
     preedit-width: length,
 }
 
-// A terminal tab: the shell, or a command like `pnpm install` (#41).
+// A terminal tab: the shell, or a command like `pnpm install` (#41) or a
+// script (#40).
 export struct TermTab {
     title: string,
     active: bool,
     // Its program has exited or couldn't start.
     ended: bool,
+    // A command's status dot: 0 none (a shell), 1 starting, 2 running,
+    // 3 finished, 4 failed, 5 stopped.
+    dot: int,
 }
 
 export component TerminalPane inherits Rectangle {
@@ -66,6 +70,12 @@ export component TerminalPane inherits Rectangle {
     in property <TermCursor> cursor;
     // The program takes the mouse: no I-beam.
     in property <bool> mouse-reporting;
+    // The showing tab runs a command (not a shell): Stop and Re-run.
+    in property <bool> command-tab;
+    // Its program runs, so Stop applies.
+    in property <bool> running;
+    // Its script's local URL (ticket #40), or empty.
+    in property <string> url;
 
     out property <length> char-width: probe.preferred-width / 100;
     out property <length> grid-width: grid.width;
@@ -75,6 +85,9 @@ export component TerminalPane inherits Rectangle {
     callback tab-clicked(index: int);
     callback tab-closed(index: int);
     callback new-tab();
+    callback stop();
+    callback rerun();
+    callback open-url();
     callback key(text: string, shift: bool, cmd: bool, alt: bool, ctrl: bool);
     callback committed(text: string);
     callback preedit-changed(text: string);
@@ -140,6 +153,25 @@ export component TerminalPane inherits Rectangle {
                         padding-right: 6px;
                         spacing: 6px;
 
+                        // The status dot, centred in a column of its own.
+                        if tab.dot != 0: Rectangle {
+                            width: 8px;
+
+                            Rectangle {
+                                y: (parent.height - self.height) / 2;
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                border-width: tab.dot == 1 ? 1px : 0px;
+                                border-color: Theme.chrome-muted;
+                                background: tab.dot == 2 ? Theme.link
+                                    : tab.dot == 3 ? Theme.success
+                                    : tab.dot == 4 ? Theme.error
+                                    : tab.dot == 5 ? Theme.chrome-muted
+                                    : transparent;
+                            }
+                        }
+
                         Text {
                             max-width: 180px;
                             text: tab.title;
@@ -182,6 +214,60 @@ export component TerminalPane inherits Rectangle {
                     Text {
                         text: "+";
                         color: add.has-hover ? Theme.chrome-foreground : Theme.chrome-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                // The showing command tab's link and buttons.
+                if root.url != "": Text {
+                    max-width: 220px;
+                    text: root.url;
+                    color: Theme.link;
+                    overflow: elide;
+                    vertical-alignment: center;
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.open-url();
+                        }
+                    }
+                }
+
+                if root.command-tab && root.running: Rectangle {
+                    width: stop-label.preferred-width + 16px;
+
+                    stop-touch := TouchArea {
+                        clicked => {
+                            root.stop();
+                        }
+                    }
+
+                    stop-label := Text {
+                        text: "Stop";
+                        color: stop-touch.has-hover ? Theme.chrome-foreground : Theme.chrome-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.command-tab: Rectangle {
+                    width: rerun-label.preferred-width + 16px;
+
+                    rerun-touch := TouchArea {
+                        clicked => {
+                            root.rerun();
+                        }
+                    }
+
+                    rerun-label := Text {
+                        text: "Re-run";
+                        color: rerun-touch.has-hover ? Theme.chrome-foreground : Theme.chrome-muted;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }

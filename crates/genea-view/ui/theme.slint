@@ -52,6 +52,8 @@ export global Theme {
     // A selected or hovered row in a list.
     out property <color> chrome-highlight: root.dark ? #21262d : #eaeef2;
     out property <color> link: root.dark ? #4493f8 : #0969da;
+    // A script that finished (ticket #40's status dot).
+    out property <color> success: root.dark ? #3fb950 : #1a7f37;
     out property <length> chrome-font-size: 12px;
 
     // The terminal (ticket #38), indexed by `TermRun.fg-index` and

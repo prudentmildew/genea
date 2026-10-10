@@ -58,6 +58,7 @@ pub enum Action {
     ShowSearch,
     ShowChanges,
     ShowProblems,
+    ShowScripts,
     ShowTerminal,
     NewTerminalTab,
     SplitRight,
@@ -70,7 +71,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 49] = [
+    pub const ALL: [Action; 50] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -113,6 +114,7 @@ impl Action {
         Action::ShowSearch,
         Action::ShowChanges,
         Action::ShowProblems,
+        Action::ShowScripts,
         Action::ShowTerminal,
         Action::NewTerminalTab,
         Action::SplitRight,
@@ -167,6 +169,7 @@ impl Action {
             Action::ShowSearch => "Search",
             Action::ShowChanges => "Changes",
             Action::ShowProblems => "Problems",
+            Action::ShowScripts => "Scripts",
             Action::ShowTerminal => "Terminal",
             Action::NewTerminalTab => "New Terminal Tab",
             Action::SplitRight => "Split Right",
@@ -227,6 +230,7 @@ impl Action {
             | Action::RemoveUnusedToolchains
             | Action::ExpandAllFolds
             | Action::CollapseAllFolds
+            | Action::ShowScripts
             | Action::SplitRight
             | Action::MoveTabToOtherSide
             | Action::CloseSplit
@@ -308,6 +312,7 @@ impl Action {
             Action::ShowSearch => Command::ToggleLeftColumn(LeftColumnView::Search),
             Action::ShowChanges => Command::ToggleLeftColumn(LeftColumnView::Changes),
             Action::ShowProblems => Command::ToggleLeftColumn(LeftColumnView::Problems),
+            Action::ShowScripts => Command::ToggleLeftColumn(LeftColumnView::Scripts),
             Action::ShowTerminal => Command::ToggleTerminal,
             Action::NewTerminalTab => Command::NewTerminalTab,
             Action::SplitRight => Command::SplitRight,

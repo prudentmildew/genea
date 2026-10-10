@@ -19,6 +19,7 @@ use genea_host::{Exit, ProcessSpec, Pty, PtyControl, PtySize, Ptys};
 const WAIT: Duration = Duration::from_secs(10);
 
 const SIGHUP: i32 = 1;
+const SIGKILL: i32 = 9;
 
 /// Pseudo-terminals the test plays. Each spawn is recorded as a
 /// [`FakePty`], in order.
@@ -64,11 +65,14 @@ impl Ptys for ScriptedPtys {
             state: Mutex::new(State {
                 output: VecDeque::new(),
                 reading: false,
+                read_once: false,
                 reader_gone: false,
                 input: Vec::new(),
                 size,
                 exit: None,
                 hung_up: false,
+                interrupted: false,
+                killed: false,
             }),
             changed: Condvar::new(),
         });
@@ -99,6 +103,8 @@ struct State {
     output: VecDeque<u8>,
     /// Genea is blocked reading, with nothing left to read.
     reading: bool,
+    /// Genea has started reading the output.
+    read_once: bool,
     /// Genea dropped its output reader.
     reader_gone: bool,
     /// Everything Genea typed.
@@ -106,6 +112,11 @@ struct State {
     size: PtySize,
     exit: Option<Exit>,
     hung_up: bool,
+    /// Genea interrupted the program (SIGINT); it plays on until the test
+    /// makes it exit.
+    interrupted: bool,
+    /// Genea killed the program (SIGKILL), which ended it.
+    killed: bool,
 }
 
 impl FakePty {
@@ -161,10 +172,24 @@ impl FakePty {
 
     /// The program exits with `code`: once its output is read, Genea sees
     /// the terminal close.
+    ///
+    /// If Genea is reading the output, it returns once Genea has seen the
+    /// end, so a `settle()` right after shows the exit.
     pub fn exit(&self, code: i32) {
         let mut state = self.lock();
         state.exit.get_or_insert(Exit::code(code));
         self.shared.changed.notify_all();
+        drop(state);
+        self.wait_for_end_seen();
+    }
+
+    /// Waits until Genea's reader has seen the program end (if it was
+    /// reading): Genea has then queued what the end changes.
+    fn wait_for_end_seen(&self) {
+        let state = self.lock();
+        if state.read_once {
+            let _ = self.shared.changed.wait_timeout_while(state, WAIT, |s| !s.reader_gone).unwrap();
+        }
     }
 
     /// Whether Genea has hung up the terminal (closed it).
@@ -179,6 +204,33 @@ impl FakePty {
         assert!(state.hung_up, "the terminal wasn't hung up");
     }
 
+    /// Whether Genea has interrupted the program (SIGINT). The program
+    /// plays on: the test decides whether it exits.
+    pub fn interrupted(&self) -> bool {
+        self.lock().interrupted
+    }
+
+    /// Waits until Genea interrupts the program.
+    pub fn wait_for_interrupt(&self) {
+        let state = self.lock();
+        let (state, _) = self.shared.changed.wait_timeout_while(state, WAIT, |s| !s.interrupted).unwrap();
+        assert!(state.interrupted, "the program wasn't interrupted");
+    }
+
+    /// Whether Genea has killed the program (SIGKILL), which ends it.
+    pub fn killed(&self) -> bool {
+        self.lock().killed
+    }
+
+    /// Waits until Genea kills the program and has seen it end.
+    pub fn wait_for_kill(&self) {
+        let state = self.lock();
+        let (state, _) = self.shared.changed.wait_timeout_while(state, WAIT, |s| !s.killed).unwrap();
+        assert!(state.killed, "the program wasn't killed");
+        drop(state);
+        self.wait_for_end_seen();
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.shared.state.lock().unwrap()
     }
@@ -190,6 +242,7 @@ struct Output(Arc<Shared>);
 impl Read for Output {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let mut state = self.0.state.lock().unwrap();
+        state.read_once = true;
         loop {
             if !state.output.is_empty() {
                 let n = buffer.len().min(state.output.len());
@@ -252,6 +305,25 @@ impl PtyControl for Control {
         if state.exit.is_none() {
             state.hung_up = true;
             state.exit = Some(Exit { code: None, signal: Some(SIGHUP) });
+        }
+        self.0.changed.notify_all();
+        Ok(())
+    }
+
+    fn interrupt(&self) -> io::Result<()> {
+        let mut state = self.0.state.lock().unwrap();
+        if state.exit.is_none() {
+            state.interrupted = true;
+        }
+        self.0.changed.notify_all();
+        Ok(())
+    }
+
+    fn kill(&self) -> io::Result<()> {
+        let mut state = self.0.state.lock().unwrap();
+        if state.exit.is_none() {
+            state.killed = true;
+            state.exit = Some(Exit { code: None, signal: Some(SIGKILL) });
         }
         self.0.changed.notify_all();
         Ok(())

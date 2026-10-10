@@ -44,6 +44,7 @@ use crate::{
     view::{InlineProblem, LeftColumnView, Notice, NoticeAction, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
+    workspace::Workspace,
 };
 use check::Check;
 use language::Language;
@@ -115,6 +116,8 @@ pub(crate) struct Project {
     pub(crate) terminal: Terminal,
     /// Whether `node_modules` is there (ticket #41).
     pub(crate) dependencies: Dependencies,
+    /// The packages and their scripts (ticket #40).
+    pub(crate) workspace: Workspace,
     /// "Install dependencies" came while `package.json` was being read: it
     /// runs once it is read.
     install_requested: bool,
@@ -143,6 +146,7 @@ impl Project {
             git: Git::new(id, root.clone()),
             terminal: Terminal::new(id, root.clone()),
             dependencies: Dependencies::new(id, &root),
+            workspace: Workspace::new(id, root.clone()),
             search: Search::new(id, root.clone()),
             root,
             editor: None,
@@ -196,6 +200,7 @@ impl Project {
         self.review.start(host.support_dir(), jobs);
         self.git.reload(Vec::new(), jobs);
         self.dependencies.check(jobs);
+        self.workspace.discover(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -209,6 +214,7 @@ impl Project {
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
         self.dependencies.files_changed(&changes, jobs);
+        self.workspace.files_changed(&changes, jobs);
         self.language_files_changed(&changes);
         self.project_check_files_changed(&changes);
         if self.git.head_may_have_moved(&changes) {
@@ -423,6 +429,17 @@ impl Project {
         }
     }
 
+    /// Runs a package's script in a terminal tab (ticket #40), which starts
+    /// once the environment is ready.
+    fn run_script(&mut self, package: &Path, script: &str) {
+        let Some(found) = self.workspace.package(package) else { return };
+        if !found.scripts.iter().any(|s| s.name == script) {
+            return;
+        }
+        let title = format!("{}: {script}", found.name);
+        self.terminal.run_script(self.root.join(package), title, script);
+    }
+
     /// Reads the toolchain pins and starts the downloads, in the background.
     /// A folder without a root `package.json` has no toolchain. (Checking is
     /// one stat on the main thread, like `open_project`'s folder check.)
@@ -510,7 +527,9 @@ impl Project {
             | Command::TerminalMouse { .. }
             | Command::TerminalPaste
             | Command::NewTerminalTab
-            | Command::CloseTerminalTab(_) => self.terminal.command(command, host),
+            | Command::CloseTerminalTab(_)
+            | Command::StopTerminalTab(_)
+            | Command::RerunTerminalTab(_) => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::KeepChange(path) => self.review.keep(Some(path), jobs),
             Command::RevertChange(path) => self.review.revert(Some(path), jobs),
@@ -605,6 +624,7 @@ impl Project {
                 }
             }
             Command::InstallDependencies => self.install_dependencies(),
+            Command::RunScript { package, script } => self.run_script(&package, &script),
             Command::ExtendSelection { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, true, self.viewport_rows);
@@ -829,6 +849,7 @@ impl Project {
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
             language_servers: self.language_status(),
             project_check: self.project_check_status(),
+            script_links: self.terminal.script_links(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
@@ -858,6 +879,7 @@ impl Project {
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
             quick_fixes: self.quick_fixes_view(),
+            scripts: self.workspace.packages().to_vec(),
         }
     }
 

@@ -1,6 +1,6 @@
 // The left column (spec #19 story 54): a view switcher on top and the active
 // view below. Files (⌘1, the one a project opens with), Search (⌘⇧F),
-// Changes (#53) and Problems (⌘6) are there. For a new view, add a
+// Changes (#53), Problems (⌘6) and Scripts (#40) are there. For a new view, add a
 // `LeftView` value, a switcher tab and the view itself. The column is collapsed (not shown) while the core's
 // `left_column` is `None`.
 
@@ -9,8 +9,9 @@ import { ProblemsView, ProblemRow } from "problems-view.slint";
 import { FilesView, FileEntry } from "files-view.slint";
 import { ChangesView, ChangeRow } from "changes-view.slint";
 import { SearchView, SearchRow } from "search-view.slint";
+import { ScriptsView, ScriptRow } from "scripts-view.slint";
 
-export enum LeftView { files, search, changes, problems }
+export enum LeftView { files, search, changes, problems, scripts }
 
 // A tab in the switcher.
 component SwitcherTab inherits Rectangle {
@@ -54,6 +55,7 @@ export component LeftColumn inherits Rectangle {
     in property <[SearchRow]> search-rows;
     in property <string> search-status;
     in property <bool> search-status-error;
+    in property <[ScriptRow]> scripts;
 
     // A switcher tab was clicked: show that view.
     callback show(LeftView);
@@ -67,6 +69,7 @@ export component LeftColumn inherits Rectangle {
     callback revert-all-changes();
     callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
     callback search-result-clicked(int);
+    callback script-clicked(int);
 
     background: Theme.chrome-background;
 
@@ -107,6 +110,14 @@ export component LeftColumn inherits Rectangle {
                     active: root.view == LeftView.problems;
                     clicked => {
                         root.show(LeftView.problems);
+                    }
+                }
+
+                SwitcherTab {
+                    label: "Scripts";
+                    active: root.view == LeftView.scripts;
+                    clicked => {
+                        root.show(LeftView.scripts);
                     }
                 }
             }
@@ -168,6 +179,14 @@ export component LeftColumn inherits Rectangle {
             problems: root.problems;
             clicked(index) => {
                 root.problem-clicked(index);
+            }
+        }
+
+        if root.view == LeftView.scripts: ScriptsView {
+            vertical-stretch: 1;
+            rows: root.scripts;
+            clicked(index) => {
+                root.script-clicked(index);
             }
         }
     }

@@ -71,6 +71,9 @@ pub struct ProjectView {
     /// language servers have answered, until a fix is chosen or anything
     /// else happens.
     pub quick_fixes: Option<QuickFixesView>,
+    /// The script runner (ticket #40): every package's `package.json`
+    /// scripts, the root package first, then the others in path order.
+    pub scripts: Vec<PackageScripts>,
 }
 
 /// The quick-fix popup: what the language servers offer at the caret.
@@ -108,6 +111,27 @@ pub enum ChangeKind {
     Created,
     /// It has a baseline but is gone from disk.
     Deleted,
+}
+
+/// A package in the script runner: its `package.json` scripts, in the
+/// file's order. `Command::RunScript { package: path, script: name }` runs
+/// one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageScripts {
+    /// The package's `name`, else its folder's name.
+    pub name: String,
+    /// Its folder, relative to the project root: empty for the root
+    /// package.
+    pub path: PathBuf,
+    pub scripts: Vec<Script>,
+}
+
+/// A `package.json` script.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Script {
+    pub name: String,
+    /// What it runs.
+    pub command: String,
 }
 
 /// The fuzzy finder overlay: a query and the results matching it.
@@ -286,6 +310,8 @@ pub enum LeftColumnView {
     Search,
     /// The files changed outside Genea, to review (ticket #53).
     Changes,
+    /// The script runner (ticket #40): `ProjectView::scripts`.
+    Scripts,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem
@@ -509,6 +535,21 @@ pub struct StatusBar {
     pub language_servers: Vec<LanguageServerStatus>,
     /// `Checking project…` while a project check (ticket #48) runs.
     pub project_check: Option<String>,
+    /// The links of running scripts (ticket #40), in tab order: each the
+    /// first local URL its script printed. Clicking one opens it in the
+    /// browser.
+    pub script_links: Vec<ScriptLink>,
+}
+
+/// A running script's dev-server link: the first `http(s)://` URL on
+/// `localhost`, `127.0.0.1` or `[::1]` it printed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScriptLink {
+    /// Its terminal tab (index into `TerminalView::tabs`).
+    pub tab: usize,
+    /// The tab's title: `<package>: <script>`.
+    pub title: String,
+    pub url: String,
 }
 
 /// A language server's status-bar item.
@@ -692,6 +733,9 @@ pub struct TerminalView {
     pub mouse_reporting: bool,
     /// The IME composition being typed (a dead key), drawn at the cursor.
     pub preedit: Option<String>,
+    /// The showing tab's script link (ticket #40): the first local URL its
+    /// script printed, while it runs. Clicking it opens it in the browser.
+    pub url: Option<String>,
 }
 
 /// A terminal tab, as its tab strip shows it.
@@ -712,6 +756,9 @@ pub enum TerminalStatus {
     Running,
     /// The program exited, with its code if it exited normally.
     Exited { code: Option<i32> },
+    /// The program ended after the user stopped it
+    /// (`Command::StopTerminalTab`).
+    Stopped,
     /// The program couldn't start: why.
     Failed(String),
 }

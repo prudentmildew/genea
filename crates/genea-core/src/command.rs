@@ -322,6 +322,22 @@ pub enum Command {
     /// directory. The editor takes the focus.
     OpenTerminalLink { line: usize, column: usize },
 
+    // The script runner (ticket #40).
+    /// Runs a `package.json` script of the package in folder `package`
+    /// (relative to the root; empty for the root package, as in
+    /// `ProjectView::scripts`) as `<package manager> run <script>` in that
+    /// folder, in a terminal tab named `<package>: <script>`, and shows it.
+    /// A tab already running the script is just shown; one where it ended
+    /// runs it again.
+    RunScript { package: PathBuf, script: String },
+    /// Stops a command's terminal tab (by index): interrupts its program
+    /// (SIGINT), and kills it (SIGKILL) if it hasn't ended after
+    /// `STOP_TIMEOUT`. The tab stays, showing it stopped.
+    StopTerminalTab(usize),
+    /// Runs a command's terminal tab (by index) again, in the same tab:
+    /// a program still running is hung up and replaced.
+    RerunTerminalTab(usize),
+
     /// The Search view's query changed (⌘⇧F, ticket #34): cancels the
     /// search in flight and searches the project in the background, results
     /// streaming into `ProjectView::search`. An empty query clears the

@@ -35,6 +35,8 @@ export component StatusBar inherits Rectangle {
     // A server failed or isn't responding: the item is a warning, and a
     // click restarts it.
     in property <bool> language-server-alert;
+    // Running scripts' local URLs (ticket #40); a click opens one.
+    in property <[string]> script-links;
 
     callback notice-action-clicked();
     callback update-clicked();
@@ -42,6 +44,7 @@ export component StatusBar inherits Rectangle {
     callback show-problems();
     // The language-server item was clicked while it is an alert.
     callback restart-language-server();
+    callback script-link-clicked(int);
 
     height: 22px;
     background: Theme.chrome-background;
@@ -91,6 +94,20 @@ export component StatusBar inherits Rectangle {
                 mouse-cursor: pointer;
                 clicked => {
                     root.notice-action-clicked();
+                }
+            }
+        }
+
+        for link[index] in root.script-links: Text {
+            text: link;
+            color: Theme.link;
+            font-size: Theme.chrome-font-size;
+            vertical-alignment: center;
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.script-link-clicked(index);
                 }
             }
         }
