@@ -514,6 +514,36 @@ fn wire(controller: &WindowController) {
     window.on_terminal_tab_closed(move |tab| {
         with_app(move |app| app.dispatch(key, Command::CloseTerminalTab(index(tab))));
     });
+    // The script runner (ticket #40).
+    window.on_script_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            controller.run_script(&mut app.workbench, index);
+        });
+    });
+    window.on_script_link_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter().find(|c| c.key == key) else { return };
+            controller.open_script_link(index);
+        });
+    });
+    window.on_open_terminal_url(move || {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter().find(|c| c.key == key) else { return };
+            controller.open_terminal_url();
+        });
+    });
+    for stop in [true, false] {
+        let handler = move || {
+            with_app(move |app| {
+                let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+                controller.stop_or_rerun(&mut app.workbench, stop);
+            });
+        };
+        if stop { window.on_stop_terminal_tab(handler) } else { window.on_rerun_terminal_tab(handler) }
+    }
     window.on_open_config(menu(Command::OpenConfig));
     window.on_toggle_view(move |view| {
         let view = left_column_view(view);
@@ -619,6 +649,7 @@ fn left_column_view(view: LeftView) -> LeftColumnView {
         LeftView::Files => LeftColumnView::Files,
         LeftView::Problems => LeftColumnView::Problems,
         LeftView::Search => LeftColumnView::Search,
+        LeftView::Scripts => LeftColumnView::Scripts,
     }
 }
 

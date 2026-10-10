@@ -121,7 +121,11 @@ impl TerminalSurface {
             .map(|(index, tab)| TermTab {
                 title: tab.title.as_str().into(),
                 active: index == view.active_tab,
-                ended: matches!(tab.status, TerminalStatus::Exited { .. } | TerminalStatus::Failed(_)),
+                ended: matches!(
+                    tab.status,
+                    TerminalStatus::Exited { .. } | TerminalStatus::Stopped | TerminalStatus::Failed(_)
+                ),
+                dot: if tab.shell { 0 } else { dot(&tab.status) },
             })
             .collect();
         if self.tabs != tabs {
@@ -130,6 +134,9 @@ impl TerminalSurface {
         }
         let shell = view.tabs.get(view.active_tab).is_none_or(|tab| tab.shell);
         window.set_terminal_message(message(&view.status, shell, &view.title).into());
+        window.set_terminal_command_tab(!shell);
+        window.set_terminal_running(view.status == TerminalStatus::Running);
+        window.set_terminal_url(view.url.clone().unwrap_or_default().into());
         window.set_terminal_mouse_reporting(view.mouse_reporting);
 
         let char_width = window.get_terminal_char_width();
@@ -179,6 +186,17 @@ impl TerminalSurface {
     }
 }
 
+/// A command tab's status dot (`TermTab.dot` in ui/terminal-pane.slint).
+fn dot(status: &TerminalStatus) -> i32 {
+    match status {
+        TerminalStatus::Starting => 1,
+        TerminalStatus::Running => 2,
+        TerminalStatus::Exited { code: Some(0) } => 3,
+        TerminalStatus::Exited { .. } | TerminalStatus::Failed(_) => 4,
+        TerminalStatus::Stopped => 5,
+    }
+}
+
 /// What the pane says over the grid while the showing tab's program
 /// isn't running: the shell's, or a command's (`title`).
 fn message(status: &TerminalStatus, shell: bool, title: &str) -> String {
@@ -188,7 +206,7 @@ fn message(status: &TerminalStatus, shell: bool, title: &str) -> String {
             TerminalStatus::Running => String::new(),
             TerminalStatus::Exited { code: Some(0) } => format!("{title} finished."),
             TerminalStatus::Exited { code: Some(code) } => format!("{title} failed with code {code}."),
-            TerminalStatus::Exited { code: None } => format!("{title} was stopped."),
+            TerminalStatus::Exited { code: None } | TerminalStatus::Stopped => format!("{title} was stopped."),
             TerminalStatus::Failed(reason) => reason.clone(),
         };
     }
@@ -198,7 +216,9 @@ fn message(status: &TerminalStatus, shell: bool, title: &str) -> String {
         TerminalStatus::Exited { code: Some(code) } => {
             format!("The shell exited with code {code}. Press Return to start a new one.")
         }
-        TerminalStatus::Exited { code: None } => "The shell was stopped. Press Return to start a new one.".into(),
+        TerminalStatus::Exited { code: None } | TerminalStatus::Stopped => {
+            "The shell was stopped. Press Return to start a new one.".into()
+        }
         TerminalStatus::Failed(reason) => format!("{reason}. Press Return to try again."),
     }
 }

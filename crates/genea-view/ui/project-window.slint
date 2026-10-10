@@ -8,6 +8,7 @@ import { Line, HunkPopup } from "editor-surface.slint";
 import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
+import { ScriptRow } from "scripts-view.slint";
 import { ProblemRow } from "problems-view.slint";
 import { TerminalPane, TermRow, TermCursor, TermTab } from "terminal-pane.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
@@ -115,6 +116,13 @@ export component ProjectWindow inherits Window {
     in property <[TermRow]> terminal-rows;
     in property <TermCursor> terminal-cursor;
     in property <bool> terminal-mouse-reporting;
+    // The showing terminal tab's Stop, Re-run and link (ticket #40).
+    in property <bool> terminal-command-tab;
+    in property <bool> terminal-running;
+    in property <string> terminal-url;
+    // The Scripts view's rows, and the status bar's script links.
+    in property <[ScriptRow]> scripts;
+    in property <[string]> status-script-links;
     in-out property <length> terminal-width: 520px;
     in-out property <length> terminal-height: 260px;
     out property <length> terminal-char-width: terminal.char-width;
@@ -178,6 +186,12 @@ export component ProjectWindow inherits Window {
     callback terminal-size-changed();
     callback new-terminal-tab();
     callback terminal-tab-closed(index: int);
+    // Script runner (ticket #40).
+    callback stop-terminal-tab();
+    callback rerun-terminal-tab();
+    callback open-terminal-url();
+    callback script-clicked(int);
+    callback script-link-clicked(int);
 
     // The finder: a shortcut opens it; the rest come from the overlay.
     callback open-finder(FinderKind);
@@ -477,6 +491,13 @@ export component ProjectWindow inherits Window {
             }
 
             MenuItem {
+                title: "Scripts";
+                activated => {
+                    root.toggle-view(LeftView.scripts);
+                }
+            }
+
+            MenuItem {
                 title: "Terminal";
                 shortcut: @keys(Alt + F12);
                 activated => {
@@ -630,6 +651,10 @@ export component ProjectWindow inherits Window {
                         }
                         search-result-clicked(index) => {
                             root.search-result-clicked(index);
+                        }
+                        scripts: root.scripts;
+                        script-clicked(index) => {
+                            root.script-clicked(index);
                         }
                     }
 
@@ -807,6 +832,18 @@ export component ProjectWindow inherits Window {
                 rows: root.terminal-rows;
                 cursor: root.terminal-cursor;
                 mouse-reporting: root.terminal-mouse-reporting;
+                command-tab: root.terminal-command-tab;
+                running: root.terminal-running;
+                url: root.terminal-url;
+                stop => {
+                    root.stop-terminal-tab();
+                }
+                rerun => {
+                    root.rerun-terminal-tab();
+                }
+                open-url => {
+                    root.open-terminal-url();
+                }
                 focus-requested => {
                     root.terminal-focus();
                 }
@@ -857,6 +894,10 @@ export component ProjectWindow inherits Window {
             loading: root.status-loading;
             language-server: root.status-language-server;
             language-server-alert: root.status-language-server-alert;
+            script-links: root.status-script-links;
+            script-link-clicked(index) => {
+                root.script-link-clicked(index);
+            }
             restart-language-server => {
                 root.restart-language-server();
             }

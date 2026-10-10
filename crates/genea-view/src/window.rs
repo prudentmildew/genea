@@ -14,7 +14,7 @@ use std::{
 };
 
 use genea_core::{
-    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
+    CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, PackageScripts, ScriptLink, FinderItem, FinderMode, FinderView,
     LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
     SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme, ToolchainOption,
     Workbench,
@@ -25,7 +25,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app,
+    FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, ScriptRow, SearchRow, TabEntry, Theme,
+    app::with_app,
     dialogs, fonts,
     keys::Modifiers,
     links,
@@ -80,6 +81,16 @@ pub struct WindowController {
     finder_mode: Option<FinderMode>,
     finder_items: Vec<FinderItem>,
     finder_rows: Rc<VecModel<FinderRow>>,
+    /// The Scripts view's packages as last pushed, and what each row runs
+    /// (`None` for a package's heading).
+    scripts: Vec<PackageScripts>,
+    script_rows: Rc<VecModel<ScriptRow>>,
+    script_targets: Vec<Option<(PathBuf, String)>>,
+    /// The status bar's script links as last pushed.
+    script_links: Vec<ScriptLink>,
+    /// The showing terminal tab and its link, as last pushed.
+    terminal_tab: usize,
+    terminal_url: Option<String>,
 }
 
 /// How far left of the text a press still hits a git gutter marker: its
@@ -106,6 +117,8 @@ impl WindowController {
         window.set_search_rows(ModelRc::from(search.rows.clone()));
         let finder_rows = Rc::new(VecModel::default());
         window.set_finder_items(ModelRc::from(finder_rows.clone()));
+        let script_rows = Rc::new(VecModel::default());
+        window.set_scripts(ModelRc::from(script_rows.clone()));
         Ok(WindowController {
             key,
             window,
@@ -131,6 +144,12 @@ impl WindowController {
             finder_mode: None,
             finder_items: Vec::new(),
             finder_rows,
+            scripts: Vec::new(),
+            script_rows,
+            script_targets: Vec::new(),
+            script_links: Vec::new(),
+            terminal_tab: 0,
+            terminal_url: None,
         })
     }
 
@@ -326,8 +345,44 @@ impl WindowController {
             Some(LeftColumnView::Files) => window.set_left_view(LeftView::Files),
             Some(LeftColumnView::Problems) => window.set_left_view(LeftView::Problems),
             Some(LeftColumnView::Search) => window.set_left_view(LeftView::Search),
+            Some(LeftColumnView::Scripts) => window.set_left_view(LeftView::Scripts),
             None => {}
         }
+        if view.scripts != self.scripts {
+            let mut rows = Vec::new();
+            let mut targets = Vec::new();
+            for package in &view.scripts {
+                rows.push(ScriptRow {
+                    package: true,
+                    label: package.name.as_str().into(),
+                    detail: package.path.display().to_string().into(),
+                });
+                targets.push(None);
+                for script in &package.scripts {
+                    rows.push(ScriptRow {
+                        package: false,
+                        label: script.name.as_str().into(),
+                        detail: script.command.as_str().into(),
+                    });
+                    targets.push(Some((package.path.clone(), script.name.clone())));
+                }
+            }
+            for row in &rows {
+                fonts::prepare(&row.label);
+                fonts::prepare(&row.detail);
+            }
+            self.script_rows.set_vec(rows);
+            self.script_targets = targets;
+            self.scripts = view.scripts.clone();
+        }
+        if view.status.script_links != self.script_links {
+            let links: Vec<slint::SharedString> =
+                view.status.script_links.iter().map(|link| link.url.as_str().into()).collect();
+            window.set_status_script_links(ModelRc::new(VecModel::from(links)));
+            self.script_links = view.status.script_links.clone();
+        }
+        self.terminal_tab = view.terminal.active_tab;
+        self.terminal_url = view.terminal.url.clone();
         self.search.sync(window, &view.search);
         // The core shares an unchanged tree, so this is a pointer compare.
         if view.files != self.files {
@@ -549,6 +604,34 @@ impl WindowController {
             FileRowKind::File => Command::OpenFile(row.path.clone()),
             FileRowKind::Folder { .. } => Command::ToggleFolder(row.path.clone()),
         };
+        self.dispatch(workbench, command);
+    }
+
+    /// A Scripts view row was clicked: run its script.
+    pub fn run_script(&mut self, workbench: &mut Workbench, index: usize) {
+        let Some(Some((package, script))) = self.script_targets.get(index) else { return };
+        let command = Command::RunScript { package: package.clone(), script: script.clone() };
+        self.dispatch(workbench, command);
+    }
+
+    /// A status-bar script link was clicked: open it in the browser.
+    pub fn open_script_link(&self, index: usize) {
+        if let Some(link) = self.script_links.get(index) {
+            links::open_local_url(&link.url);
+        }
+    }
+
+    /// The showing terminal tab's link was clicked.
+    pub fn open_terminal_url(&self) {
+        if let Some(url) = &self.terminal_url {
+            links::open_local_url(url);
+        }
+    }
+
+    /// The terminal pane's Stop or Re-run, for the showing tab.
+    pub fn stop_or_rerun(&mut self, workbench: &mut Workbench, stop: bool) {
+        let tab = self.terminal_tab;
+        let command = if stop { Command::StopTerminalTab(tab) } else { Command::RerunTerminalTab(tab) };
         self.dispatch(workbench, command);
     }
 

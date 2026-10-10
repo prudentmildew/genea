@@ -1,0 +1,82 @@
+// The Scripts view in the left column (ticket #40): every package's
+// `package.json` scripts, the root package first, then the others in path
+// order. Clicking a script runs it in a terminal tab of its own. Rows are
+// set from Rust (src/window.rs) out of the core's `ProjectView::scripts`,
+// flattened: a package's row, then its scripts.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct ScriptRow {
+    // A package's heading (its name and folder), else one of its scripts
+    // (its name and command).
+    package: bool,
+    label: string,
+    detail: string,
+}
+
+export component ScriptsView inherits Rectangle {
+    in property <[ScriptRow]> rows;
+
+    // A script row was clicked: run it.
+    callback clicked(int);
+
+    background: Theme.chrome-background;
+
+    if root.rows.length == 0: Text {
+        x: 12px;
+        y: 12px;
+        width: parent.width - 24px;
+        text: "No package.json scripts.";
+        color: Theme.chrome-muted;
+        wrap: word-wrap;
+    }
+
+    ListView {
+        for row[index] in root.rows: Rectangle {
+            height: 22px;
+            background: !row.package && touch.has-hover ? Theme.chrome-highlight : transparent;
+
+            HorizontalLayout {
+                padding-left: row.package ? 8px : 10px;
+                padding-right: 10px;
+                spacing: 6px;
+
+                // A run marker beside scripts; packages keep no space.
+                if !row.package: Text {
+                    width: 12px;
+                    text: touch.has-hover ? "▶" : "";
+                    color: Theme.link;
+                    font-size: 9px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: row.label;
+                    color: Theme.chrome-foreground;
+                    font-weight: row.package ? 600 : 400;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: row.detail;
+                    color: Theme.chrome-muted;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+
+            touch := TouchArea {
+                mouse-cursor: row.package ? default : pointer;
+                clicked => {
+                    if !row.package {
+                        root.clicked(index);
+                    }
+                }
+            }
+        }
+    }
+}
