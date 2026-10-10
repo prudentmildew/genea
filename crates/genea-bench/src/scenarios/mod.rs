@@ -105,6 +105,8 @@ pub struct Context {
     /// language server that misbehaves.
     pub fake_lsp: PathBuf,
     pub workspace: PathBuf,
+    /// The Large workspace, if it is set up (ticket #63).
+    pub large: Option<PathBuf>,
     pub options: Options,
     pub out: Output,
     /// The scenario running now, stamped on its records.
