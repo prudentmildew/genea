@@ -52,7 +52,9 @@ impl Workspace {
         let (id, generation, root) = (self.project, self.generation, self.root.clone());
         jobs.spawn("discover packages", move || {
             let packages = discover(&root);
-            let foreign_configs = foreign::find(&root, packages.iter().map(|p| p.path.as_path()));
+            // The root always counts, even without a readable `package.json`.
+            let others = packages.iter().map(|p| p.path.as_path()).filter(|path| !path.as_os_str().is_empty());
+            let foreign_configs = foreign::find(&root, std::iter::once(Path::new("")).chain(others));
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 if project.workspace.generation == generation {

@@ -86,3 +86,25 @@ fn quick_successive_saves_leave_the_newest_text_saved() {
         assert!(!view(&workbench, project).editor.unwrap().modified, "round {round}: the newest text is saved");
     }
 }
+
+/// Item 6: formatter config at the root counts without a root
+/// `package.json` (or with one that doesn't parse).
+#[test]
+fn root_formatter_config_counts_without_a_readable_root_package_json() {
+    for package_json in [None, Some("{ not json")] {
+        let mut builder = FixtureProject::new().file(".prettierrc", "{}\n");
+        if let Some(text) = package_json {
+            builder = builder.file("package.json", text);
+        }
+        let fixture = builder.build();
+        let mut workbench = Workbench::new(TestHost::new().shared());
+        let project = workbench.open_project(fixture.root()).unwrap();
+        workbench.settle().unwrap();
+
+        assert_eq!(
+            view(&workbench, project).status.foreign_tools.as_deref(),
+            Some("Reduced mode: Prettier"),
+            "package.json {package_json:?}"
+        );
+    }
+}
