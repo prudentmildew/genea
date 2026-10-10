@@ -16,6 +16,7 @@ use crate::{
     new_project::{self, NewProjectCommand, NewProjectDialog, NewProjectFlow},
     project::Project,
     recent::RecentProjects,
+    session::OpenProjects,
     templates::{self, Creations, NewProject, ProjectCreation},
     toolchain::{self, ToolchainContext},
     update::{self, UpdateNotice},
@@ -57,6 +58,10 @@ pub(crate) struct Core {
     projects: BTreeMap<ProjectId, Project>,
     next_id: u64,
     recent: RecentProjects,
+    /// The open projects, kept for the next start (ticket #59).
+    open_list: OpenProjects,
+    /// `Workbench::quit` has saved everything: nothing more is saved.
+    quitting: bool,
     pub(crate) creations: Creations,
     /// The New Project dialog (ticket #61).
     pub(crate) new_project: NewProjectFlow,
@@ -97,13 +102,33 @@ impl Core {
         }
         let id = ProjectId(self.next_id);
         self.next_id += 1;
-        let project = self.projects.entry(id).or_insert(Project::new(id, root, &self.jobs));
+        let project = self.projects.entry(id).or_insert(Project::new(id, root, &self.jobs, self.host.support_dir()));
+        // Before anything starts: the terminal's tabs come from it.
+        project.restore_session(&self.jobs);
         project.start(&self.jobs, self.host.as_ref());
         project.start_toolchain(self.toolchain.clone(), &self.jobs);
         project.start_environment(self.host.clone(), &self.jobs);
         project.start_language(self.host.clone(), &self.jobs);
         project.start_terminal_when_ready(&self.host, &self.jobs);
+        self.open_list_changed();
         Ok(id)
+    }
+
+    /// Saves the open projects' list a short pause from now.
+    fn open_list_changed(&mut self) {
+        if !self.quitting {
+            let roots = self.projects.values().map(Project::root);
+            self.open_list.changed(roots, &self.jobs, self.host.clock());
+        }
+    }
+
+    /// Saves a project's session a short pause from now, if it changed.
+    fn save_session_later(&mut self, project: ProjectId) {
+        if !self.quitting
+            && let Some(project) = self.projects.get_mut(&project)
+        {
+            project.save_session_later(&self.jobs, self.host.clock());
+        }
     }
 
     /// [`Workbench::dispatch`], for Applies too.
@@ -114,12 +139,15 @@ impl Core {
             }
             return;
         }
+        let id = project;
         let Core { projects, jobs, host, .. } = self;
         let Some(project) = projects.get_mut(&project) else { return };
         project.dispatch(command, jobs, host.as_ref());
         // A command may restart the terminal's shell.
         project.start_terminal_when_ready(host, jobs);
-        for command in project.take_workbench_commands() {
+        let commands = project.take_workbench_commands();
+        self.save_session_later(id);
+        for command in commands {
             if command == Command::NewProject {
                 new_project::dispatch(self, NewProjectCommand::Open);
             }
@@ -140,6 +168,7 @@ impl Workbench {
         let creations = Creations::default();
         let (update_notice, alive) = (None, Arc::new(()));
         let new_project = NewProjectFlow::default();
+        let open_list = OpenProjects::new(host.support_dir());
         let core = Core {
             host,
             toolchain,
@@ -147,6 +176,8 @@ impl Workbench {
             projects: BTreeMap::new(),
             next_id: 0,
             recent,
+            open_list,
+            quitting: false,
             creations,
             new_project,
             update_notice,
@@ -171,9 +202,44 @@ impl Workbench {
         self.core.open_project(root.as_ref())
     }
 
-    /// Closes a project. Background results for it are dropped.
+    /// Closes a project. Background results for it are dropped. Its
+    /// session is saved, so it opens the same next time, and it is no
+    /// longer one of the projects [`restore_session`](Self::restore_session)
+    /// reopens.
     pub fn close_project(&mut self, project: ProjectId) {
-        self.core.projects.remove(&project);
+        let Some(mut closed) = self.core.projects.remove(&project) else { return };
+        if !self.core.quitting {
+            closed.save_session_soon(&self.core.jobs);
+        }
+        self.core.open_list_changed();
+    }
+
+    /// Reopens the projects that were open when Genea last quit (or
+    /// stopped), in the order they opened, each with its saved session
+    /// (as every [`open_project`](Self::open_project) does). Folders that
+    /// can't be opened any more are left out. The app calls this at start
+    /// when it isn't told to open a folder.
+    pub fn restore_session(&mut self) -> Vec<ProjectId> {
+        let roots = self.core.open_list.read();
+        roots.iter().filter_map(|root| self.core.open_project(root).ok()).collect()
+    }
+
+    /// Saves everything at once, on this thread, as Genea quits: every open
+    /// project's session, the open projects (so the next start reopens
+    /// them) and the recent projects. Background saves waiting on their
+    /// timers would never run. Nothing is saved after this, so closing the
+    /// windows while quitting doesn't change what the next start reopens.
+    pub fn quit(&mut self) {
+        let core = &mut self.core;
+        if core.quitting {
+            return;
+        }
+        for project in core.projects.values_mut() {
+            project.save_session_now();
+        }
+        core.open_list.write_now(core.projects.values().map(Project::root));
+        core.recent.save_now();
+        core.quitting = true;
     }
 
     /// The open projects, oldest first.
@@ -335,6 +401,10 @@ impl Workbench {
             // The terminal waits for the environment (ticket #38).
             project.start_terminal_when_ready(&self.core.host, &self.core.jobs);
             project.refresh_finder(&self.core.jobs);
+            // Session state follows (ticket #59).
+            if !self.core.quitting {
+                project.save_session_later(&self.core.jobs, self.core.host.clock());
+            }
         }
     }
 }

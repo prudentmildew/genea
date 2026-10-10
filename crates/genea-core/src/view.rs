@@ -83,6 +83,46 @@ pub struct ProjectView {
     /// A short message about the last command, shown until the next one:
     /// why Go to Definition found nothing, why a symbol can't be renamed.
     pub hint: Option<String>,
+    /// The editor's and the terminal's font size in points:
+    /// [`DEFAULT_FONT_SIZE`] until zoomed (`Command::ZoomIn`, ticket #59).
+    /// Kept per project.
+    pub font_size: f64,
+    /// Where the window was and how it was laid out when the session was
+    /// saved, then as the view reports it (`Command::SetWindowLayout`);
+    /// `None` for a project that has never had a window.
+    pub window_layout: Option<WindowLayout>,
+}
+
+/// The editor's and the terminal's font size at zoom 0: Menlo 13 pt
+/// (spec #19).
+pub const DEFAULT_FONT_SIZE: f64 = 13.0;
+/// The smallest and the largest font size zooming reaches.
+pub const MIN_FONT_SIZE: f64 = 8.0;
+pub const MAX_FONT_SIZE: f64 = 32.0;
+
+/// Where a project's window is and how its parts are sized (ticket #59):
+/// what only the view knows, reported with `Command::SetWindowLayout` and
+/// kept in the session, so the window reopens the same. Logical points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowLayout {
+    pub frame: WindowFrame,
+    /// The left column's width.
+    pub left_column_width: f64,
+    /// The terminal pane's width while it is on the right, and its height
+    /// while it is at the bottom: how the window is split between the
+    /// editor area and the terminal.
+    pub terminal_width: f64,
+    pub terminal_height: f64,
+}
+
+/// A window's position (its top-left corner, from the top-left of the main
+/// screen) and size, in logical points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowFrame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// The quick-fix popup: what the language servers offer at the caret.
