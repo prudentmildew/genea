@@ -6,11 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use genea_core::{
-    Command, InlineProblem, LanguageServerState, LanguageServerStatus, Notice, ProblemSource, ProcessSpec, ProjectId,
-    Severity, Workbench,
+    Command, InlineProblem, LanguageServerState, LanguageServerStatus, MAX_RESTARTS, Notice, ProblemSource,
+    ProcessSpec, ProjectId, RESTART_DELAY, Severity, Workbench,
 };
 use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// The Oxlint launcher in `node_modules` (a Node script).
 const OXLINT: &str = "node_modules/oxlint/bin/oxlint";
@@ -162,6 +162,123 @@ fn a_bun_runtime_pin_runs_oxlint_under_bun() {
     assert_eq!(spawned[0].args, [session.fixture.path(OXLINT).into_os_string(), "--lsp".into()]);
     assert_eq!(session.spawned("node"), [], "no Node in a Bun project");
     assert_eq!(session.oxlint_problems().len(), 1);
+}
+
+// --- Type-aware linting ---------------------------------------------------------
+
+/// The `typeAware` option Oxlint was started with, per start.
+fn type_aware(fake: &FakeLsp) -> Vec<Value> {
+    fake.received("initialize").iter().map(|params| params["initializationOptions"][0]["options"]["typeAware"].clone()).collect()
+}
+
+#[test]
+fn type_aware_linting_is_off_unless_the_oxlintrc_turns_it_on() {
+    let fake = FakeLsp::new();
+    let mut session = open(oxc_project().file(".oxlintrc.json", r#"{ "categories": {} }"#).build(), &fake, "node");
+    session.settle();
+
+    assert_eq!(type_aware(&fake), [json!(false)]);
+    let options = &fake.received("initialize")[0]["initializationOptions"][0];
+    assert_eq!(options["workspaceUri"], format!("file://{}", session.fixture.root().display()));
+}
+
+#[test]
+fn turning_type_aware_linting_on_in_the_oxlintrc_restarts_oxlint_with_it() {
+    let fake = FakeLsp::new();
+    let mut session = open(oxc_project().build(), &fake, "node");
+    session.settle();
+    assert_eq!(type_aware(&fake), [json!(false)]);
+
+    // JSONC, as Oxlint reads it.
+    session.fixture.write(".oxlintrc.json", "{\n  // types\n  \"options\": { \"typeAware\": true, },\n}\n");
+    session.settle();
+
+    assert_eq!(type_aware(&fake), [json!(false), json!(true)]);
+    assert_eq!(fake.wait_for("exit", 1).len(), 1, "the old one was shut down");
+}
+
+// --- Alongside tsgo, and the lifecycle -------------------------------------------
+
+#[test]
+fn oxlint_and_tsgo_diagnostics_show_side_by_side() {
+    const STORE: &str = "node_modules/.pnpm/typescript@7.0.2/node_modules";
+    let fixture = oxc_project()
+        .file(format!("{STORE}/typescript/package.json"), r#"{ "name": "typescript", "version": "7.0.2" }"#)
+        .file(format!("{STORE}/@typescript/typescript-darwin-arm64/lib/tsc"), "#!/bin/sh\n")
+        .file("src/main.ts", "let a: number = \"oops\";\ndebugger;\n")
+        .build();
+    std::os::unix::fs::symlink(fixture.path(format!("{STORE}/typescript")), fixture.path("node_modules/typescript"))
+        .unwrap();
+    let oxlint = FakeLsp::new().warning("debugger;", NO_DEBUGGER);
+    let tsgo = FakeLsp::new().error("\"oops\"", "Type 'string' is not assignable to type 'number'.");
+    let mut session = open(fixture, &oxlint, "node");
+    tsgo.install(&session.host, "tsc");
+    session.settle();
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+
+    let problems: Vec<(ProblemSource, String)> =
+        session.view().problems.into_iter().map(|p| (p.source, p.location)).collect();
+    assert_eq!(problems, [(ProblemSource::TypeScript, "1:17".into()), (ProblemSource::Oxlint, "2:1".into())]);
+    assert_eq!(session.view().editor.unwrap().problems.len(), 2);
+    let names: Vec<String> = session.view().status.language_servers.into_iter().map(|s| s.name).collect();
+    assert_eq!(names, ["TypeScript", "Oxlint"]);
+
+    // Each server's crash and restart is its own.
+    oxlint.set_crash_on(Some("textDocument/diagnostic"));
+    session.dispatch(Command::InsertText(" ".into()));
+    session.settle();
+    let sources: Vec<ProblemSource> = session.view().problems.into_iter().map(|p| p.source).collect();
+    assert_eq!(sources, [ProblemSource::TypeScript]);
+    assert_eq!(session.oxlint_status().unwrap().state, LanguageServerState::Restarting);
+    assert_eq!(tsgo.starts(), 1);
+
+    oxlint.set_crash_on(None);
+    session.host.clock().advance(RESTART_DELAY);
+    session.settle();
+    assert_eq!(oxlint.starts(), 2);
+    assert_eq!(session.oxlint_problems().len(), 1);
+}
+
+#[test]
+fn a_crashing_oxlint_is_restarted_three_times_then_marked_failed_until_restarted() {
+    let fixture = oxc_project().file("src/main.ts", "debugger;\n").build();
+    let fake = FakeLsp::new().warning("debugger;", NO_DEBUGGER).crash_on("textDocument/diagnostic");
+    let mut session = open(fixture, &fake, "node");
+    session.settle();
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+
+    for restart in 1..=MAX_RESTARTS {
+        session.host.clock().advance(RESTART_DELAY);
+        session.settle();
+        assert_eq!(fake.starts(), 1 + restart, "restart {restart}");
+    }
+    assert_eq!(
+        session.oxlint_status(),
+        Some(LanguageServerStatus { name: "Oxlint".into(), state: LanguageServerState::Failed, label: "Oxlint stopped".into() })
+    );
+    let notice = session.view().notices.into_iter().find(|n| n.message.contains("Oxlint language server")).unwrap();
+
+    fake.set_crash_on(None);
+    session.dispatch(notice.action.unwrap().command);
+    session.settle();
+    assert_eq!(fake.starts(), 2 + MAX_RESTARTS);
+    assert_eq!(session.oxlint_status().unwrap().state, LanguageServerState::Ready);
+    assert_eq!(session.oxlint_problems().len(), 1);
+}
+
+#[test]
+fn closing_the_project_shuts_oxlint_down() {
+    let fake = FakeLsp::new();
+    let mut session = open(oxc_project().build(), &fake, "node");
+    session.settle();
+
+    session.workbench.close_project(session.project);
+    session.settle();
+
+    assert_eq!(fake.wait_for("shutdown", 1).len(), 1);
+    assert_eq!(fake.wait_for("exit", 1).len(), 1);
 }
 
 // --- Without Oxlint and Oxfmt ---------------------------------------------------
