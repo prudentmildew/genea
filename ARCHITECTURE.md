@@ -635,9 +635,10 @@ message types. `project/language.rs` is a project's side of it.
   the background against the project watcher's batches, each path sent as
   created, changed or deleted (`FileChanges::created`).
 - **Code actions** (ticket #45; `lsp/actions.rs`, `project/quick_fixes.rs`):
-  `Command::ShowQuickFixes` (⌥⏎) asks every ready server for `quickfix`
-  actions at the primary selection, sending the diagnostics that server
-  last reported there (or else on those lines: tsgo fixes by diagnostic
+  `Command::ShowQuickFixes` (⌥⏎) asks tsgo, when ready, for `quickfix`
+  actions at the primary selection (`Project::language_servers_mut`;
+  Oxlint's code actions are only fix on save's), sending the diagnostics
+  that server last reported there (or else on those lines: tsgo fixes by diagnostic
   code, not by range). `ProjectView::quick_fixes` shows once one answers;
   any command but `MoveQuickFixSelection`, `ApplyQuickFix` and scrolling
   closes it and drops later answers. `Command::OrganizeImports` (⌃⌥O) asks
