@@ -51,6 +51,7 @@ use, and nothing else:
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
 | Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`, then the showing tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `NewTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | Shell tabs, plus a tab per package-manager command (`src/terminal/`, below). |
 | Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
+| Scripts | `ProjectView::scripts` (`PackageScripts`, `Script`), `Command::RunScript`, `StopTerminalTab`, `RerunTerminalTab`, `TerminalView::url`, `StatusBar::script_links`, `SCRIPT_STOP_TIMEOUT` | The workspace model and the script runner (below). |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
@@ -285,7 +286,9 @@ user's. `Downloads::fetch_with_length` also reports the response's
   `TestHost::ptys()`) records every terminal started, each a `FakePty` the
   test plays by hand: `output(bytes)` returns once Genea has read them (so
   `settle()` after it shows them on the grid), `wait_for_input(text)` sees
-  what was typed, `exit(code)`, `wait_for_hang_up()`, `fail(kind)` for a
+  what was typed, `exit(code)` (which returns once Genea has seen the end),
+`wait_for_hang_up()`, `wait_for_interrupt()` and `wait_for_kill()` (Stop),
+`fail(kind)` for a
   shell that can't start; `ScriptedProcesses::script_shell("zsh", vars)` plays
   a login shell with a real `/bin/sh` whose environment is exactly `vars`;
   `TestHost::set_launch_environment` sets the launch environment (by default
@@ -391,6 +394,27 @@ showing tab is `Terminal::tab() -> Option`).
   ended one runs again in its tab. Dispatched before `package.json` is
   read (the new-project flow), it waits for it. #40's scripts can run the
   same way, with their own arguments and folder.
+
+- **Scripts** (ticket #40): `src/workspace.rs` is the workspace model.
+  The packages are the root package plus the folders matched by
+  `pnpm-workspace.yaml`'s `packages` (read with the YAML grammar) or, when
+  the root pins Bun, the root `workspaces` field (`globset`, `!` excludes,
+  never inside `node_modules` or `.git`), each with its `package.json`
+  scripts in file order; root first, then by path. They are read in a job
+  at open and again when the watcher sees `pnpm-workspace.yaml`, any
+  `package.json` or a package's folder change. `RunScript` runs
+  `<package manager> run <script>` in the package's folder in a tab named
+  `<package>: <script>` (`Launch::Script`, `Terminal::run_script`; reused
+  like the install's tab). `StopTerminalTab` sends SIGINT
+  (`PtyControl::interrupt`) and, on the host clock,
+  `PtyControl::kill` after `SCRIPT_STOP_TIMEOUT`; the tab then shows
+  `TerminalStatus::Stopped`. `RerunTerminalTab` restarts a command tab in
+  place (the old session is dropped, so hung up). A script tab's reader
+  also feeds `urls.rs`, its own `vte` parser that keeps only the printed
+  text a line at a time: the first `http(s)://` URL on `localhost`,
+  `127.0.0.1` or `[::1]` becomes the tab's link (`TerminalView::url`,
+  `StatusBar::script_links`) until it exits. Stop and Re-run do nothing to
+  shell tabs.
 
 - Links (`links.rs`): `path:line[:col]` references (the last path part
   has an extension; `file://` paths too; not after another `:`, so URLs
