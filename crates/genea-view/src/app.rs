@@ -31,7 +31,7 @@ use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    AboutWindow, FinderKind, LeftView, StructuralAction, about, dialogs, links,
+    AboutWindow, FinderKind, LeftView, StructuralAction, about, dialogs, links, navigation,
     keys::{self, Modifiers},
     new_project::{NewProjectController, TEMPLATES},
     pasteboard::Pasteboard,
@@ -678,6 +678,31 @@ fn wire(controller: &WindowController) {
             controller.open_search_result(&mut app.workbench, index);
         });
     });
+    // Code navigation and rename (ticket #44). Like the editing items, the
+    // menu items act on the editor, so with the terminal focused they do
+    // nothing.
+    window.on_navigate(move |action| {
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            if !controller.terminal_focused() {
+                controller.dispatch(&mut app.workbench, navigation::command(action));
+            }
+        });
+    });
+    window.on_usage_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| {
+            let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+            if let Some(command) = controller.navigation.open(index) {
+                controller.dispatch(&mut app.workbench, command);
+            }
+        });
+    });
+    window.on_rename_accepted(move |name| {
+        let name = name.to_string();
+        with_app(move |app| app.dispatch(key, Command::Rename(name)));
+    });
+    window.on_rename_cancelled(menu(Command::CancelRename));
     window.on_split_right(menu(Command::SplitRight));
     window.on_close_split(menu(Command::CloseSplit));
     window.on_reload_environment(menu(Command::ReloadEnvironment));
@@ -741,6 +766,7 @@ fn left_column_view(view: LeftView) -> LeftColumnView {
         LeftView::Changes => LeftColumnView::Changes,
         LeftView::Search => LeftColumnView::Search,
         LeftView::Scripts => LeftColumnView::Scripts,
+        LeftView::Usages => LeftColumnView::Usages,
     }
 }
 

@@ -186,7 +186,7 @@ impl Drop for Search {
 
 /// The order of the project's tree (the Files view): folder by folder,
 /// folders before files, names case-insensitively.
-fn tree_order(a: &Path, b: &Path) -> std::cmp::Ordering {
+pub(crate) fn tree_order(a: &Path, b: &Path) -> std::cmp::Ordering {
     let (mut a, mut b) = (a.components().peekable(), b.components().peekable());
     loop {
         let (Some(x), Some(y)) = (a.next(), b.next()) else { return a.peek().cmp(&b.peek()) };
@@ -320,7 +320,7 @@ impl Sink for FileSink<'_> {
 }
 
 /// A result for the match at `start..end` (bytes) in a line.
-fn search_match(line: &[u8], line_index: usize, start: usize, end: usize) -> SearchMatch {
+pub(crate) fn search_match(line: &[u8], line_index: usize, start: usize, end: usize) -> SearchMatch {
     let before = String::from_utf8_lossy(&line[..start]);
     let matched = String::from_utf8_lossy(&line[start..end]);
     let after = String::from_utf8_lossy(&line[end..]);

@@ -20,7 +20,8 @@
 //! occurrence of each scripted marker in the document, answers
 //! `textDocument/documentSymbol` and `workspace/symbol` from the
 //! declarations in the files (`fake_symbols`), answers `shutdown`,
-//! and exits on `exit` or when its input closes.
+//! and exits on `exit` or when its input closes. It also answers code
+//! navigation and rename, knowing identifiers by their text (`navigation`).
 
 use std::{
     collections::HashMap,
@@ -38,6 +39,9 @@ use crate::{FakeProcess, TestHost, fake_symbols};
 
 mod code_actions;
 pub use code_actions::ScriptedAction;
+
+mod navigation;
+pub(crate) use navigation::uri;
 
 /// How long [`FakeLsp::wait_for`] waits before failing the test. Real
 /// time: it only guards against hangs.
@@ -311,8 +315,8 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
     let mut out = Output { writer: output, next_id: 0, requests: HashMap::new() };
     let mut documents: HashMap<String, String> = HashMap::new();
     let mut utf8 = false;
-    // For symbols (ticket #47): the workspace root, and whether the client
-    // takes `DocumentSymbol` hierarchies.
+    // The workspace folder, from `initialize`; for symbols (ticket #47),
+    // whether the client takes `DocumentSymbol` hierarchies.
     let mut root = None;
     let mut hierarchical = false;
     loop {
@@ -345,11 +349,17 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             }
         };
+        let workspace = navigation::Workspace { root: root.as_deref(), documents: &documents, utf8 };
+        if let Some(result) = navigation::answer(&workspace, &method, &params) {
+            answer(&mut out, result);
+            continue;
+        }
         match method.as_str() {
             "initialize" => {
                 let offered = params["capabilities"]["general"]["positionEncodings"].as_array();
                 utf8 = offered.is_some_and(|kinds| kinds.iter().any(|k| k == "utf-8"));
-                root = params["rootUri"].as_str().and_then(fake_symbols::path);
+                let folder = params["workspaceFolders"][0]["uri"].as_str().or(params["rootUri"].as_str());
+                root = folder.and_then(navigation::path);
                 hierarchical = params["capabilities"]["textDocument"]["documentSymbol"]["hierarchicalDocumentSymbolSupport"]
                     .as_bool()
                     .unwrap_or(false);
@@ -359,6 +369,11 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                     "diagnosticProvider": { "identifier": "fake", "interFileDependencies": true, "workspaceDiagnostics": false },
                     "documentSymbolProvider": true,
                     "workspaceSymbolProvider": true,
+                    "definitionProvider": true,
+                    "typeDefinitionProvider": true,
+                    "implementationProvider": true,
+                    "referencesProvider": true,
+                    "renameProvider": { "prepareProvider": true },
                 });
                 answer(&mut out, json!({ "capabilities": capabilities, "serverInfo": { "name": "fake-lsp", "version": "7.0.0-fake" } }));
                 for i in 0..script.flood {

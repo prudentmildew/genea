@@ -166,6 +166,21 @@ impl Project {
         self.unpark();
     }
 
+    /// Shows an editor in a new tab at the end of the focused pane, behind
+    /// the focused tab (a rename's edits to a file that wasn't open). It
+    /// gets the focus only if the pane has no other tab.
+    pub(super) fn open_tab_behind(&mut self, editor: Editor) {
+        if self.open_editor(editor.path()).is_some() {
+            return;
+        }
+        let pane = &mut self.panes.sides[self.panes.focused];
+        pane.tabs.push(Tab::new(editor.path().to_owned(), Cursor::default()));
+        self.panes.parked.push(editor);
+        if self.editor.is_none() {
+            self.unpark();
+        }
+    }
+
     /// A save of `path` finished: tabs waiting on it close, unless it was
     /// edited again meanwhile.
     pub(super) fn saved(&mut self, path: &Path) {

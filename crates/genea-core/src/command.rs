@@ -384,6 +384,35 @@ pub enum Command {
     /// the language server does it (`source.organizeImports`), as one undo
     /// step. Only ever on this command: saving never organizes imports.
     OrganizeImports,
+
+    // Code navigation and rename (ticket #44), at the focused file's primary
+    // caret, answered by the language server. Places open in tabs with
+    // `OpenFileAt`. Without an answer to give (no language server, nothing
+    // found), `ProjectView::hint` says why until the next command.
+    /// ⌘B: opens the definition of the symbol at the caret. Several
+    /// definitions are listed in the Usages view instead.
+    GoToDefinition,
+    /// ⇧⌘B: opens the definition of the type of the symbol at the caret,
+    /// like `GoToDefinition`.
+    GoToTypeDefinition,
+    /// ⌥⌘B: opens the implementation of the interface, class or method at
+    /// the caret, or lists them in the Usages view if there are several.
+    GoToImplementation,
+    /// ⌥F7: lists every usage of the symbol at the caret in the Usages view
+    /// (`ProjectView::usages`), grouped by file, and shows it. A click on a
+    /// usage opens it with `OpenFileAt`.
+    FindUsages,
+    /// ⇧F6: asks for the symbol at the caret's new name
+    /// (`ProjectView::rename`), if it can be renamed.
+    StartRename,
+    /// Renames the symbol the rename prompt is for, everywhere, and closes
+    /// the prompt: every reference is edited, in open files as one undo step
+    /// each, and in files that weren't open by opening them in tabs behind
+    /// the focused one, unsaved. Saving them is Genea's own write, so none of
+    /// it is an external change.
+    Rename(String),
+    /// Closes the rename prompt without renaming.
+    CancelRename,
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.

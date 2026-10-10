@@ -74,6 +74,15 @@ pub struct ProjectView {
     /// The script runner (ticket #40): every package's `package.json`
     /// scripts, the root package first, then the others in path order.
     pub scripts: Vec<PackageScripts>,
+    /// The Usages view (ticket #44): the last Find Usages, or the places Go
+    /// to Definition, Type Definition or Implementation found when there
+    /// were several. `None` until there is one.
+    pub usages: Option<UsagesView>,
+    /// The rename prompt (⇧F6), while it is open (ticket #44).
+    pub rename: Option<RenamePrompt>,
+    /// A short message about the last command, shown until the next one:
+    /// why Go to Definition found nothing, why a symbol can't be renamed.
+    pub hint: Option<String>,
 }
 
 /// The quick-fix popup: what the language servers offer at the caret.
@@ -132,6 +141,27 @@ pub struct Script {
     pub name: String,
     /// What it runs.
     pub command: String,
+}
+
+/// The Usages view: places in the project's files, grouped by file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsagesView {
+    /// What it lists: "Usages of greet", "Implementations of Shape".
+    pub title: String,
+    /// Files in the order of the project's tree, places top to bottom.
+    /// Clicking a place opens it with `Command::OpenFileAt`.
+    pub files: Vec<SearchFile>,
+    /// Places in `files`.
+    pub count: usize,
+    /// Still waiting for the language server.
+    pub finding: bool,
+}
+
+/// The rename prompt: the symbol's name, to edit and confirm with
+/// `Command::Rename` (or cancel with `Command::CancelRename`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenamePrompt {
+    pub name: String,
 }
 
 /// The fuzzy finder overlay: a query and the results matching it.
@@ -312,6 +342,8 @@ pub enum LeftColumnView {
     Changes,
     /// The script runner (ticket #40): `ProjectView::scripts`.
     Scripts,
+    /// The usages Find Usages found (⌥F7 shows it, ticket #44).
+    Usages,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem

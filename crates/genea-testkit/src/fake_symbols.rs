@@ -24,7 +24,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::fake_lsp::position;
+use crate::fake_lsp::{position, uri};
 
 /// LSP's `SymbolKind`s the fake reports.
 const NAMESPACE: u32 = 3;
@@ -284,39 +284,4 @@ fn source_files(folder: &Path, paths: &mut Vec<PathBuf>) {
             paths.push(path);
         }
     }
-}
-
-/// A `file:` URI, percent-encoding everything but unreserved characters
-/// and `/`.
-fn uri(path: &Path) -> String {
-    let mut uri = String::from("file://");
-    for byte in path.as_os_str().as_encoded_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => uri.push(*byte as char),
-            _ => uri.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    uri
-}
-
-/// The path of a `file:` URI.
-pub(crate) fn path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    let bytes = rest.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match rest.get(i + 1..i + 3).filter(|_| bytes[i] == b'%').and_then(|hex| u8::from_str_radix(hex, 16).ok()) {
-            Some(byte) => {
-                decoded.push(byte);
-                i += 3;
-            }
-            None => {
-                decoded.push(bytes[i]);
-                i += 1;
-            }
-        }
-    }
-    use std::os::unix::ffi::OsStringExt;
-    Some(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
 }

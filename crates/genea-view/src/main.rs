@@ -15,6 +15,7 @@
 //! - `new_project`: the New Project dialog's sync (its own window);
 //! - `surface`: the editor surface's ring of line slots;
 //! - `terminal`: the terminal pane's rows, keys and mouse;
+//! - `navigation`: the Usages view and the rename prompt (ticket #44);
 //! - `fonts`: registers the emoji font the first time an emoji is shown;
 //! - `blink`: keeps the hidden TextInput from repainting on a timer;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
@@ -32,6 +33,7 @@ mod journal;
 mod keys;
 mod links;
 mod new_project;
+mod navigation;
 mod pasteboard;
 mod remote;
 mod surface;

@@ -1,0 +1,158 @@
+// Code navigation and rename (ticket #44): the Usages view in the left
+// column, and the rename prompt. Rows are set from Rust (src/navigation.rs)
+// out of the core's ProjectView: a file's places follow it, as in the Search
+// view. Clicking a place opens its file there; clicking a file opens it.
+
+import { ListView, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { SearchRow } from "search-view.slint";
+
+// The navigation menu items and their shortcuts.
+export enum NavigationAction { definition, type-definition, implementation, usages, rename }
+
+export component UsagesView inherits Rectangle {
+    // "Usages of greet", "Implementations of Shape".
+    in property <string> title;
+    // "5 usages in 2 files", "Finding usages…".
+    in property <string> status;
+    in property <[SearchRow]> rows;
+
+    callback clicked(int);
+
+    background: Theme.chrome-background;
+
+    VerticalLayout {
+        padding: 6px;
+        spacing: 4px;
+
+        Text {
+            text: root.title;
+            color: Theme.chrome-foreground;
+            font-weight: 600;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.status;
+            color: Theme.chrome-muted;
+            overflow: elide;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+
+            for row[index] in root.rows: Rectangle {
+                height: 22px;
+                background: touch.has-hover ? Theme.chrome-highlight : transparent;
+
+                if row.file: HorizontalLayout {
+                    padding-left: 4px;
+                    padding-right: 6px;
+
+                    Text {
+                        text: row.label;
+                        color: Theme.chrome-foreground;
+                        font-weight: 600;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if !row.file: HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 6px;
+                    spacing: 6px;
+
+                    Text {
+                        text: row.label;
+                        color: Theme.chrome-muted;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: row.before;
+                            color: Theme.chrome-foreground;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            background: Theme.selection;
+                            border-radius: 2px;
+                            width: matched-text.preferred-width;
+
+                            matched-text := Text {
+                                text: row.matched;
+                                color: Theme.chrome-foreground;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            horizontal-stretch: 1;
+                            text: row.after;
+                            color: Theme.chrome-foreground;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                touch := TouchArea {
+                    clicked => {
+                        root.clicked(index);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ⇧F6: the symbol's new name. Return renames, Esc cancels.
+export component RenamePrompt inherits Rectangle {
+    in property <string> name;
+
+    callback accepted(string);
+    callback cancelled();
+
+    public function focus-name() {
+        field.focus();
+        field.select-all();
+    }
+
+    height: layout.preferred-height;
+    background: Theme.chrome-background;
+    border-color: Theme.chrome-border;
+    border-width: 1px;
+    border-radius: 6px;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #00000040;
+
+    layout := VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: "Rename " + root.name + " and its usages to:";
+            color: Theme.chrome-foreground;
+            overflow: elide;
+        }
+
+        field := LineEdit {
+            text: root.name;
+            accepted(text) => {
+                root.accepted(text);
+            }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.cancelled();
+                    return accept;
+                }
+                reject
+            }
+        }
+    }
+}

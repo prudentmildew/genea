@@ -54,6 +54,11 @@ pub enum Action {
     SearchEverywhere,
     FileStructure,
     GoToSymbol,
+    GoToDefinition,
+    GoToTypeDefinition,
+    GoToImplementation,
+    FindUsages,
+    Rename,
     ShowFiles,
     ShowSearch,
     ShowChanges,
@@ -71,7 +76,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 50] = [
+    pub const ALL: [Action; 55] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -110,6 +115,11 @@ impl Action {
         Action::SearchEverywhere,
         Action::FileStructure,
         Action::GoToSymbol,
+        Action::GoToDefinition,
+        Action::GoToTypeDefinition,
+        Action::GoToImplementation,
+        Action::FindUsages,
+        Action::Rename,
         Action::ShowFiles,
         Action::ShowSearch,
         Action::ShowChanges,
@@ -177,6 +187,11 @@ impl Action {
             Action::CloseSplit => "Close Split",
             Action::SelectNextTab => "Select Next Tab",
             Action::SelectPreviousTab => "Select Previous Tab",
+            Action::GoToDefinition => "Go to Definition",
+            Action::GoToTypeDefinition => "Go to Type Definition",
+            Action::GoToImplementation => "Go to Implementation",
+            Action::FindUsages => "Find Usages",
+            Action::Rename => "Rename…",
         }
     }
 
@@ -218,6 +233,11 @@ impl Action {
             Action::NewTerminalTab => "⌘T",
             Action::SelectNextTab => "⇧⌘]",
             Action::SelectPreviousTab => "⇧⌘[",
+            Action::GoToDefinition => "⌘B",
+            Action::GoToTypeDefinition => "⇧⌘B",
+            Action::GoToImplementation => "⌥⌘B",
+            Action::FindUsages => "⌥F7",
+            Action::Rename => "⇧F6",
             Action::NewProject
             | Action::OpenConfig
             | Action::ReloadEnvironment
@@ -264,6 +284,11 @@ impl Action {
                 | Action::CollapseFold
                 | Action::ExpandAllFolds
                 | Action::CollapseAllFolds
+                | Action::GoToDefinition
+                | Action::GoToTypeDefinition
+                | Action::GoToImplementation
+                | Action::FindUsages
+                | Action::Rename
         )
     }
 
@@ -317,6 +342,11 @@ impl Action {
             Action::NewTerminalTab => Command::NewTerminalTab,
             Action::SplitRight => Command::SplitRight,
             Action::CloseSplit => Command::CloseSplit,
+            Action::GoToDefinition => Command::GoToDefinition,
+            Action::GoToTypeDefinition => Command::GoToTypeDefinition,
+            Action::GoToImplementation => Command::GoToImplementation,
+            Action::FindUsages => Command::FindUsages,
+            Action::Rename => Command::StartRename,
             Action::CloseTab | Action::MoveTabToOtherSide | Action::SelectNextTab | Action::SelectPreviousTab => {
                 return None;
             }

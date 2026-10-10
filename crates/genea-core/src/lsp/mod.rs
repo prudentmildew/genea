@@ -32,6 +32,7 @@
 pub(crate) mod actions;
 mod connection;
 pub(crate) mod symbols;
+pub(crate) mod navigation;
 pub(crate) mod text;
 pub(crate) mod typescript;
 pub(crate) mod watch;
@@ -114,6 +115,8 @@ pub(crate) enum Output {
     /// The answer to [`code_actions`](LanguageServer::code_actions) with
     /// this ticket: the actions Genea can apply (ticket #45).
     CodeActions { ticket: u64, fixes: Vec<actions::CodeActionFix> },
+    /// A navigation or rename answer (ticket #44).
+    Navigation(navigation::Answer),
 }
 
 /// A request waiting for its answer.
@@ -127,6 +130,8 @@ pub(crate) enum Pending {
     Symbols { document: Option<PathBuf> },
     /// `textDocument/codeAction`, with the asker's ticket (ticket #45).
     CodeActions(u64),
+    /// Go to definition, find usages or rename (ticket #44).
+    Navigation(navigation::Ask),
 }
 
 /// A timer of a server's, on the host clock.
@@ -410,6 +415,7 @@ impl LanguageServer {
                     vec![Output::Symbols { id, symbols }]
                 }
                 Some(Pending::CodeActions(ticket)) => self.code_actions_answered(ticket, result),
+                Some(Pending::Navigation(ask)) => navigation::answered(ask, result),
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
