@@ -137,3 +137,21 @@ fn project_symbols_leave_out_node_modules_and_what_the_config_excludes() {
     session.dispatch(Command::SetFinderQuery("areaOf".into()));
     assert_eq!(session.results(), ["areaOf  src/area.ts"]);
 }
+
+#[test]
+fn search_everywhere_includes_symbols_and_choosing_one_opens_it() {
+    let mut session = open(typescript_project().file("src/shapes.ts", SHAPES).file("src/circle.css", ""));
+
+    session.dispatch(Command::OpenFinder(FinderMode::Everywhere));
+    session.dispatch(Command::SetFinderQuery("circle".into()));
+    // Whole names beat part of a file name.
+    assert_eq!(session.results(), ["Circle  src/shapes.ts", "circle  src/shapes.ts", "circle.css  src"]);
+
+    session.dispatch(Command::SetFinderQuery("restart".into()));
+    assert_eq!(session.results(), ["Restart Language Server"]);
+
+    session.dispatch(Command::SetFinderQuery("circle".into()));
+    session.dispatch(Command::MoveFinderSelection(1));
+    session.dispatch(Command::AcceptFinder);
+    assert_eq!(session.caret(), ("src/shapes.ts".into(), Caret { line: 11, column: 16 }));
+}
