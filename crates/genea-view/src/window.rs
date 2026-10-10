@@ -14,8 +14,9 @@ use std::{
 };
 
 use genea_core::{
-    ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, DiffAgainst, InlineDiffView, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
+    ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
     PackageScripts, ScriptLink,
+    DiffAgainst, InlineDiffView,
     LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
     QuickFixesView, SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme,
     ToolchainOption, Workbench,
@@ -26,8 +27,9 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    ChangeMark, ChangeRow, DiffBar, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, QuickFixPopup, ScriptRow,
+    ChangeMark, ChangeRow, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, QuickFixPopup, ScriptRow,
     SearchRow, TabEntry, Theme, app::with_app,
+    DiffBar,
     dialogs, fonts,
     keys::{Modifiers, PopupKey},
     links,

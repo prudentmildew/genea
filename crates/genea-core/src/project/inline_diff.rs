@@ -68,7 +68,8 @@ impl Project {
         let Some(baseline) = self.review.baseline_reader(&path) else {
             return self.open_file(path, None, jobs);
         };
-        let shown = Shown { against: DiffAgainst::ReviewBaseline, baseline: baseline.clone(), reading: None, diff: BaseDiff::default() };
+        let against = DiffAgainst::ReviewBaseline;
+        let shown = Shown { against, baseline: baseline.clone(), reading: None, diff: BaseDiff::default() };
         self.inline_diffs.files.insert(path.clone(), shown);
         self.read_baseline(path.clone(), baseline, jobs);
         let deleted = self.review.listed_change(&path).is_some_and(|c| c.kind == ChangeKind::Deleted);
@@ -119,8 +120,14 @@ impl Project {
     /// if it is behind the buffer and none is running.
     pub(super) fn diff_inline(&mut self, path: &Path, jobs: &Jobs) {
         let Some(editor) = self.open_editor(path) else { return };
-        let (version, text) = (editor.version(), editor.text().clone());
-        let Some(job) = self.inline_diffs.files.get_mut(path).and_then(|shown| shown.diff.start(version, text)) else {
+        let (version, text, laid_out) = (editor.version(), editor.text().clone(), editor.has_inline_diff());
+        let Some(shown) = self.inline_diffs.files.get_mut(path) else { return };
+        let Some(job) = shown.diff.start(version, text) else {
+            // An editor that came after the last result (a reopened file)
+            // takes it.
+            if !laid_out {
+                self.lay_out_inline_diff(path);
+            }
             return;
         };
         let (id, path) = (self.id, path.to_owned());

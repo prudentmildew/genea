@@ -134,7 +134,10 @@ fn removed_lines_inside_a_collapsed_fold_are_hidden_with_it() {
     workbench.settle().unwrap();
     workbench.dispatch(project, Command::OpenChange("main.ts".into()));
     workbench.settle().unwrap();
-    assert_eq!(rows(&editor(&workbench, project)), [" function f() {", "-  a();", "   b();", " }", "-end();", "+finish();", " "]);
+    assert_eq!(
+        rows(&editor(&workbench, project)),
+        [" function f() {", "-  a();", "   b();", " }", "-end();", "+finish();", " "]
+    );
 
     workbench.dispatch(project, Command::CollapseFold);
     workbench.settle().unwrap();
@@ -234,7 +237,8 @@ fn close_inline_diff_shows_the_file_plainly_and_open_change_shows_it_again() {
     workbench.settle().unwrap();
     let view = editor(&workbench, project);
     assert_eq!(view.inline_diff, None);
-    assert_eq!(view.lines.iter().map(|l| (l.row, l.text.as_str())).collect::<Vec<_>>(), [(0, "one"), (1, "2"), (2, "")]);
+    let lines: Vec<_> = view.lines.iter().map(|l| (l.row, l.text.as_str())).collect();
+    assert_eq!(lines, [(0, "one"), (1, "2"), (2, "")]);
     // Still listed: closing the diff isn't a review.
     assert_eq!(workbench.project(project).unwrap().changes.len(), 1);
 

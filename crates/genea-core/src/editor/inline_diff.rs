@@ -60,6 +60,10 @@ impl Editor {
         self.missing
     }
 
+    pub(crate) fn has_inline_diff(&self) -> bool {
+        self.inline_diff.is_some()
+    }
+
     /// Shows `diff` inline, or the file plainly for `None`.
     pub(crate) fn set_inline_diff(&mut self, diff: Option<InlineDiff>, viewport_rows: f64) {
         self.inline_diff = diff;
@@ -125,7 +129,11 @@ impl Editor {
     }
 
     /// The diff on the shown rows, for the view.
-    pub(super) fn inline_diff_view(&self, lines: &[VisibleLine], shown: &[(usize, RowContent)]) -> Option<InlineDiffView> {
+    pub(super) fn inline_diff_view(
+        &self,
+        lines: &[VisibleLine],
+        shown: &[(usize, RowContent)],
+    ) -> Option<InlineDiffView> {
         let diff = self.inline_diff.as_ref()?;
         let added = lines.iter().map(|line| line.index).filter(|&index| is_added(&diff.hunks, index)).collect();
         let removed = shown

@@ -116,6 +116,29 @@ use, and nothing else:
   then knows the content as Genea's own (a file without a pending change
   moves its baseline; one with a pending change stays listed), ignores what
   it read mid-write, and checks the file again when the guard drops.
+- **The inline diff** (`src/project/inline_diff.rs`,
+  `src/editor/inline_diff.rs`, ticket #55): `Command::OpenChange(path)`
+  opens a file listed in Changes (a deleted one as an empty, read-only,
+  not-loaded `Editor::missing`, so no language work starts for it) and
+  reads its baseline blob in the background
+  (`Review::baseline_reader`, `review/diff_base.rs`). The file is then
+  diffed against it with the same machinery as the git gutter
+  (`src/diff.rs`: `BaseDiff` holds a base and its hunks, `DiffJob` runs
+  `imara-diff` off the main thread, one per file at a time, again whenever
+  the buffer's version moves on; `Project::diff_file` drives both), and
+  each result goes to the editor with `Editor::set_inline_diff`. The editor
+  lays the hunks out: a hunk's removed lines take rows of their own just
+  above `hunk.lines.start` (hidden with it under a fold), so scrolling,
+  `reveal_caret` and `VisibleLine::row` count them (`display_row_of`,
+  `display_row_count`, `display_rows`), while carets, Up/Down and
+  commands stay on the file's lines and fold rows (`row_of`). View state:
+  `EditorView::inline_diff` (`InlineDiffView`: `added` line indexes,
+  `removed` rows with their text, and the file's `ChangeItem` for Keep and
+  Revert, which are the ordinary `KeepChange`/`RevertChange`). The diff
+  closes when the file leaves Changes (`review_changes_changed`, after
+  every review op; a moved baseline is read again), on `CloseInlineDiff`,
+  or when its last tab closes; a deleted file's tab closes with it. It is
+  built to take other bases: #57 adds a `DiffAgainst` for HEAD.
 - **The file index** (`src/files.rs`, ticket #30): every file and folder
   outside `node_modules` and `.git`, read once in the background at open and
   then kept up to date from the watcher's batches (a changed path re-lists
@@ -134,9 +157,9 @@ use, and nothing else:
   is read at open and again when the watcher sees `.git/HEAD`, `refs/` or
   `packed-refs` change (or `.git` appear), with every open file's text at
   HEAD (its *base*); a newly opened file reads its own. Gutter markers
-  (`EditorView::gutter`) come from a line diff (`imara-diff`) of the base
-  and a rope snapshot, one job per file at a time, restarted when it lands
-  if the buffer's version moved on, like the syntax parse.
+  (`EditorView::gutter`) come from a line diff (`src/diff.rs`, `imara-diff`)
+  of the base and a rope snapshot, one job per file at a time, restarted
+  when it lands if the buffer's version moved on, like the syntax parse.
   `Command::ShowHunk`/`RollbackHunk` act on the hunks only while they are
   up to date with the buffer; Rollback is an ordinary undoable edit
   (`Editor::replace_lines`). A repository whose git folder is outside the
@@ -663,7 +686,12 @@ chrome, native menus via muda (Slint's `MenuBar`).
   then git markers, then fold markers at its right edge. A press on a fold
   marker is `ToggleFold`; elsewhere in those two columns, on a line with a
   git marker, it is `ShowHunk`. Git markers and the change's popover are
-  placed by row, so lines hidden in a fold have none.
+  placed by row, so lines hidden in a fold have none. An inline diff's
+  removed lines (#55) fill slots of their own (`Line.diff` 2, no number,
+  `index` the line below, which a click goes to); `row_of_line` and the
+  row estimates skip them (`file_lines`). Added lines get `Line.diff` 1
+  and a background. The pane's diff bar (`DiffBar`) offers Keep, Revert
+  and closing the diff.
 - `src/fonts.rs`: registers Apple Color Emoji and Hiragino Sans GB (CJK),
   memory-mapped, the first time visible text has an emoji or CJK character
   that Menlo and Apple Symbols lack. It is
