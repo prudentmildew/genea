@@ -113,13 +113,17 @@ use, and nothing else:
   deleted; `diffable` false for binary or large files; `can_revert` false
   when the baseline's blob wasn't stored, which only happens to files over
   5 MB above the store's 1 GiB cap) with `review_banner`. `KeepChange`,
-  `RevertChange`, `KeepAllChanges` and `RevertAllChanges` settle them; a
+  `RevertChange`, `KeepAllChanges` and `RevertAllChanges` settle them;
+  `RevertAllChanges` asks first (`ProjectView::revert_all_prompt`, about
+  the revertible files listed then; `ConfirmRevertAll` reverts those still
+  listed, `CancelRevertAll` closes it, and the view shows it as a sheet,
+  `dialogs::ask_to_revert_all`), while a single Revert doesn't. A
   Revert reloads open editors right away. Everything that touches the disk
   or the store is an op, and ops run one at a time, in order.
   **Writing a project file from the core**: announce it first with
   `Project::review.own_writes().writing(relative_path, Some(hash))`
   (`review/own.rs`) and hold the guard until the write is done, as saves,
-  "Open config", toolchain pins, "Add TypeScript 7" and Revert do. Review
+  "Open config", toolchain pins, "Add TypeScript 7", "Add Oxlint and Oxfmt" and Revert do. Review
   then knows the content as Genea's own (a file without a pending change
   moves its baseline; one with a pending change stays listed), ignores what
   it read mid-write, and checks the file again when the guard drops.
@@ -133,8 +137,10 @@ use, and nothing else:
   (`src/diff.rs`: `BaseDiff` holds a base and its hunks, `DiffJob` runs
   `imara-diff` off the main thread, one per file at a time, again whenever
   the buffer's version moves on; `Project::diff_file` drives both), and
-  each result goes to the editor with `Editor::set_inline_diff`. The editor
-  lays the hunks out: a hunk's removed lines take rows of their own just
+  each result goes to the editor with `Editor::set_inline_diff`. A new
+  base (different text) has no hunks until a diff against it lands
+  (`BaseDiff::latest`): the gutter shows none meanwhile, and the inline
+  diff keeps its last layout. The editor lays the hunks out: a hunk's removed lines take rows of their own just
   above `hunk.lines.start` (hidden with it under a fold), so scrolling,
   `reveal_caret` and `VisibleLine::row` count them (`display_row_of`,
   `display_row_count`, `display_rows`), while carets, Up/Down and
@@ -170,7 +176,8 @@ use, and nothing else:
   from the root, so a project inside a bigger repository works too). HEAD
   is read at open and again when the watcher sees `.git/HEAD`, `refs/` or
   `packed-refs` change (or `.git` appear), with every open file's text at
-  HEAD (its *base*); a newly opened file reads its own. Gutter markers
+  HEAD (its *base*); a newly opened file reads its own, which a HEAD read
+  already running when it opened keeps. Gutter markers
   (`EditorView::gutter`) come from a line diff (`src/diff.rs`, `imara-diff`)
   of the base and a rope snapshot, one job per file at a time, restarted
   when it lands if the buffer's version moved on, like the syntax parse.
@@ -253,7 +260,10 @@ use, and nothing else:
   front of any opened meanwhile, which keep the focus
   (`Project::restore_tabs`). Nothing is saved until that lands. After every
   command and Apply, `Project::save_session_later` writes the session in a
-  job 1 s (host clock) after it last changed; closing a project writes it at
+  job 1 s (host clock) after it last changed; it builds the session only
+  when a cheap fingerprint of what it keeps moved (`session_stamp`: tab
+  paths, editor versions, carets and scroll, the terminal's tabs, left
+  column, zoom, layout; a new saved field goes in it too); closing a project writes it at
   once. `open-projects.txt` lists the open projects, which
   `restore_session` reopens. `quit()` writes everything (sessions, the open
   list, the recent projects) synchronously and stops later saves, so
@@ -473,7 +483,7 @@ language servers, the project check) gets the project environment
 user's login shell, captured once per open by running `$SHELL -l -i -c` in
 the project root, with each `Installed::bin_dir` of the toolchain first on
 PATH (worked out at spawn time, so a download that finishes later counts).
-If the shell fails or takes longer than `LOGIN_SHELL_TIMEOUT` (5 s, host
+If the shell fails or takes longer than `LOGIN_SHELL_TIMEOUT` (10 s, host
 clock), processes get the launch environment and a notice offers
 `Command::ReloadEnvironment`, which also sits in the File menu. A process
 started before the capture lands gets the launch environment.
@@ -529,7 +539,9 @@ showing tab is `Terminal::tab() -> Option`).
   The packages are the root package plus the folders matched by
   `pnpm-workspace.yaml`'s `packages` (read with the YAML grammar) or, when
   the root pins Bun (or npm or Yarn, #51), the root `workspaces` field (`globset`, `!` excludes,
-  never inside `node_modules` or `.git`), each with its `package.json`
+  never inside `node_modules` or `.git` or what the project's `.gitignore`
+  files ignore; only folders under a glob's literal leading folders, and
+  no deeper than it reaches, are walked), each with its `package.json`
   scripts in file order; root first, then by path. They are read in a job
   at open and again when the watcher sees `pnpm-workspace.yaml`, any
   `package.json` or a package's folder change. `RunScript` runs
@@ -623,9 +635,10 @@ message types. `project/language.rs` is a project's side of it.
   the background against the project watcher's batches, each path sent as
   created, changed or deleted (`FileChanges::created`).
 - **Code actions** (ticket #45; `lsp/actions.rs`, `project/quick_fixes.rs`):
-  `Command::ShowQuickFixes` (⌥⏎) asks every ready server for `quickfix`
-  actions at the primary selection, sending the diagnostics that server
-  last reported there (or else on those lines: tsgo fixes by diagnostic
+  `Command::ShowQuickFixes` (⌥⏎) asks tsgo, when ready, for `quickfix`
+  actions at the primary selection (`Project::language_servers_mut`;
+  Oxlint's code actions are only fix on save's), sending the diagnostics
+  that server last reported there (or else on those lines: tsgo fixes by diagnostic
   code, not by range). `ProjectView::quick_fixes` shows once one answers;
   any command but `MoveQuickFixSelection`, `ApplyQuickFix` and scrolling
   closes it and drops later answers. `Command::OrganizeImports` (⌃⌥O) asks
@@ -706,13 +719,17 @@ message types. `project/language.rs` is a project's side of it.
   through `Project::save`: `textDocument/formatting` to Oxfmt (unless
   `formatOnSave` is off), then `source.fixAll.oxc` to Oxlint (unless
   `fixOnSave` is off; its `Output::CodeActions` are told apart from quick
-  fixes by ticket), then `write_file`. Each answer applies as one undo step
+  fixes by ticket), then `write_file`, which writes a file's saves one at
+  a time (`project/saves.rs`): a save overtaken by a newer save of the
+  same file writes nothing, and only the newest marks the buffer saved.
+  Each answer applies as one undo step
   if the editor is still at the version it was asked at. A save that
   hasn't finished within `FORMAT_TIMEOUT` (1 s, host clock) forgets the
   request (releasing `settle`), writes the buffer as it is, and adds a
   notice. A step whose server isn't ready is skipped. `Project::format_on_save`
   and `fix_on_save` also skip both steps while a foreign formatter or
-  linter is configured (#51).
+  linter is configured (#51), and until the workspace's first read has
+  landed (unknown counts as off).
   `Command::ReformatFile` (⌥⌘L) runs the format step alone. tsgo's
   formatter is never asked.
 
@@ -865,7 +882,7 @@ chrome, native menus via muda (Slint's `MenuBar`).
   project opens showing it; Search is ⌘⇧F, and focuses its query field
   when it appears; Changes has a menu item but no shortcut, since ⌘0 is
   zoom; Problems is ⌘6). The review banner over the window's content
-  (`review-banner`) offers Review, Keep All and Revert All. A new
+  (`review-banner`) offers Review, Keep All and Revert All…. A new
   view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
   switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`

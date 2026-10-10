@@ -151,15 +151,15 @@ impl Project {
     }
 
     /// Whether `formatOnSave` applies to the project: it is on, and no
-    /// foreign formatter or linter is configured (ticket #51).
+    /// foreign formatter or linter is configured (ticket #51). Until the
+    /// workspace has been looked at, that isn't known, so it doesn't.
     pub(super) fn format_on_save(&self) -> bool {
-        self.config.format_on_save && !self.has_foreign_formatter()
+        self.config.format_on_save && self.workspace.is_discovered() && !self.has_foreign_formatter()
     }
 
-    /// Whether `fixOnSave` applies to the project: it is on, and no
-    /// foreign formatter or linter is configured (ticket #51).
+    /// Whether `fixOnSave` applies to the project: like `format_on_save`.
     pub(super) fn fix_on_save(&self) -> bool {
-        self.config.fix_on_save && !self.has_foreign_formatter()
+        self.config.fix_on_save && self.workspace.is_discovered() && !self.has_foreign_formatter()
     }
 
     /// Asks for `step` of save `id`, or else the steps after it. Returns

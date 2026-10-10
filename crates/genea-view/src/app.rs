@@ -405,6 +405,12 @@ impl App {
         }
     }
 
+    /// The Revert All prompt in window `key` was answered.
+    pub fn resolve_revert_all(&mut self, key: WindowKey, confirmed: bool) {
+        let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
+        controller.resolve_revert_all(&mut self.workbench, confirmed);
+    }
+
     /// The close prompt in window `key` was answered.
     pub fn resolve_close(&mut self, key: WindowKey, choice: CloseChoice) {
         let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };

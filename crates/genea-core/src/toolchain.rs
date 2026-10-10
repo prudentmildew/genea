@@ -253,6 +253,10 @@ impl Toolchain {
                     if toolchain.lockfile_generation == lockfile_generation {
                         toolchain.lockfiles = lockfiles;
                     }
+                    // The newest lockfiles known: a check that landed while
+                    // this read ran knows better than this read's own look,
+                    // and one still running compares with these when it lands.
+                    let lockfiles = toolchain.lockfiles;
                     toolchain.loaded(pins, lockfiles, &jobs);
                 }
                 update_problems(core, id);
@@ -262,7 +266,7 @@ impl Toolchain {
 
     /// `package.json` is read: sets up every role. An unpinned package
     /// manager is a foreign one when the root has a foreign lockfile
-    /// (`lockfiles`, as read with `package.json`).
+    /// (`lockfiles`, the newest known).
     fn loaded(&mut self, pins: Option<Result<Pins, String>>, lockfiles: Lockfiles, jobs: &Jobs) {
         self.problems.clear();
         self.slots = [None, None];

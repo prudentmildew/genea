@@ -192,6 +192,14 @@ impl Review {
         }
     }
 
+    /// Revert for these files, those of them still listed.
+    pub(crate) fn revert_paths(&mut self, paths: impl IntoIterator<Item = PathBuf>, jobs: &Jobs) {
+        let paths: BTreeSet<PathBuf> = paths.into_iter().filter(|path| self.changes.contains_key(path)).collect();
+        if !paths.is_empty() {
+            self.push(Op::Revert(paths), jobs);
+        }
+    }
+
     fn listed(&self, path: Option<PathBuf>) -> BTreeSet<PathBuf> {
         match path {
             Some(path) => self.changes.contains_key(&path).then_some(path).into_iter().collect(),

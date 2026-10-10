@@ -292,8 +292,17 @@ pub enum Command {
     RevertChange(PathBuf),
     /// Keep for every file in Changes.
     KeepAllChanges,
-    /// Revert for every file in Changes that can be reverted.
+    /// Asks before Revert for every file in Changes that can be reverted:
+    /// sets `ProjectView::revert_all_prompt`, answered with
+    /// [`ConfirmRevertAll`](Self::ConfirmRevertAll) or
+    /// [`CancelRevertAll`](Self::CancelRevertAll). Nothing is asked (or
+    /// reverted) when no listed file can be.
     RevertAllChanges,
+    /// Reverts the files the open Revert All prompt asked about (those
+    /// still listed), and closes it.
+    ConfirmRevertAll,
+    /// Closes the Revert All prompt without reverting anything.
+    CancelRevertAll,
     /// Opens a file listed in Changes as an inline diff against its review
     /// baseline (ticket #55; `EditorView::inline_diff`): removed lines
     /// between its lines, added lines marked. A created file is all added;

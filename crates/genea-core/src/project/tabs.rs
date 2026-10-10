@@ -132,7 +132,7 @@ impl Project {
     }
 
     /// Every open file's editor, focused or not.
-    pub(super) fn open_editors(&self) -> impl Iterator<Item = &Editor> {
+    pub(crate) fn open_editors(&self) -> impl Iterator<Item = &Editor> {
         self.editor.iter().chain(&self.panes.parked)
     }
 
@@ -406,6 +406,23 @@ impl Project {
         }
         self.panes.focused = 0;
         self.unpark();
+    }
+
+    /// Feeds what [`tabs_session`](Self::tabs_session) keeps into `state`,
+    /// cheaply: to tell whether it changed without building it.
+    pub(super) fn hash_tabs_session(&self, state: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        let panes = &self.panes;
+        for (p, side) in panes.sides.iter().enumerate() {
+            for (t, tab) in side.tabs.iter().enumerate() {
+                let Some(editor) = self.open_editor(&tab.path) else { continue };
+                let focused = p == panes.focused && t == side.active && self.editor.is_some();
+                tab.path.hash(state);
+                editor.hash_session((!focused).then_some(&tab.cursor), state);
+            }
+            (side.tabs.len(), side.active).hash(state);
+        }
+        (panes.sides.len(), panes.focused).hash(state);
     }
 
     /// The tabs as the session keeps them (ticket #59): each side's tabs

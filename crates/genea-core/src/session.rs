@@ -150,10 +150,14 @@ impl ProjectSession {
                     .iter()
                     .filter_map(|tab| {
                         let path = tab.get("path")?.as_str()?;
-                        let selections = array(tab.get("selections"))
+                        let mut selections: Vec<_> = array(tab.get("selections"))
                             .iter()
                             .filter_map(|s| Some((position(s.get(0)?), position(s.get(1)?))))
                             .collect();
+                        // A tab always has a caret: at the start, if none was saved.
+                        if selections.is_empty() {
+                            selections.push((TextPosition::default(), TextPosition::default()));
+                        }
                         let scroll_top = tab.get("scroll_top").and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
                         Some(TabSession { path: path.into(), selections, scroll_top })
                     })

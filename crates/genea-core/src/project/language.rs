@@ -318,8 +318,9 @@ impl Project {
         }
     }
 
-    /// The servers to ask for code actions of a kind (ticket #45): quick
-    /// fixes from every server, organize imports from tsgo's alone.
+    /// The servers to ask for code actions of a kind (ticket #45): tsgo
+    /// alone, for quick fixes and organize imports both. Oxlint's code
+    /// actions are asked for only by fix on save (ticket #50).
     pub(super) fn language_servers_mut(&mut self, kind: ActionKind) -> impl Iterator<Item = &mut LanguageServer> {
         match kind {
             ActionKind::QuickFix | ActionKind::OrganizeImports => self.language.typescript.iter_mut(),

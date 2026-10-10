@@ -1,8 +1,9 @@
 //! Quick fixes (⌥⏎) and organize imports (⌃⌥O) (ticket #45): a project's
 //! side of the language servers' code actions (`crate::lsp::actions`).
 //!
-//! ⌥⏎ asks every ready server for its fixes at the primary caret and opens
-//! the popup with the first answer (later answers add to it). Any command
+//! ⌥⏎ asks the TypeScript server, when it is ready, for its fixes at the
+//! primary caret and opens the popup when it answers (Oxlint isn't asked:
+//! its code actions are only fix on save's, `project/formatting.rs`). Any command
 //! but the quick-fix ones (and scrolling) closes it, and drops answers
 //! still to come. Choosing a fix applies its edits to the open files as one
 //! undo step each, provided none of them changed since it was offered.

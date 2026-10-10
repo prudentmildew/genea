@@ -210,11 +210,13 @@ impl Project {
         });
     }
 
-    /// Hands a shown file's latest hunks to its editor.
+    /// Hands a shown file's latest hunks to its editor, with the base they
+    /// were worked out against. While its base has been replaced and no
+    /// diff against the new one has landed, the editor keeps what it shows.
     fn lay_out_inline_diff(&mut self, path: &Path) {
         let Some(shown) = self.inline_diffs.files.get(path) else { return };
-        let Some(base) = shown.diff.base().cloned() else { return };
-        let diff = InlineDiff { against: shown.base.against(), base, hunks: shown.diff.hunks().to_vec() };
+        let Some((hunks, base)) = shown.diff.latest() else { return };
+        let diff = InlineDiff { against: shown.base.against(), base: base.clone(), hunks: hunks.to_vec() };
         let rows = self.viewport_rows;
         if let Some(editor) = self.open_editor_mut(path) {
             editor.set_inline_diff(Some(diff), rows);

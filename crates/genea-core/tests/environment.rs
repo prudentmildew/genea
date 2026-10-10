@@ -89,7 +89,7 @@ fn a_login_shell_that_hangs_times_out_to_the_launch_environment_with_a_notice() 
     assert_eq!(notices.len(), 1, "{notices:?}");
     assert_eq!(
         notices[0].message,
-        "Your login shell (/bin/zsh) didn't finish within 5 s, so processes get the environment Genea was started with."
+        "Your login shell (/bin/zsh) didn't finish within 10 s, so processes get the environment Genea was started with."
     );
     let vars = printenv(&workbench, project);
     assert_eq!(var(&vars, "FROM_LAUNCH").as_deref(), Some("launch"));

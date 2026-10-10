@@ -68,6 +68,9 @@ pub struct ProjectView {
     /// The review banner, e.g. "2 files changed outside Genea", shown while
     /// `changes` isn't empty.
     pub review_banner: Option<String>,
+    /// Revert All Changes asks first. Answer with
+    /// `Command::ConfirmRevertAll` or `Command::CancelRevertAll`.
+    pub revert_all_prompt: Option<RevertAllPrompt>,
     /// The Search view (⌘⇧F): the last query and its results.
     pub search: SearchView,
     /// The fuzzy finder overlay, while it is open (ticket #33).
@@ -368,6 +371,14 @@ pub struct EditorTab {
     pub title: String,
     /// The file has unsaved edits.
     pub modified: bool,
+}
+
+/// Asks whether to revert every listed change (ticket #53): what is on
+/// disk is lost.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevertAllPrompt {
+    /// How many files would be reverted.
+    pub files: usize,
 }
 
 /// Asks what to do with a closing tab's unsaved edits.
