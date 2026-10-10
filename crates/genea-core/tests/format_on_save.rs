@@ -4,13 +4,10 @@
 //! by the launcher script it is started with: one fake LSP server plays
 //! Oxfmt and another plays Oxlint.
 
-
-
 use std::time::{Duration, Instant};
 
-use genea_core::{Command, FORMAT_TIMEOUT, ProjectId, Workbench};
+use genea_core::{Command, FORMAT_TIMEOUT, LanguageServerState, ProjectId, Workbench};
 use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
-
 
 const PACKAGE_JSON: &str = r#"{
   "name": "app",
@@ -287,4 +284,56 @@ fn reformat_file_formats_the_buffer_without_saving_it_even_with_format_on_save_o
 
     session.dispatch(Command::Undo);
     assert_eq!(session.text(), "const  a=1\n", "formatting is one undo step");
+}
+
+// --- The Oxfmt server -------------------------------------------------------------
+
+#[test]
+fn oxfmt_runs_from_node_modules_on_the_pinned_node_and_shows_in_the_status_bar() {
+    let session = open(oxc_project().build(), &FakeLsp::new(), &FakeLsp::new());
+
+    let root = session.fixture.root().to_owned();
+    let oxfmt: Vec<_> = session
+        .host
+        .processes()
+        .spawned()
+        .into_iter()
+        .filter(|spec| spec.args.first().is_some_and(|arg| arg.to_string_lossy().ends_with("oxfmt/bin/oxfmt")))
+        .collect();
+    assert_eq!(oxfmt.len(), 1, "one Oxfmt per project");
+    assert!(oxfmt[0].program.starts_with(session.host.support_dir()), "the runtime is from the store");
+    assert_eq!(oxfmt[0].program_name(), "node");
+    assert_eq!(oxfmt[0].args, [root.join("node_modules/oxfmt/bin/oxfmt").into_os_string(), "--lsp".into()]);
+    assert_eq!(oxfmt[0].cwd.as_deref(), Some(root.as_path()));
+
+    let status = session.view().status.language_servers.into_iter().find(|s| s.name == "Oxfmt").unwrap();
+    assert_eq!(status.state, LanguageServerState::Ready);
+}
+
+#[test]
+fn oxfmt_gets_no_diagnostics_pulls() {
+    let fixture = oxc_project().file("src/main.ts", MAIN_TS).build();
+    let oxfmt = formatter();
+    let mut session = open(fixture, &oxfmt, &linter());
+    session.open_file("src/main.ts");
+
+    assert_eq!(oxfmt.received("textDocument/didOpen").len(), 1);
+    assert_eq!(oxfmt.received("textDocument/diagnostic"), Vec::<serde_json::Value>::new());
+}
+
+#[test]
+fn a_crashing_oxfmt_is_restarted_and_saving_still_writes() {
+    let fixture = oxc_project().file("src/main.ts", MAIN_TS).build();
+    let oxfmt = formatter().crash_on("textDocument/formatting");
+    let mut session = open(fixture, &oxfmt, &FakeLsp::new());
+    session.open_file("src/main.ts");
+
+    session.dispatch(Command::Save);
+    session.host.clock().advance(FORMAT_TIMEOUT);
+    session.settle();
+
+    assert_eq!(session.disk("src/main.ts"), MAIN_TS);
+    session.host.clock().advance(genea_core::RESTART_DELAY);
+    session.settle();
+    assert_eq!(oxfmt.starts(), 2);
 }
