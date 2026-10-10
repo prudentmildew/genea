@@ -227,6 +227,8 @@ export component ProjectWindow inherits Window {
     callback terminal-size-changed();
     callback new-terminal-tab();
     callback terminal-tab-closed(index: int);
+    // Git (ticket #57).
+    callback show-diff-against-head();
     // Script runner (ticket #40).
     callback stop-terminal-tab();
     callback rerun-terminal-tab();
@@ -606,6 +608,16 @@ export component ProjectWindow inherits Window {
                 shortcut: @keys(Control + T);
                 activated => {
                     root.new-terminal-tab();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: "Show Diff Against HEAD";
+                enabled: root.has-editor;
+                activated => {
+                    root.show-diff-against-head();
                 }
             }
         }
