@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use genea_core::{Caret, Command, LeftColumnView, ProjectId, ProjectView, TextPosition, Workbench};
+use genea_core::{Caret, Command, LeftColumnView, ProjectId, ProjectView, RenamePrompt, TextPosition, Workbench};
 use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
 
 const STORE: &str = "node_modules/.pnpm/typescript@7.0.2/node_modules";
@@ -23,6 +23,7 @@ fn typescript_project() -> FixtureBuilder {
 
 const GREET: &str = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}\n";
 const MAIN: &str = "import { greet } from \"./greeting\";\n\nconsole.log(greet(\"world\"));\n";
+const MAIN_RENAMED: &str = "import { welcome } from \"./greeting\";\n\nconsole.log(welcome(\"world\"));\n";
 
 /// `greet` is declared in one file and used in another.
 fn greeting_project() -> FixtureBuilder {
@@ -248,4 +249,102 @@ fn find_usages_says_so_while_waiting_and_when_there_are_none() {
 
     let found = session.view().usages.unwrap();
     assert_eq!((found.count, found.finding), (0, false));
+}
+
+impl Session {
+    /// The focused file's text, from its visible lines.
+    fn text(&self) -> String {
+        let editor = self.view().editor.expect("a focused file");
+        editor.lines.iter().map(|l| format!("{}\n", l.text)).collect::<String>().trim_end().to_owned() + "\n"
+    }
+
+    /// The tabs of the left pane: (file, modified).
+    fn tabs(&self) -> Vec<(PathBuf, bool)> {
+        self.view().panes[0].tabs.iter().map(|t| (t.path.clone(), t.modified)).collect()
+    }
+
+    fn select_tab(&mut self, path: &str) {
+        let tab = self.tabs().iter().position(|(p, _)| p == std::path::Path::new(path)).expect("a tab");
+        self.dispatch(Command::SelectTab { pane: 0, tab });
+    }
+}
+
+#[test]
+fn rename_edits_every_reference_and_opens_the_files_that_were_not_open() {
+    let fake = FakeLsp::new();
+    let mut session = open(greeting_project().build(), &fake);
+    session.open_at("src/main.ts", 2, 14);
+
+    session.dispatch(Command::StartRename);
+    session.settle();
+    assert_eq!(session.view().rename, Some(RenamePrompt { name: "greet".into() }));
+
+    session.dispatch(Command::Rename("welcome".into()));
+    session.settle();
+
+    let view = session.view();
+    assert_eq!(view.rename, None);
+    assert_eq!(view.editor.unwrap().path, PathBuf::from("src/main.ts"), "the focus stays");
+    assert_eq!(session.text(), MAIN_RENAMED);
+    assert_eq!(
+        session.tabs(),
+        [("src/main.ts".into(), true), ("src/greeting.ts".into(), true)],
+        "the file that wasn't open opens behind, unsaved"
+    );
+    assert_eq!(session._fixture.read("src/greeting.ts"), GREET, "nothing is written yet");
+    session.select_tab("src/greeting.ts");
+    assert_eq!(session.text(), GREET.replace("greet", "welcome"));
+
+    // Each file's edits are one undo step.
+    session.dispatch(Command::Undo);
+    assert_eq!(session.text(), GREET);
+    session.dispatch(Command::Redo);
+
+    // Saving them is Genea's own write: no external change, no conflict.
+    session.dispatch(Command::Save);
+    session.select_tab("src/main.ts");
+    session.dispatch(Command::Save);
+    session.settle();
+    assert_eq!(session._fixture.read("src/greeting.ts"), GREET.replace("greet", "welcome"));
+    assert_eq!(session._fixture.read("src/main.ts"), MAIN_RENAMED);
+    assert_eq!(session.tabs(), [("src/main.ts".into(), false), ("src/greeting.ts".into(), false)]);
+    assert!(!session.view().editor.unwrap().conflict);
+    session.select_tab("src/greeting.ts");
+    assert!(!session.view().editor.unwrap().conflict);
+    session.dispatch(Command::Undo);
+    assert_eq!(session.text(), GREET, "the rename is still the last undo step: nothing reloaded");
+}
+
+#[test]
+fn a_cancelled_or_unchanged_rename_edits_nothing() {
+    let fake = FakeLsp::new();
+    let mut session = open(greeting_project().build(), &fake);
+    session.open_at("src/main.ts", 2, 14);
+
+    session.dispatch(Command::StartRename);
+    session.settle();
+    session.dispatch(Command::CancelRename);
+    assert_eq!(session.view().rename, None);
+
+    session.dispatch(Command::StartRename);
+    session.settle();
+    session.dispatch(Command::Rename("greet".into()));
+    session.settle();
+    assert_eq!(session.view().rename, None);
+    assert_eq!(session.tabs(), [("src/main.ts".into(), false)]);
+    assert!(fake.received("textDocument/rename").is_empty());
+}
+
+#[test]
+fn rename_where_nothing_can_be_renamed_is_a_hint() {
+    let fake = FakeLsp::new();
+    let mut session = open(greeting_project().build(), &fake);
+    // On the blank line.
+    session.open_at("src/main.ts", 1, 0);
+
+    session.dispatch(Command::StartRename);
+    session.settle();
+
+    assert_eq!(session.view().rename, None);
+    assert_eq!(session.view().hint.as_deref(), Some("Nothing to rename here."));
 }

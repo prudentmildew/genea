@@ -10,10 +10,18 @@
 //!
 //! What the user sees: one place opens in a tab (`open_file`), several are
 //! listed in the Usages view in the left column, none sets a hint.
+//!
+//! Rename goes `prepareRename` (is there something to rename, and what is
+//! it called) → the prompt → `rename`. Its edits apply to open files as one
+//! undo step each, only if no open file changed since the request went out;
+//! files that aren't open are read in the background and open in tabs
+//! behind the focused one, edited and unsaved. Nothing is written to disk
+//! but by saving, so every write is Genea's own.
 
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use ropey::Rope;
@@ -21,10 +29,11 @@ use ropey::Rope;
 use super::super::Project;
 use crate::{
     command::Command,
+    editor::Editor,
     jobs::Jobs,
     lsp::{
         LanguageServer, Pending,
-        navigation::{self, Answer, Ask, Locate, Location, Position},
+        navigation::{self, Answer, Ask, Locate, Location, Position, TextEdit},
         text::{self, Encoding},
     },
     problems::TextPosition,
@@ -41,6 +50,24 @@ pub(crate) struct Navigation {
     word: String,
     usages: Option<UsagesView>,
     hint: Option<String>,
+    /// The rename under way, from ⇧F6 until its edits apply.
+    renaming: Option<Renaming>,
+}
+
+struct Renaming {
+    /// The request it waits for.
+    generation: u64,
+    /// The focused file when ⇧F6 was pressed, its version, and where the
+    /// caret was.
+    path: PathBuf,
+    version: u64,
+    position: Position,
+    /// The symbol's name, once the server said it can be renamed: the
+    /// prompt shows.
+    name: Option<String>,
+    /// The rename request went out, when the open files had these
+    /// versions.
+    versions: Option<Vec<(PathBuf, u64)>>,
 }
 
 /// A place an answer named, with its text.
@@ -61,6 +88,9 @@ impl Project {
             Command::GoToTypeDefinition => self.locate(Locate::TypeDefinition),
             Command::GoToImplementation => self.locate(Locate::Implementation),
             Command::FindUsages => self.locate(Locate::Usages),
+            Command::StartRename => self.start_rename(),
+            Command::Rename(name) => self.rename(name),
+            Command::CancelRename => self.language.navigation.renaming = None,
             _ => {}
         }
     }
@@ -70,7 +100,8 @@ impl Project {
     }
 
     pub(in crate::project) fn rename_prompt(&self) -> Option<RenamePrompt> {
-        None
+        let renaming = self.language.navigation.renaming.as_ref().filter(|r| r.versions.is_none())?;
+        renaming.name.clone().map(|name| RenamePrompt { name })
     }
 
     pub(in crate::project) fn hint(&self) -> Option<String> {
@@ -85,7 +116,7 @@ impl Project {
     /// Where a request goes: the ready server and the focused file's caret
     /// as the server counts it (`textDocument` and `position` params). Sets
     /// a hint and returns `None` if there's nothing to ask.
-    fn ask_at_caret(&mut self, what: &str) -> Option<serde_json::Value> {
+    fn ask_at_caret(&mut self, what: &str) -> Option<(serde_json::Value, Position)> {
         let editor = self.editor.as_ref()?;
         let hint = if text::language_id(editor.path()).is_none() {
             Some(format!("Only TypeScript and JavaScript files have {what}."))
@@ -105,7 +136,7 @@ impl Project {
         let uri = text::uri(&self.root.join(editor.path()));
         self.language.navigation.word = editor.word_at_caret().unwrap_or_default();
         self.language.navigation.generation += 1;
-        Some(navigation::at(&uri, position))
+        Some((navigation::at(&uri, position), position))
     }
 
     fn encoding(&self) -> Encoding {
@@ -120,7 +151,7 @@ impl Project {
             Locate::Usages => "Find Usages",
             _ => "code navigation",
         };
-        let Some(mut params) = self.ask_at_caret(what) else { return };
+        let Some((mut params, _)) = self.ask_at_caret(what) else { return };
         if locate == Locate::Usages {
             params["context"] = serde_json::json!({ "includeDeclaration": false });
         }
@@ -148,7 +179,191 @@ impl Project {
                     Err(message) => self.places_found(locate, Err(message)),
                 }
             }
-            Answer::RenameRange { .. } | Answer::Renamed { .. } => {}
+            Answer::RenameRange { generation, range } => self.rename_range(generation, range),
+            Answer::Renamed { generation, edits } => {
+                let navigation = &mut self.language.navigation;
+                let Some(renaming) = navigation.renaming.take_if(|r| r.generation == generation && r.versions.is_some())
+                else {
+                    return;
+                };
+                match edits {
+                    Ok(files) => self.apply_rename(renaming.versions.unwrap_or_default(), files),
+                    Err(message) => navigation.hint = Some(format!("TypeScript couldn't rename it: {message}")),
+                }
+            }
+        }
+    }
+
+    /// ⇧F6: asks the server whether the symbol at the caret can be renamed.
+    fn start_rename(&mut self) {
+        self.sync_language();
+        let Some((params, position)) = self.ask_at_caret("Rename") else { return };
+        let Some(editor) = &self.editor else { return };
+        let generation = self.language.navigation.generation;
+        self.language.navigation.renaming = Some(Renaming {
+            generation,
+            path: editor.path().to_owned(),
+            version: editor.version(),
+            position,
+            name: None,
+            versions: None,
+        });
+        if let Some(server) = &mut self.language.typescript {
+            let ask = Ask::PrepareRename { generation };
+            server.request("textDocument/prepareRename", params, Pending::Navigation(ask));
+        }
+    }
+
+    /// The server said what can be renamed at the caret: the prompt shows,
+    /// if the file is still as it was.
+    fn rename_range(&mut self, generation: u64, range: Result<Option<(Position, Position, Option<String>)>, Option<String>>) {
+        let encoding = self.encoding();
+        let navigation = &mut self.language.navigation;
+        let Some(renaming) = navigation.renaming.as_mut().filter(|r| r.generation == generation && r.name.is_none())
+        else {
+            return;
+        };
+        let Some(editor) = self.editor.as_ref().filter(|e| e.path() == renaming.path && e.version() == renaming.version)
+        else {
+            navigation.renaming = None;
+            return;
+        };
+        let name = match range {
+            Ok(Some((_, _, Some(placeholder)))) => Ok(placeholder),
+            Ok(Some((start, end, None))) => {
+                let text = editor.text();
+                let char_at = |p: Position| {
+                    let at = p.in_text(text, encoding);
+                    text.line_to_char(at.line) + at.column
+                };
+                Ok(text.slice(char_at(start)..char_at(end).max(char_at(start))).to_string())
+            }
+            // A server without prepareRename: the word at the caret.
+            Err(None) => editor.word_at_caret().ok_or_else(|| "Nothing to rename here.".to_owned()),
+            Ok(None) => Err("Nothing to rename here.".to_owned()),
+            Err(Some(message)) => Err(format!("TypeScript can't rename this: {message}")),
+        };
+        match name {
+            Ok(name) if !name.is_empty() => renaming.name = Some(name),
+            Ok(_) => {
+                navigation.renaming = None;
+                navigation.hint = Some("Nothing to rename here.".into());
+            }
+            Err(hint) => {
+                navigation.renaming = None;
+                navigation.hint = Some(hint);
+            }
+        }
+    }
+
+    /// The prompt's answer: asks the server for the rename's edits. An
+    /// empty or unchanged name closes the prompt.
+    fn rename(&mut self, name: String) {
+        self.sync_language();
+        let navigation = &mut self.language.navigation;
+        let Some(mut renaming) = navigation.renaming.take().filter(|r| r.versions.is_none()) else { return };
+        let name = name.trim().to_owned();
+        if name.is_empty() || renaming.name.as_ref() == Some(&name) {
+            return;
+        }
+        if !self.editor.as_ref().is_some_and(|e| e.path() == renaming.path && e.version() == renaming.version) {
+            navigation.hint = Some("The file changed, so nothing was renamed. Try again.".into());
+            return;
+        }
+        let Some(server) = self.language.typescript.as_mut().filter(|s| s.is_ready()) else {
+            navigation.hint = Some("TypeScript isn't running, so there's no Rename.".into());
+            return;
+        };
+        navigation.generation += 1;
+        renaming.generation = navigation.generation;
+        let uri = text::uri(&self.root.join(&renaming.path));
+        let mut params = navigation::at(&uri, renaming.position);
+        params["newName"] = name.into();
+        let ask = Ask::Rename { generation: renaming.generation };
+        server.request("textDocument/rename", params, Pending::Navigation(ask));
+        let versions = self.open_editors().map(|e| (e.path().to_owned(), e.version())).collect();
+        renaming.versions = Some(versions);
+        self.language.navigation.renaming = Some(renaming);
+    }
+
+    /// Applies a rename's edits: to open files at once, if none changed
+    /// since the request went out (`versions`); to the others once they are
+    /// read.
+    fn apply_rename(&mut self, versions: Vec<(PathBuf, u64)>, files: Vec<(PathBuf, Vec<TextEdit>)>) {
+        let changed = versions.iter().any(|(path, version)| self.open_editor(path).is_some_and(|e| e.version() != *version));
+        if changed {
+            self.language.navigation.hint = Some("Files changed while renaming, so nothing was renamed. Try again.".into());
+            return;
+        }
+        let Some((host, jobs)) = self.language.context.clone() else { return };
+        let now = host.clock().now();
+        let mut unopened = Vec::new();
+        for (path, edits) in files {
+            let path = path.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or(path);
+            if self.open_editor(&path).is_some() {
+                self.edit_file(&path, &edits, now, &jobs);
+            } else {
+                unopened.push((path, edits));
+            }
+        }
+        if unopened.is_empty() {
+            return;
+        }
+        let (id, root) = (self.id, self.root.clone());
+        jobs.spawn("read files to rename in", move || {
+            let read: Vec<_> = unopened
+                .into_iter()
+                .map(|(path, edits)| {
+                    let text = fs::read(root.join(&path))
+                        .map_err(|e| e.to_string())
+                        .and_then(|bytes| String::from_utf8(bytes).map_err(|_| "it isn't valid UTF-8".to_owned()))
+                        .map(Rope::from);
+                    (path, edits, text)
+                })
+                .collect();
+            Box::new(move |core| {
+                let now = core.host.clock().now();
+                let jobs = core.jobs.clone();
+                let Some(project) = core.project_mut(id) else { return };
+                for (path, edits, text) in read {
+                    project.rename_in_read_file(path, &edits, text, now, &jobs);
+                }
+            })
+        });
+    }
+
+    /// A file the rename edits was read: it opens behind the focused tab
+    /// with the edits. If it was opened meanwhile, its buffer takes them if
+    /// it still has the text the server saw.
+    fn rename_in_read_file(&mut self, path: PathBuf, edits: &[TextEdit], text: Result<Rope, String>, now: Instant, jobs: &Jobs) {
+        let text = match text {
+            Ok(text) => text,
+            Err(error) => return self.notify(format!("Couldn't rename in {}: {error}", path.display())),
+        };
+        match self.open_editor(&path) {
+            Some(editor) if *editor.text() == text => self.edit_file(&path, edits, now, jobs),
+            Some(_) => self.notify(format!("{} changed while renaming, so it wasn't renamed in.", path.display())),
+            None => {
+                self.open_tab_behind(Editor::new(path.clone(), text));
+                self.edit_file(&path, edits, now, jobs);
+                self.git.load_base(&path, jobs);
+            }
+        }
+    }
+
+    /// Applies a server's edits to an open file, as one undo step.
+    fn edit_file(&mut self, path: &Path, edits: &[TextEdit], now: Instant, jobs: &Jobs) {
+        let (encoding, rows) = (self.encoding(), self.viewport_rows);
+        let Some(editor) = self.open_editor_mut(path) else { return };
+        let text = editor.text();
+        let char_at = |p: Position| {
+            let at = p.in_text(text, encoding);
+            text.line_to_char(at.line) + at.column
+        };
+        let edits = edits.iter().map(|edit| (char_at(edit.start)..char_at(edit.end), edit.text.clone())).collect();
+        if editor.apply_edits(edits, now, rows) {
+            self.reparse_file(path, jobs);
+            self.diff_file(path, jobs);
         }
     }
 
