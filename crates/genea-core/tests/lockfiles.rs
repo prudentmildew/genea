@@ -40,6 +40,7 @@ fn warning_at_package_manager(message: &str) -> ProblemItem {
         position: TextPosition { line: 2, column: 2 },
         location: "3:3".into(),
         message: message.into(),
+        stale: false,
     }
 }
 

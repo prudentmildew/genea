@@ -20,6 +20,7 @@
 mod download_server;
 pub mod fake_lsp;
 mod fake_symbols;
+mod fake_tsc;
 mod fixture;
 mod host;
 mod pty;
@@ -27,6 +28,7 @@ mod tools;
 
 pub use download_server::DownloadServer;
 pub use fake_lsp::{FakeLsp, LspScript, Marker, Received};
+pub use fake_tsc::FakeTsc;
 pub use fixture::{FixtureBuilder, FixtureProject};
 pub use host::{FakeProcess, ManualClock, ScriptedDownloads, ScriptedProcesses, TestClipboard, TestHost};
 pub use pty::{FakePty, ScriptedPtys};

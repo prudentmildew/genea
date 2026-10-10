@@ -91,6 +91,15 @@ impl Project {
         });
     }
 
+    /// The project's TypeScript 7 `tsc` (the binary tsgo runs from), with
+    /// the host and jobs to run it: what the project check (ticket #48)
+    /// needs. `None` until TypeScript 7 is found.
+    pub(super) fn typescript_tsc(&self) -> Option<(PathBuf, SharedHost, Jobs)> {
+        let Some(Detection::Found { binary, .. }) = &self.language.detection else { return None };
+        let (host, jobs) = self.language.context.clone()?;
+        Some((binary.clone(), host, jobs))
+    }
+
     /// Starts, restarts or stops tsgo for what the look found.
     fn typescript_detected(&mut self, detection: Detection) {
         if self.language.detection.as_ref() == Some(&detection) {

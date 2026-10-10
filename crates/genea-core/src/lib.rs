@@ -38,6 +38,7 @@ mod lsp;
 mod new_project;
 mod problems;
 mod project;
+mod project_check;
 mod reading;
 mod recent;
 mod review;

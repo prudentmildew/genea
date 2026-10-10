@@ -287,6 +287,10 @@ pub struct ProblemItem {
     /// `position` as the user reads it: `line:column`, 1-based.
     pub location: String,
     pub message: String,
+    /// A project-check result (ticket #48) for a file that changed since
+    /// the check: it may be out of date, and is shown dimmed until the next
+    /// check.
+    pub stale: bool,
 }
 
 /// A problem underlined in the editor, on one visible line.
@@ -489,6 +493,8 @@ pub struct StatusBar {
     /// The project's language servers (tsgo now; Oxlint and Oxfmt later),
     /// one item each. Empty for a folder without a root `package.json`.
     pub language_servers: Vec<LanguageServerStatus>,
+    /// `Checking project…` while a project check (ticket #48) runs.
+    pub project_check: Option<String>,
 }
 
 /// A language server's status-bar item.

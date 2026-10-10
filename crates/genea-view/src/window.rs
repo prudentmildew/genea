@@ -385,6 +385,7 @@ impl WindowController {
                     error: p.severity == Severity::Error,
                     message: p.message.as_str().into(),
                     location: format!("{}:{}", p.path.display(), p.location).into(),
+                    stale: p.stale,
                 })
                 .collect();
             self.problem_rows.set_vec(rows);
@@ -397,6 +398,7 @@ impl WindowController {
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
         window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
+        window.set_status_project_check(view.status.project_check.clone().unwrap_or_default().into());
         window.set_status_branch(view.status.branch.clone().unwrap_or_default().into());
         window.set_status_large_file(view.status.large_file.clone().unwrap_or_default().into());
         let servers = &view.status.language_servers;

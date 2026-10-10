@@ -1,6 +1,7 @@
 //! One open project: its folder and what its window shows.
 
 mod changes;
+mod check;
 mod external;
 mod language;
 mod finder;
@@ -43,6 +44,7 @@ use crate::{
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use check::Check;
 use language::Language;
 use tabs::Panes;
 
@@ -103,6 +105,8 @@ pub(crate) struct Project {
     pub(crate) review: Review,
     /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
     language: Language,
+    /// The project check (ticket #48).
+    check: Check,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
@@ -145,6 +149,7 @@ impl Project {
             toolchain: None,
             environment: None,
             language: Language::default(),
+            check: Check::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -200,6 +205,7 @@ impl Project {
         self.files.files_changed(&changes, jobs);
         self.dependencies.files_changed(&changes, jobs);
         self.language_files_changed(&changes);
+        self.project_check_files_changed(&changes);
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
             self.git.reload(open, jobs);
@@ -506,6 +512,7 @@ impl Project {
             Command::RevertAllChanges => self.review.revert(None, jobs),
             Command::RestartLanguageServer => self.restart_language_server(),
             Command::AddTypeScript => self.add_typescript(jobs),
+            Command::RunProjectCheck => self.run_project_check(),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
             | Command::MoveFinderSelection(_)
@@ -735,6 +742,7 @@ impl Project {
         }
         self.refresh_views();
         self.sync_language();
+        self.sync_project_check();
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
@@ -809,12 +817,14 @@ impl Project {
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
             language_servers: self.language_status(),
+            project_check: self.project_check_status(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
         notices.extend(self.install_notice());
         notices.extend(self.environment.iter().flat_map(Environment::notices));
         notices.extend(self.language_notices());
+        notices.extend(self.project_check_notices());
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

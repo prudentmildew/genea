@@ -330,6 +330,8 @@ impl Workbench {
             project.refresh_views();
             // Language servers follow the open editors (ticket #42).
             project.sync_language();
+            // Open files show live diagnostics, not the project check's (ticket #48).
+            project.sync_project_check();
             // The terminal waits for the environment (ticket #38).
             project.start_terminal_when_ready(&self.core.host, &self.core.jobs);
             project.refresh_finder(&self.core.jobs);

@@ -12,6 +12,9 @@ export struct ProblemRow {
     message: string,
     // `path:line:column`, 1-based.
     location: string,
+    // A project-check result for a file changed since the check (#48):
+    // drawn dimmed until the next check.
+    stale: bool,
 }
 
 export component ProblemsView inherits Rectangle {
@@ -45,6 +48,7 @@ export component ProblemsView inherits Rectangle {
                     Text {
                         text: "●";
                         color: problem.error ? Theme.error : Theme.warning;
+                        opacity: problem.stale ? 0.4 : 1;
                     }
                 }
 
@@ -54,7 +58,7 @@ export component ProblemsView inherits Rectangle {
 
                     Text {
                         text: problem.message;
-                        color: Theme.chrome-foreground;
+                        color: problem.stale ? Theme.chrome-muted : Theme.chrome-foreground;
                         overflow: elide;
                     }
 
