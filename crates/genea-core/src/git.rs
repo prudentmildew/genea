@@ -9,7 +9,7 @@
 //! keystroke behind, but typing never waits for them.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
 };
@@ -83,7 +83,8 @@ impl Git {
 
     /// Reads HEAD again in the background, with the open files at HEAD: at
     /// open, and when HEAD may have moved (a checkout, a commit, `git
-    /// init`). Then diffs those files again.
+    /// init`). Then diffs those files again. Files opened meanwhile read
+    /// their own base (`load_base`) and keep it.
     pub(crate) fn reload(&mut self, open: Vec<PathBuf>, jobs: &Jobs) {
         self.generation += 1;
         let (id, generation, root) = (self.project, self.generation, self.root.clone());
@@ -98,7 +99,11 @@ impl Git {
                 }
                 git.branch = head.branch;
                 git.git_dir = head.git_dir;
-                git.files.retain(|path, _| open.contains(path));
+                // Files closed since go; files opened since keep the base
+                // `load_base` read for them.
+                let open_now: HashSet<PathBuf> = project.open_editors().map(|e| e.path().to_owned()).collect();
+                let git = &mut project.git;
+                git.files.retain(|path, _| open_now.contains(path));
                 let paths: Vec<PathBuf> = head.bases.iter().map(|(path, _)| path.clone()).collect();
                 for (path, base) in head.bases {
                     git.set_base(path, base);

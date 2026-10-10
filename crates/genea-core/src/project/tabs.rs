@@ -132,7 +132,7 @@ impl Project {
     }
 
     /// Every open file's editor, focused or not.
-    pub(super) fn open_editors(&self) -> impl Iterator<Item = &Editor> {
+    pub(crate) fn open_editors(&self) -> impl Iterator<Item = &Editor> {
         self.editor.iter().chain(&self.panes.parked)
     }
 
