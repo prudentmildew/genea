@@ -316,8 +316,14 @@ impl LanguageServer {
                 None => {
                     let uri = text::uri(&self.root.join(path));
                     connection.open(uri.clone(), language, 1, editor.text().clone());
-                    let document =
-                        Document { uri, version: 1, editor_version: editor.version(), wanted: true, pulling: None, diagnostics: Vec::new() };
+                    let document = Document {
+                        uri,
+                        version: 1,
+                        editor_version: editor.version(),
+                        wanted: true,
+                        pulling: None,
+                        diagnostics: Vec::new(),
+                    };
                     self.documents.insert(path.to_owned(), document);
                 }
                 Some(document) if document.editor_version != editor.version() => {

@@ -235,6 +235,23 @@ fn ctrl_alt_o_organizes_the_imports_of_the_current_file_as_one_undo_step() {
 }
 
 #[test]
+fn find_action_runs_organize_imports() {
+    let fake = organizer();
+    let mut session = open(typescript_project(UNSORTED), &fake);
+
+    session.dispatch(Command::OpenFinder(genea_core::FinderMode::Actions));
+    session.dispatch(Command::SetFinderQuery("organize imports".into()));
+    session.settle();
+    let finder = session.view().finder.unwrap();
+    assert_eq!(finder.items[0].label, "Organize Imports");
+    assert_eq!(finder.items[0].shortcut.as_deref(), Some("⌃⌥O"));
+    session.dispatch(Command::AcceptFinder);
+    session.settle();
+
+    assert_eq!(session.text(), SORTED);
+}
+
+#[test]
 fn imports_are_not_organized_if_the_file_changes_before_the_server_answers() {
     let fake = organizer().delay(std::time::Duration::from_millis(200));
     let mut session = open(typescript_project(UNSORTED), &fake);

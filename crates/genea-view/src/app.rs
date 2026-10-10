@@ -368,9 +368,23 @@ fn wire(controller: &WindowController) {
         let modifiers = Modifiers { shift, cmd, alt, ctrl };
         let clone = clone_caret.borrow_mut().command_for(&text, modifiers);
         let everywhere = editor_shift.borrow_mut().command_for(&text);
-        if let Some(command) = clone.or(everywhere).or_else(|| keys::command_for(&text, modifiers)) {
-            with_app(move |app| app.dispatch(key, command));
+        let command = clone.or(everywhere).or_else(|| keys::command_for(&text, modifiers));
+        // The quick-fix popup takes ↑, ↓, Return and Esc while it shows.
+        let popup = keys::popup_key(&text, modifiers);
+        if command.is_none() && popup.is_none() {
+            return;
         }
+        with_app(move |app| {
+            let controller = app.windows.iter().find(|c| c.key == key);
+            let popup = popup.and_then(|k| controller?.quick_fix_command(k));
+            if let Some(command) = popup.or(command) {
+                app.dispatch(key, command);
+            }
+        });
+    });
+    window.on_quick_fix_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_app(move |app| app.dispatch(key, Command::ApplyQuickFix(index)));
     });
     // The finder (ticket #33).
     window.on_open_finder(move |kind| {
@@ -436,6 +450,9 @@ fn wire(controller: &WindowController) {
     window.on_copy(edit(Command::Copy));
     window.on_paste(edit(Command::Paste));
     window.on_select_all(edit(Command::SelectAll));
+    // Quick fixes and organize imports (ticket #45), editing items too.
+    window.on_show_quick_fixes(edit(Command::ShowQuickFixes));
+    window.on_organize_imports(edit(Command::OrganizeImports));
     // The terminal pane (ticket #38).
     window.on_toggle_terminal(menu(Command::ToggleTerminal));
     window.on_terminal_focus(move || {

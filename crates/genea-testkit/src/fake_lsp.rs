@@ -115,7 +115,12 @@ impl LspScript {
             delay: Duration::from_millis(value["delayMs"].as_u64().unwrap_or(0)),
             flood: value["flood"].as_u64().unwrap_or(0) as usize,
             watch: value["watch"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect(),
-            code_actions: value["codeActions"].as_array().into_iter().flatten().map(ScriptedAction::from_json).collect(),
+            code_actions: value["codeActions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(ScriptedAction::from_json)
+                .collect(),
         })
     }
 }

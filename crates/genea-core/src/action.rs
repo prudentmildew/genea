@@ -38,6 +38,8 @@ pub enum Action {
     CloneCaretAbove,
     CloneCaretBelow,
     ToggleLineComment,
+    ShowQuickFixes,
+    OrganizeImports,
     ExpandSelection,
     ShrinkSelection,
     ExpandFold,
@@ -62,7 +64,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 41] = [
+    pub const ALL: [Action; 43] = [
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
@@ -85,6 +87,8 @@ impl Action {
         Action::CloneCaretAbove,
         Action::CloneCaretBelow,
         Action::ToggleLineComment,
+        Action::ShowQuickFixes,
+        Action::OrganizeImports,
         Action::ExpandSelection,
         Action::ShrinkSelection,
         Action::ExpandFold,
@@ -131,6 +135,8 @@ impl Action {
             Action::CloneCaretAbove => "Clone Caret Above",
             Action::CloneCaretBelow => "Clone Caret Below",
             Action::ToggleLineComment => "Comment with Line Comment",
+            Action::ShowQuickFixes => "Show Quick Fixes",
+            Action::OrganizeImports => "Organize Imports",
             Action::ExpandSelection => "Expand Selection",
             Action::ShrinkSelection => "Shrink Selection",
             Action::ExpandFold => "Expand Fold",
@@ -172,6 +178,8 @@ impl Action {
             Action::CloneCaretAbove => "⌥⌥↑",
             Action::CloneCaretBelow => "⌥⌥↓",
             Action::ToggleLineComment => "⌘/",
+            Action::ShowQuickFixes => "⌥↩",
+            Action::OrganizeImports => "⌃⌥O",
             Action::ExpandSelection => "⌥↑",
             Action::ShrinkSelection => "⌥↓",
             Action::ExpandFold => "⌥⌘=",
@@ -219,6 +227,8 @@ impl Action {
                 | Action::CloneCaretAbove
                 | Action::CloneCaretBelow
                 | Action::ToggleLineComment
+                | Action::ShowQuickFixes
+                | Action::OrganizeImports
                 | Action::ExpandSelection
                 | Action::ShrinkSelection
                 | Action::ExpandFold
@@ -253,6 +263,8 @@ impl Action {
             Action::CloneCaretAbove => Command::CloneCaretAbove,
             Action::CloneCaretBelow => Command::CloneCaretBelow,
             Action::ToggleLineComment => Command::ToggleLineComment,
+            Action::ShowQuickFixes => Command::ShowQuickFixes,
+            Action::OrganizeImports => Command::OrganizeImports,
             Action::ExpandSelection => Command::ExpandSelection,
             Action::ShrinkSelection => Command::ShrinkSelection,
             Action::ExpandFold => Command::ExpandFold,

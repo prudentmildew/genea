@@ -67,7 +67,8 @@ pub(super) fn code_actions(actions: &[ScriptedAction], params: &Value, text: &st
                     let start = if find.is_empty() { Some(0) } else { text.find(find.as_str()) };
                     let start = start.unwrap_or(text.len());
                     let end = if find.is_empty() || start == text.len() { start } else { start + find.len() };
-                    let range = json!({ "start": super::position(text, start, utf8), "end": super::position(text, end, utf8) });
+                    let (start, end) = (super::position(text, start, utf8), super::position(text, end, utf8));
+                    let range = json!({ "start": start, "end": end });
                     json!({ "range": range, "newText": replace })
                 })
                 .collect();

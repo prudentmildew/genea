@@ -4,7 +4,7 @@
 // out of the core's ProjectView; every callback turns input into a command.
 
 import { Theme } from "theme.slint";
-import { Line, HunkPopup } from "editor-surface.slint";
+import { Line, HunkPopup, QuickFixPopup } from "editor-surface.slint";
 import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
@@ -96,6 +96,9 @@ export component ProjectWindow inherits Window {
     // The shown git change, in the focused pane only.
     in property <HunkPopup> left-hunk;
     in property <HunkPopup> right-hunk;
+    // The quick-fix popup (ticket #45), shown in the focused pane only.
+    in property <QuickFixPopup> left-quick-fixes;
+    in property <QuickFixPopup> right-quick-fixes;
     // Each pane's file changed on disk while it had unsaved edits (#32).
     in property <bool> left-conflict;
     in property <bool> right-conflict;
@@ -202,6 +205,11 @@ export component ProjectWindow inherits Window {
     // The shown git change's buttons (ticket #56).
     callback rollback-hunk();
     callback hide-hunk();
+    // Quick fixes and organize imports (ticket #45): the Code menu's items
+    // and a click on a fix in the popup.
+    callback show-quick-fixes();
+    callback organize-imports();
+    callback quick-fix-clicked(int);
 
     title: root.window-title;
     preferred-width: 1200px;
@@ -396,6 +404,25 @@ export component ProjectWindow inherits Window {
         // (⌥⌥↑) still gets the arrows.
         Menu {
             title: "Code";
+            // WebStorm's Show Context Actions and Optimize Imports keys.
+            MenuItem {
+                title: "Show Quick Fixes";
+                shortcut: @keys(Alt + Return);
+                enabled: root.has-editor;
+                activated => {
+                    root.show-quick-fixes();
+                }
+            }
+
+            MenuItem {
+                title: "Organize Imports";
+                shortcut: @keys(Meta + Alt + O);
+                enabled: root.has-editor;
+                activated => {
+                    root.organize-imports();
+                }
+            }
+
             MenuItem {
                 title: "Comment with Line Comment";
                 shortcut: @keys(Control + "/");
@@ -617,6 +644,10 @@ export component ProjectWindow inherits Window {
                 can-split: root.can-split;
                 geometry: root.left-geometry;
                 hunk: root.left-hunk;
+                quick-fixes: root.left-quick-fixes;
+                quick-fix-clicked(index) => {
+                    root.quick-fix-clicked(index);
+                }
                 rollback-hunk => {
                     root.rollback-hunk();
                 }
@@ -677,6 +708,10 @@ export component ProjectWindow inherits Window {
                 can-split: root.can-split;
                 geometry: root.right-geometry;
                 hunk: root.right-hunk;
+                quick-fixes: root.right-quick-fixes;
+                quick-fix-clicked(index) => {
+                    root.quick-fix-clicked(index);
+                }
                 rollback-hunk => {
                     root.rollback-hunk();
                 }

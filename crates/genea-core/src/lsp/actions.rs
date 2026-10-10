@@ -10,8 +10,8 @@
 use std::{ops::Range, path::PathBuf};
 
 use gen_lsp_types::{
-    ClientCodeActionKindOptions, ClientCodeActionLiteralOptions, CodeActionClientCapabilities, CodeActionKind, Diagnostic,
-    Position,
+    ClientCodeActionKindOptions, ClientCodeActionLiteralOptions, CodeActionClientCapabilities, CodeActionKind,
+    Diagnostic, Position,
 };
 use ropey::Rope;
 use serde_json::{Value, json};
