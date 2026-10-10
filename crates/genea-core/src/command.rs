@@ -273,6 +273,15 @@ pub enum Command {
     KeepAllChanges,
     /// Revert for every file in Changes that can be reverted.
     RevertAllChanges,
+    /// Opens a file listed in Changes as an inline diff against its review
+    /// baseline (ticket #55; `EditorView::inline_diff`): removed lines
+    /// between its lines, added lines marked. A created file is all added;
+    /// a deleted one opens empty and read-only, all removed. A file that
+    /// can't be diffed (binary, large) or isn't listed opens plainly.
+    OpenChange(PathBuf),
+    /// Shows the focused file plainly again, closing its inline diff. A
+    /// deleted file's tab closes.
+    CloseInlineDiff,
 
     // The terminal pane (ticket #38).
     /// ⌥F12: shows the terminal pane and focuses it; if it is showing and

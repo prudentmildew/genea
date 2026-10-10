@@ -5,6 +5,7 @@ mod check;
 mod decorations;
 mod assist;
 mod external;
+mod inline_diff;
 mod language;
 mod oxlint;
 mod finder;
@@ -50,6 +51,7 @@ use crate::{
     workspace::Workspace,
 };
 use check::Check;
+use inline_diff::InlineDiffs;
 use assist::Assist;
 use language::Language;
 use quick_fixes::QuickFixes;
@@ -141,6 +143,8 @@ pub(crate) struct Project {
     for_workbench: Vec<Command>,
     /// Code-action requests and the quick-fix popup (ticket #45).
     quick_fixes: QuickFixes,
+    /// Files shown with an inline diff (ticket #55).
+    inline_diffs: InlineDiffs,
 }
 
 impl Project {
@@ -178,6 +182,7 @@ impl Project {
             install_requested: false,
             finder: None,
             quick_fixes: QuickFixes::default(),
+            inline_diffs: InlineDiffs::default(),
             finder_generation: 0,
             finder_files: 0,
             recent_files: Vec::new(),
@@ -546,6 +551,11 @@ impl Project {
             Command::RevertChange(path) => self.review.revert(Some(path), jobs),
             Command::KeepAllChanges => self.review.keep(None, jobs),
             Command::RevertAllChanges => self.review.revert(None, jobs),
+            Command::OpenChange(_) => {
+                self.terminal.unfocus();
+                self.inline_diff_command(command, jobs)
+            }
+            Command::CloseInlineDiff => self.inline_diff_command(command, jobs),
             Command::ShowQuickFixes
             | Command::MoveQuickFixSelection(_)
             | Command::ApplyQuickFix(_)
@@ -812,6 +822,7 @@ impl Project {
     /// Starts a background diff of an open file with its text at HEAD, if
     /// its gutter markers are behind and none is running (ticket #56).
     pub(crate) fn diff_file(&mut self, path: &Path, jobs: &Jobs) {
+        self.diff_inline(path, jobs);
         let Some(editor) = self.open_editor(path) else { return };
         let (version, text) = (editor.version(), editor.snapshot().text);
         if let Some(job) = self.git.start_diff(path, version, text) {
@@ -856,6 +867,7 @@ impl Project {
                 .as_ref()
                 .filter(|(path, _)| path == e.path())
                 .and_then(|(path, line)| self.git.hunk_view(path, e.version(), *line));
+            self.complete_inline_diff(&mut view);
             self.assist_view(e, &mut view);
             view
         });
@@ -867,6 +879,7 @@ impl Project {
             {
                 view.problems = self.inline_problems(e, &view.lines);
                 view.gutter = self.gutter(e, &view.lines);
+                self.complete_inline_diff(view);
             }
         }
         let (errors, warnings) = self.problems.counts();
@@ -1160,6 +1173,7 @@ impl Project {
         }
         self.reparse_file(&path, jobs);
         self.git.load_base(&path, jobs);
+        self.diff_inline(&path, jobs);
     }
 
     /// Reading a file failed: a notice says why. A tab showing its first

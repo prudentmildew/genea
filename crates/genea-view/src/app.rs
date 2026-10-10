@@ -667,6 +667,18 @@ fn wire(controller: &WindowController) {
             controller.resolve_conflict(&mut app.workbench, pane, choice);
         });
     });
+    let diff_bar = move |keep: Option<bool>| {
+        move |pane: i32| {
+            let Ok(pane) = usize::try_from(pane) else { return };
+            with_app(move |app| {
+                let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) else { return };
+                controller.diff_bar_clicked(&mut app.workbench, pane, keep);
+            });
+        }
+    };
+    window.on_diff_kept(diff_bar(Some(true)));
+    window.on_diff_reverted(diff_bar(Some(false)));
+    window.on_diff_closed(diff_bar(None));
     window.on_file_clicked(move |index| {
         let Ok(index) = usize::try_from(index) else { return };
         with_app(move |app| {

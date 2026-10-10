@@ -1,8 +1,8 @@
 // The Changes view in the left column (ticket #53): the files changed on
 // disk outside Genea since the review baseline. Each row has Keep and
 // Revert (when the baseline can be restored); the header has Keep All and
-// Revert All. Clicking
-// a row opens the file. Rows are set from Rust (src/window.rs) out of the
+// Revert All. Clicking a row opens the file as an inline diff against its
+// baseline (ticket #55). Rows are set from Rust (src/window.rs) out of the
 // core's ProjectView.
 
 import { ListView } from "std-widgets.slint";
