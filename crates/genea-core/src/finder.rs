@@ -85,6 +85,7 @@ impl Finder {
             query: self.query.clone(),
             items: self.items.clone(),
             selected: (!self.items.is_empty()).then_some(self.selected),
+            matching: self.new_query,
         }
     }
 }

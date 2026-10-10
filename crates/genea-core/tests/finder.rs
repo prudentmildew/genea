@@ -375,3 +375,23 @@ fn an_editing_action_does_nothing_while_the_terminal_has_the_focus() {
     comment(&mut workbench);
     assert_eq!(first_line(&workbench), "// let a = 1;");
 }
+
+#[test]
+fn while_a_new_query_is_matched_the_finder_shows_the_last_results_and_says_so() {
+    let (_fixture, mut workbench, project) =
+        open(FixtureProject::new().file("src/button.ts", "").file("src/main.ts", ""));
+
+    workbench.dispatch(project, Command::OpenFinder(FinderMode::Files));
+    search(&mut workbench, project, "button");
+    assert!(!workbench.project(project).unwrap().finder.unwrap().matching);
+
+    workbench.dispatch(project, Command::SetFinderQuery("main".into()));
+    let finder = workbench.project(project).unwrap().finder.unwrap();
+    assert!(finder.matching, "the results aren't for the new query yet");
+    assert_eq!(results(&workbench, project), ["button.ts  src"]);
+
+    workbench.settle().unwrap();
+    let finder = workbench.project(project).unwrap().finder.unwrap();
+    assert!(!finder.matching);
+    assert_eq!(results(&workbench, project), ["main.ts  src"]);
+}
