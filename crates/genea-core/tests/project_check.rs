@@ -196,3 +196,82 @@ fn open_files_show_live_diagnostics_instead_of_the_checks() {
         "a closed file shows the check's results again"
     );
 }
+
+impl Session {
+    /// The files whose project-check results show as stale.
+    fn stale(&self) -> Vec<PathBuf> {
+        let mut stale: Vec<PathBuf> = self.view().problems.into_iter().filter(|p| p.stale).map(|p| p.path).collect();
+        stale.dedup();
+        stale
+    }
+}
+
+/// A check with an error in each of `src/main.ts` and `src/other.ts`.
+fn two_errors() -> (FixtureProject, FakeTsc) {
+    let fixture = typescript_project()
+        .file("src/main.ts", "let a: number = \"oops\";\n")
+        .file("src/other.ts", "let b: number = \"no\";\n")
+        .build();
+    let tsc = FakeTsc::new().reports(
+        &format!(
+            "src/main.ts(1,17): error TS2322: {TYPE_ERROR}\n\
+             src/other.ts(1,17): error TS2322: {TYPE_ERROR}\n"
+        ),
+        1,
+    );
+    (fixture, tsc)
+}
+
+#[test]
+fn editing_a_file_marks_its_stored_results_stale_until_the_next_check() {
+    let (fixture, tsc) = two_errors();
+    let mut session = open(fixture, &tsc);
+    session.check();
+    assert_eq!(session.stale(), Vec::<PathBuf>::new());
+
+    session.dispatch(Command::OpenFile("src/main.ts".into()));
+    session.settle();
+    session.dispatch(Command::InsertText("// ".into()));
+    session.dispatch(Command::Save);
+    session.settle();
+    session.dispatch(Command::CloseTab { pane: 0, tab: 0 });
+    session.settle();
+
+    assert_eq!(session.stale(), [PathBuf::from("src/main.ts")]);
+    assert_eq!(session.checked().len(), 2, "stale results stay until the next check");
+
+    session.check();
+    assert_eq!(session.stale(), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn a_change_on_disk_marks_its_files_results_stale() {
+    let (fixture, tsc) = two_errors();
+    let mut session = open(fixture, &tsc);
+    session.check();
+
+    session.fixture.write("src/other.ts", "let b: number = 1;\n");
+    session.settle();
+
+    assert_eq!(session.stale(), [PathBuf::from("src/other.ts")]);
+}
+
+#[test]
+fn a_change_while_the_check_runs_marks_its_results_stale() {
+    let (fixture, tsc) = two_errors();
+    let tsc = tsc.hold();
+    let mut session = open(fixture, &tsc);
+
+    session.dispatch(Command::RunProjectCheck);
+    session.fixture.write("src/other.ts", "let b: number = 1;\n");
+    let release = tsc.clone();
+    let releasing = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        release.release();
+    });
+    session.settle();
+    releasing.join().unwrap();
+
+    assert_eq!(session.checked().len(), 2);
+    assert_eq!(session.stale(), [PathBuf::from("src/other.ts")]);
+}

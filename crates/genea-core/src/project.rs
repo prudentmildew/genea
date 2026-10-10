@@ -186,6 +186,7 @@ impl Project {
         self.files.files_changed(&changes, jobs);
         self.dependencies.files_changed(&changes, jobs);
         self.language_files_changed(&changes);
+        self.project_check_files_changed(&changes);
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
             self.git.reload(open, jobs);

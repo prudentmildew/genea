@@ -2,12 +2,12 @@
 //! project's TypeScript 7 and putting its results in Problems. The process
 //! and its output are `crate::project_check`.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use genea_host::ProcessSpec;
 
 use super::Project;
-use crate::{lsp::text, problems::ProblemSource, project_check};
+use crate::{lsp::text, problems::ProblemSource, project_check, watcher::FileChanges};
 
 /// The project check's state in a project.
 #[derive(Default)]
@@ -16,6 +16,11 @@ pub(crate) struct Check {
     generation: u64,
     /// A check is running.
     running: bool,
+    /// Files changed on disk since the running check started (relative to
+    /// the root); stale once its results land.
+    changed: BTreeSet<PathBuf>,
+    /// The watcher lost track of changes while the check ran.
+    rescanned: bool,
 }
 
 impl Project {
@@ -25,6 +30,8 @@ impl Project {
         self.check.generation += 1;
         let generation = self.check.generation;
         self.check.running = true;
+        self.check.changed.clear();
+        self.check.rescanned = false;
         let spec = self.process_env().apply(ProcessSpec::new(binary).args(project_check::ARGS));
         let (id, root) = (self.id, self.root.clone());
         jobs.spawn("project check", move || {
@@ -37,6 +44,13 @@ impl Project {
                 project.check.running = false;
                 if let Ok(outcome) = outcome {
                     project.problems.replace(ProblemSource::ProjectCheck, outcome.problems);
+                }
+                let check = &mut project.check;
+                if std::mem::take(&mut check.rescanned) {
+                    project.problems.mark_all_stale();
+                }
+                for path in std::mem::take(&mut check.changed) {
+                    project.problems.mark_stale(&path);
                 }
             })
         });
@@ -57,5 +71,21 @@ impl Project {
             .map(|e| e.path().to_owned())
             .collect();
         self.problems.set_live(live);
+    }
+
+    /// Files changed on disk: their project-check results are stale, and
+    /// so will be those of a check running now.
+    pub(super) fn project_check_files_changed(&mut self, changes: &FileChanges) {
+        if changes.rescan {
+            self.problems.mark_all_stale();
+            self.check.rescanned |= self.check.running;
+        }
+        for path in &changes.paths {
+            let Ok(path) = path.strip_prefix(&self.root) else { continue };
+            self.problems.mark_stale(path);
+            if self.check.running {
+                self.check.changed.insert(path.to_owned());
+            }
+        }
     }
 }

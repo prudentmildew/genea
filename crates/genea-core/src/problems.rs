@@ -84,6 +84,9 @@ pub(crate) struct Problems {
     /// Files open on a language server: their live diagnostics take over
     /// from the project check's stored results, which are hidden there.
     live: BTreeSet<PathBuf>,
+    /// Files whose project-check results are stale: they changed since the
+    /// check.
+    stale: BTreeSet<PathBuf>,
 }
 
 impl Problems {
@@ -94,6 +97,24 @@ impl Problems {
             by_file.entry(problem.path.clone()).or_default().push(problem);
         }
         self.by_source.insert(source, by_file);
+        if source == ProblemSource::ProjectCheck {
+            self.stale.clear();
+        }
+    }
+
+    /// `path` changed since the project check: its results there (if any)
+    /// are stale until the next check.
+    pub(crate) fn mark_stale(&mut self, path: &Path) {
+        if self.by_source.get(&ProblemSource::ProjectCheck).is_some_and(|by_file| by_file.contains_key(path)) {
+            self.stale.insert(path.to_owned());
+        }
+    }
+
+    /// Every file with project-check results is stale (the watcher lost
+    /// track of what changed).
+    pub(crate) fn mark_all_stale(&mut self) {
+        let paths = self.by_source.get(&ProblemSource::ProjectCheck).into_iter().flat_map(BTreeMap::keys);
+        self.stale.extend(paths.cloned());
     }
 
     /// Replaces `source`'s problems in one file, leaving its other files'.
@@ -157,6 +178,7 @@ impl Problems {
                 position: p.start,
                 location: format!("{}:{}", p.start.line + 1, p.start.column + 1),
                 message: p.message.clone(),
+                stale: source == ProblemSource::ProjectCheck && self.stale.contains(&p.path),
             })
             .collect()
     }

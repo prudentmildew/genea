@@ -238,6 +238,10 @@ pub struct ProblemItem {
     /// `position` as the user reads it: `line:column`, 1-based.
     pub location: String,
     pub message: String,
+    /// A project-check result (ticket #48) for a file that changed since
+    /// the check: it may be out of date, and is shown dimmed until the next
+    /// check.
+    pub stale: bool,
 }
 
 /// A problem underlined in the editor, on one visible line.
