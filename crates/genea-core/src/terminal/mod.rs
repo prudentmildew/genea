@@ -48,15 +48,17 @@ use genea_host::{Exit, Host, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
 mod grid;
 mod input;
 mod links;
+mod urls;
 
 use grid::Screen;
+use urls::UrlFinder;
 
 use crate::{
     command::{Command, Modifiers, TerminalKey},
     environment::ProcessEnv,
     jobs::Jobs,
     problems::TextPosition,
-    view::{TerminalLine, TerminalStatus, TerminalTab, TerminalView},
+    view::{ScriptLink, TerminalLine, TerminalStatus, TerminalTab, TerminalView},
     workbench::{Core, ProjectId},
 };
 
@@ -69,6 +71,10 @@ const DEFAULT_SIZE: Size = Size { rows: 24, columns: 80 };
 /// The reader parses at most this much per hold of the grid's lock, so the
 /// main thread's copy never waits long behind a flood.
 const PARSE_CHUNK: usize = 16 * 1024;
+
+/// How long Stop waits for a program to end on SIGINT before it kills it
+/// (ticket #40). On the host clock.
+pub const SCRIPT_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The shell when the environment names none: macOS's default.
 const DEFAULT_SHELL: &str = "/bin/zsh";
@@ -104,6 +110,9 @@ pub(crate) enum Launch {
     Shell,
     /// The project's package manager, `name` (`pnpm`), with `args`.
     PackageManager { name: String, args: Vec<String> },
+    /// A `package.json` script, through the package manager's `run`, in the
+    /// tab's directory (ticket #40).
+    Script { script: String },
 }
 
 /// One tab: its program, and what it showed.
@@ -123,6 +132,11 @@ struct Tab {
     name: String,
     /// The title the program set.
     title: Option<String>,
+    /// The user stopped its program (ticket #40): its end shows as stopped.
+    stopped: bool,
+    /// A script's link: the first local URL its program printed, while it
+    /// runs (ticket #40).
+    url: Option<String>,
 }
 
 enum Process {
@@ -156,11 +170,13 @@ struct Requests {
     title: Option<Option<String>>,
     /// Text to put on the clipboard (OSC 52).
     copy: Option<String>,
+    /// A script printed its first local URL.
+    url: Option<String>,
 }
 
 impl Requests {
     fn is_asked(&self) -> bool {
-        self.title.is_some() || self.copy.is_some()
+        self.title.is_some() || self.copy.is_some() || self.url.is_some()
     }
 }
 
@@ -270,6 +286,7 @@ impl Tab {
         let name = match &launch {
             Launch::Shell => String::new(),
             Launch::PackageManager { name, args } => format!("{name} {}", args.join(" ")),
+            Launch::Script { script } => script.clone(),
         };
         let screen = Screen {
             lines: blank_lines(size),
@@ -286,6 +303,8 @@ impl Tab {
             screen: RefCell::new(screen),
             name,
             title: None,
+            stopped: false,
+            url: None,
         }
     }
 
@@ -323,6 +342,8 @@ impl Tab {
         screen.lines = blank_lines(size);
         screen.cursor = None;
         self.title = None;
+        self.stopped = false;
+        self.url = None;
     }
 
     fn has_ended(&self) -> bool {
@@ -337,6 +358,7 @@ impl Tab {
         match &self.process {
             Process::Waiting | Process::Starting => TerminalStatus::Starting,
             Process::Running(_) => TerminalStatus::Running,
+            Process::Exited(_) if self.stopped => TerminalStatus::Stopped,
             Process::Exited(exit) => TerminalStatus::Exited { code: exit.code },
             Process::Failed(message) => TerminalStatus::Failed(message.clone()),
         }
@@ -401,6 +423,31 @@ impl Terminal {
         self.select(index);
     }
 
+    /// Runs a `package.json` script in a tab of its own named `title`, in
+    /// `directory`, and shows it: like [`run_package_manager`], a tab that
+    /// ran it before is reused.
+    ///
+    /// [`run_package_manager`]: Self::run_package_manager
+    pub(crate) fn run_script(&mut self, directory: PathBuf, title: String, script: &str) {
+        let launch = Launch::Script { script: script.to_owned() };
+        let index = match self.tabs.iter().position(|tab| tab.launch == launch && tab.directory == directory) {
+            Some(index) => {
+                if self.tabs[index].has_ended() {
+                    self.tabs[index].restart(self.size);
+                }
+                index
+            }
+            None => {
+                let mut tab = Tab::new(launch, self.size, directory);
+                tab.name = title;
+                self.tabs.push(tab);
+                self.tabs.len() - 1
+            }
+        };
+        self.visible = true;
+        self.select(index);
+    }
+
     /// Whether a tab runs (or is about to run) the package manager with
     /// `args`.
     pub(crate) fn is_running_package_manager(&self, args: &[&str]) -> bool {
@@ -449,6 +496,13 @@ impl Terminal {
                         continue;
                     }
                 },
+                Launch::Script { script } => match &package_manager {
+                    Ok(program) => Some(ProcessSpec::new(program).args(["run", script]).cwd(&tab.directory)),
+                    Err(reason) => {
+                        tab.process = Process::Failed(reason.clone());
+                        continue;
+                    }
+                },
             };
             tab.process = Process::Starting;
             let (generation, env, host) = (self.generation, env.clone(), host.clone());
@@ -481,7 +535,9 @@ impl Terminal {
             Err(error) => {
                 tab.process = Process::Failed(match tab.launch {
                     Launch::Shell => format!("Couldn't start your shell ({}): {error}", program.display()),
-                    Launch::PackageManager { .. } => format!("Couldn't start {}: {error}", tab.name),
+                    Launch::PackageManager { .. } | Launch::Script { .. } => {
+                        format!("Couldn't start {}: {error}", tab.name)
+                    }
                 });
                 return;
             }
@@ -502,6 +558,7 @@ impl Terminal {
             .spawn(move || write_pty(input, writer_control.as_ref(), from_core))
             .expect("spawn the terminal's writer");
         let reader = Reader {
+            urls: matches!(tab.launch, Launch::Script { .. }).then(UrlFinder::new),
             output,
             term: term.clone(),
             control: control.clone(),
@@ -534,6 +591,9 @@ impl Terminal {
         if let Some(text) = requests.copy {
             host.clipboard().write_text(&text);
         }
+        if let Some(url) = requests.url {
+            tab.url.get_or_insert(url);
+        }
     }
 
     /// The program's side of the PTY closed: it exited.
@@ -542,6 +602,7 @@ impl Terminal {
         // The last screen stays.
         drop(tab.screen());
         tab.process = Process::Exited(exit);
+        tab.url = None;
         tab.screen.get_mut().cursor = None;
     }
 
@@ -564,6 +625,8 @@ impl Terminal {
                 self.show();
             }
             Command::CloseTerminalTab(index) if index < self.tabs.len() => self.close(index),
+            Command::StopTerminalTab(index) => self.stop(index, host),
+            Command::RerunTerminalTab(index) => self.rerun(index),
             Command::TerminalKey(TerminalKey::Enter, _)
                 if self.tab().is_some_and(|tab| tab.launch == Launch::Shell && tab.has_ended()) =>
             {
@@ -593,6 +656,51 @@ impl Terminal {
             }
             _ => {}
         }
+    }
+
+    /// Stops a command's tab: interrupts its program, and kills it if it
+    /// hasn't ended after [`SCRIPT_STOP_TIMEOUT`]. A program not started
+    /// yet never starts.
+    fn stop(&mut self, index: usize, host: &dyn Host) {
+        let Some(tab) = self.tabs.get_mut(index).filter(|tab| tab.launch != Launch::Shell) else { return };
+        match &tab.process {
+            Process::Running(session) => {
+                tab.stopped = true;
+                let _ = session.control.interrupt();
+                let control = session.control.clone();
+                host.clock().after(
+                    SCRIPT_STOP_TIMEOUT,
+                    Box::new(move || {
+                        // Does nothing once it has ended.
+                        let _ = control.kill();
+                    }),
+                );
+            }
+            Process::Waiting => {
+                tab.stopped = true;
+                tab.process = Process::Exited(Exit { code: None, signal: None });
+            }
+            // A start in flight: it is started as a new generation, so
+            // forgetting it drops its PTY (and hangs it up) when it lands.
+            Process::Starting => {
+                tab.generation = 0;
+                tab.stopped = true;
+                tab.process = Process::Exited(Exit { code: None, signal: None });
+            }
+            Process::Exited(_) | Process::Failed(_) => {}
+        }
+    }
+
+    /// Runs a command's tab again: a running program is hung up (its
+    /// session dropped) and replaced.
+    fn rerun(&mut self, index: usize) {
+        let size = self.size;
+        let Some(tab) = self.tabs.get_mut(index).filter(|tab| tab.launch != Launch::Shell) else { return };
+        tab.restart(size);
+        // Results of the replaced program no longer find the tab.
+        tab.generation = 0;
+        self.visible = true;
+        self.select(index);
     }
 
     /// Shows the pane and focuses it, with a new shell if it has no tabs.
@@ -759,7 +867,16 @@ impl Terminal {
             alternate_screen: screen.mode.contains(TermMode::ALT_SCREEN),
             mouse_reporting: screen.mode.intersects(TermMode::MOUSE_MODE),
             preedit: self.preedit.clone(),
+            url: tab.and_then(|tab| tab.url.clone()),
         }
+    }
+
+    /// The running scripts' links, in tab order.
+    pub(crate) fn script_links(&self) -> Vec<ScriptLink> {
+        let links = self.tabs.iter().enumerate().filter(|(_, tab)| matches!(tab.process, Process::Running(_)));
+        links
+            .filter_map(|(index, tab)| Some(ScriptLink { tab: index, title: tab.title(), url: tab.url.clone()? }))
+            .collect()
     }
 }
 
@@ -775,6 +892,8 @@ fn shell(env: &ProcessEnv, host: &dyn Host) -> ProcessSpec {
 
 /// The reader thread: PTY output into the emulator, then an Apply.
 struct Reader {
+    /// Looks for a script's link; `None` for other tabs, or once found.
+    urls: Option<UrlFinder>,
     output: Box<dyn Read + Send>,
     term: Arc<Mutex<Term<Listener>>>,
     control: Arc<dyn PtyControl>,
@@ -800,6 +919,12 @@ impl Reader {
             };
             for chunk in buffer[..n].chunks(PARSE_CHUNK) {
                 processor.advance(&mut *self.term.lock().unwrap(), chunk);
+            }
+            if let Some(urls) = &mut self.urls
+                && let Some(url) = urls.advance(&buffer[..n])
+            {
+                self.requests.lock().unwrap().url = Some(url);
+                self.urls = None;
             }
             // Wake the main thread if it has taken the last copy, or if the
             // program asked for something.

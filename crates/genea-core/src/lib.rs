@@ -60,6 +60,7 @@ pub use editor::{LARGE_FILE_BYTES, MAX_VISIBLE_COLUMNS};
 pub use problems::{ProblemSource, Severity, TextPosition};
 pub use syntax::Highlight;
 pub use environment::LOGIN_SHELL_TIMEOUT;
+pub use terminal::SCRIPT_STOP_TIMEOUT;
 pub use lsp::{MAX_RESTARTS, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT};
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
@@ -78,5 +79,5 @@ pub use view::{
     TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
-pub use view::{PackageScripts, Script};
+pub use view::{PackageScripts, Script, ScriptLink};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

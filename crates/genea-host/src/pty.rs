@@ -30,7 +30,7 @@ pub struct Pty {
     pub control: Box<dyn PtyControl>,
 }
 
-/// Resizing, hanging up and waiting for a program on a pseudo-terminal.
+/// Resizing, signalling and waiting for a program on a pseudo-terminal.
 pub trait PtyControl: Send + Sync {
     /// The OS process id, if there is a real process.
     fn id(&self) -> Option<u32>;
@@ -39,6 +39,12 @@ pub trait PtyControl: Send + Sync {
     /// Hangs up the terminal, as closing a terminal window does: the
     /// program gets SIGHUP (a shell passes it on to its jobs).
     fn hang_up(&self) -> io::Result<()>;
+    /// Interrupts the program, as ⌃C does: its process group gets SIGINT
+    /// (ticket #40's Stop).
+    fn interrupt(&self) -> io::Result<()>;
+    /// Kills the program and its process group (SIGKILL), when it doesn't
+    /// end on an interrupt.
+    fn kill(&self) -> io::Result<()>;
     /// Blocks until the program exits.
     fn wait(&self) -> io::Result<Exit>;
 }

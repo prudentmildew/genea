@@ -398,6 +398,17 @@ impl Project {
         }
     }
 
+    /// Runs a package's script in a terminal tab (ticket #40), which starts
+    /// once the environment is ready.
+    fn run_script(&mut self, package: &Path, script: &str) {
+        let Some(found) = self.workspace.package(package) else { return };
+        if !found.scripts.iter().any(|s| s.name == script) {
+            return;
+        }
+        let title = format!("{}: {script}", found.name);
+        self.terminal.run_script(self.root.join(package), title, script);
+    }
+
     /// Reads the toolchain pins and starts the downloads, in the background.
     /// A folder without a root `package.json` has no toolchain. (Checking is
     /// one stat on the main thread, like `open_project`'s folder check.)
@@ -483,7 +494,9 @@ impl Project {
             | Command::TerminalMouse { .. }
             | Command::TerminalPaste
             | Command::NewTerminalTab
-            | Command::CloseTerminalTab(_) => self.terminal.command(command, host),
+            | Command::CloseTerminalTab(_)
+            | Command::StopTerminalTab(_)
+            | Command::RerunTerminalTab(_) => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::RestartLanguageServer => self.restart_language_server(),
             Command::AddTypeScript => self.add_typescript(jobs),
@@ -566,6 +579,7 @@ impl Project {
                 }
             }
             Command::InstallDependencies => self.install_dependencies(),
+            Command::RunScript { package, script } => self.run_script(&package, &script),
             Command::ExtendSelection { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, true, self.viewport_rows);
@@ -788,6 +802,7 @@ impl Project {
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
             language_servers: self.language_status(),
+            script_links: self.terminal.script_links(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));

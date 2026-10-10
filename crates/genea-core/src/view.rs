@@ -464,6 +464,21 @@ pub struct StatusBar {
     /// The project's language servers (tsgo now; Oxlint and Oxfmt later),
     /// one item each. Empty for a folder without a root `package.json`.
     pub language_servers: Vec<LanguageServerStatus>,
+    /// The links of running scripts (ticket #40), in tab order: each the
+    /// first local URL its script printed. Clicking one opens it in the
+    /// browser.
+    pub script_links: Vec<ScriptLink>,
+}
+
+/// A running script's dev-server link: the first `http(s)://` URL on
+/// `localhost`, `127.0.0.1` or `[::1]` it printed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScriptLink {
+    /// Its terminal tab (index into `TerminalView::tabs`).
+    pub tab: usize,
+    /// The tab's title: `<package>: <script>`.
+    pub title: String,
+    pub url: String,
 }
 
 /// A language server's status-bar item.
@@ -647,6 +662,9 @@ pub struct TerminalView {
     pub mouse_reporting: bool,
     /// The IME composition being typed (a dead key), drawn at the cursor.
     pub preedit: Option<String>,
+    /// The showing tab's script link (ticket #40): the first local URL its
+    /// script printed, while it runs. Clicking it opens it in the browser.
+    pub url: Option<String>,
 }
 
 /// A terminal tab, as its tab strip shows it.
@@ -667,6 +685,9 @@ pub enum TerminalStatus {
     Running,
     /// The program exited, with its code if it exited normally.
     Exited { code: Option<i32> },
+    /// The program ended after the user stopped it
+    /// (`Command::StopTerminalTab`).
+    Stopped,
     /// The program couldn't start: why.
     Failed(String),
 }

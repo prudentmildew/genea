@@ -344,6 +344,29 @@ struct OsPty {
     exit: Mutex<Option<Exit>>,
 }
 
+impl OsPty {
+    /// Sends `signal` to the program's process group, unless it has been
+    /// reaped.
+    fn signal(&self, signal: libc::c_int) -> io::Result<()> {
+        let exit = self.exit.lock().unwrap();
+        if exit.is_some() {
+            return Ok(());
+        }
+        // The program leads its own process group (setsid).
+        // SAFETY: plain syscall; the process isn't reaped (checked above,
+        // under the lock `wait` takes to record its reaping).
+        if unsafe { libc::killpg(self.pid, signal) } == -1 {
+            let error = io::Error::last_os_error();
+            // The group has gone (it exited but isn't reaped yet).
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
 impl PtyControl for OsPty {
     fn id(&self) -> Option<u32> {
         Some(self.pid as u32)
@@ -360,17 +383,15 @@ impl PtyControl for OsPty {
     }
 
     fn hang_up(&self) -> io::Result<()> {
-        let exit = self.exit.lock().unwrap();
-        if exit.is_some() {
-            return Ok(());
-        }
-        // The program leads its own process group (setsid).
-        // SAFETY: plain syscall; the process isn't reaped (checked above,
-        // under the lock `wait` takes to record its reaping).
-        if unsafe { libc::killpg(self.pid, libc::SIGHUP) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        self.signal(libc::SIGHUP)
+    }
+
+    fn interrupt(&self) -> io::Result<()> {
+        self.signal(libc::SIGINT)
+    }
+
+    fn kill(&self) -> io::Result<()> {
+        self.signal(libc::SIGKILL)
     }
 
     fn wait(&self) -> io::Result<Exit> {
@@ -512,6 +533,40 @@ mod tests {
         assert_eq!(pty.control.wait().unwrap(), Exit { code: None, signal: Some(libc::SIGHUP) });
         // Hanging up a reaped program does nothing.
         pty.control.hang_up().unwrap();
+    }
+
+    /// Reads until `text` shows, so the program has got that far.
+    fn read_until(output: &mut dyn Read, text: &str) {
+        let mut seen = Vec::new();
+        let mut buffer = [0; 256];
+        while !String::from_utf8_lossy(&seen).contains(text) {
+            let n = output.read(&mut buffer).unwrap();
+            assert!(n > 0, "{}", String::from_utf8_lossy(&seen));
+            seen.extend_from_slice(&buffer[..n]);
+        }
+    }
+
+    #[test]
+    fn a_pty_program_and_its_children_are_interrupted_and_killed() {
+        let host = RealHost::new();
+        // The shell's trap ends it once its `sleep` child (which gets the
+        // interrupt too, being in its process group) is done.
+        let spec = ProcessSpec::new("/bin/sh").args(["-c", "trap 'exit 7' INT; echo ready; while :; do sleep 0.1; done"]);
+        let mut pty = host.ptys().spawn(&spec, PtySize { rows: 24, columns: 80 }).unwrap();
+        read_until(pty.output.as_mut(), "ready");
+        pty.control.interrupt().unwrap();
+        assert_eq!(pty.control.wait().unwrap(), Exit::code(7));
+        // Signalling a reaped program does nothing.
+        pty.control.interrupt().unwrap();
+        pty.control.kill().unwrap();
+
+        // One that ignores SIGINT is killed.
+        let spec = ProcessSpec::new("/bin/sh").args(["-c", "trap '' INT; echo ready; while :; do sleep 1; done"]);
+        let mut pty = host.ptys().spawn(&spec, PtySize { rows: 24, columns: 80 }).unwrap();
+        read_until(pty.output.as_mut(), "ready");
+        pty.control.interrupt().unwrap();
+        pty.control.kill().unwrap();
+        assert_eq!(pty.control.wait().unwrap(), Exit { code: None, signal: Some(libc::SIGKILL) });
     }
 
     #[test]
