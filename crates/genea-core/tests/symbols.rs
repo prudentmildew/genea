@@ -94,3 +94,46 @@ fn file_symbols_list_the_current_files_symbols_and_choosing_one_moves_the_caret(
     assert!(session.workbench.project(session.project).unwrap().finder.is_none());
     assert_eq!(session.caret(), ("src/shapes.ts".into(), Caret { line: 5, column: 2 }));
 }
+
+#[test]
+fn project_symbols_find_symbols_across_the_project_and_open_them() {
+    let mut session = open(
+        typescript_project()
+            .file("src/shapes.ts", SHAPES)
+            // The name comes after a non-ASCII comment: tsgo counts UTF-8
+            // bytes, the caret counts characters.
+            .file("src/main.ts", "/* café */ export function drawCircle() {}\n"),
+    );
+    session.dispatch(Command::OpenFile("src/shapes.ts".into()));
+
+    session.dispatch(Command::OpenFinder(FinderMode::ProjectSymbols));
+    assert!(session.results().is_empty(), "nothing before a query");
+
+    session.dispatch(Command::SetFinderQuery("circle".into()));
+    assert_eq!(session.results(), ["Circle  src/shapes.ts", "circle  src/shapes.ts", "drawCircle  src/main.ts"]);
+
+    session.dispatch(Command::SetFinderQuery("drawc".into()));
+    assert_eq!(session.results(), ["drawCircle  src/main.ts"]);
+    session.dispatch(Command::AcceptFinder);
+    assert_eq!(session.caret(), ("src/main.ts".into(), Caret { line: 0, column: 27 }));
+
+    // Members show what they are declared in.
+    session.dispatch(Command::OpenFinder(FinderMode::ProjectSymbols));
+    session.dispatch(Command::SetFinderQuery("radius".into()));
+    assert_eq!(session.results(), ["radius  Circle · src/shapes.ts"]);
+}
+
+#[test]
+fn project_symbols_leave_out_node_modules_and_what_the_config_excludes() {
+    let mut session = open(
+        typescript_project()
+            .file("src/area.ts", "export function areaOf() {}\n")
+            .file("dist/area.js", "export function areaOf() {}\n")
+            .file("node_modules/geometry/index.d.ts", "export declare function areaOf(): number;\n")
+            .file("genea.jsonc", r#"{ "exclude": ["dist/"] }"#),
+    );
+
+    session.dispatch(Command::OpenFinder(FinderMode::ProjectSymbols));
+    session.dispatch(Command::SetFinderQuery("areaOf".into()));
+    assert_eq!(session.results(), ["areaOf  src/area.ts"]);
+}

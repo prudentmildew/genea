@@ -11,9 +11,10 @@
 //!   and enum members.
 //!
 //! Braces are counted naively per line. `workspace/symbol` reads every
-//! first-class-language file under the workspace root (skipping
-//! `node_modules` and dot folders), using the open document's text where
-//! there is one, and matches names containing the query, ignoring case.
+//! first-class-language file under the workspace root (`node_modules` too,
+//! as tsgo can answer with a dependency's declarations; not dot folders),
+//! using the open document's text where there is one, and matches names
+//! containing the query, ignoring case.
 
 use std::{
     collections::HashMap,
@@ -268,8 +269,7 @@ fn word(line: &str, at: usize) -> Option<(&str, usize)> {
     (len > 0).then(|| (&rest[..len], at + len))
 }
 
-/// The first-class-language files under `folder`, without `node_modules`
-/// and dot folders.
+/// The first-class-language files under `folder`, without dot folders.
 fn source_files(folder: &Path, paths: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(folder) else { return };
     for entry in entries.flatten() {
@@ -277,7 +277,7 @@ fn source_files(folder: &Path, paths: &mut Vec<PathBuf>) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if name != "node_modules" && !name.starts_with('.') {
+            if !name.starts_with('.') {
                 source_files(&path, paths);
             }
         } else if matches!(path.extension().and_then(|e| e.to_str()), Some("ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs")) {
