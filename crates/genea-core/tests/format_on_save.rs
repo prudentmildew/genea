@@ -259,3 +259,32 @@ fn a_save_whose_servers_answer_in_time_has_no_notice_when_the_timeout_passes() {
     let saved: Vec<String> = session.notices().into_iter().filter(|notice| notice.starts_with("Saved")).collect();
     assert_eq!(saved, Vec::<String>::new());
 }
+
+// --- Reformat file (⌥⌘L) ------------------------------------------------------------
+
+impl Session {
+    /// The focused editor's text.
+    fn text(&self) -> String {
+        let editor = self.view().editor.unwrap();
+        editor.lines.iter().map(|line| format!("{}\n", line.text)).collect::<String>()
+    }
+}
+
+#[test]
+fn reformat_file_formats_the_buffer_without_saving_it_even_with_format_on_save_off() {
+    let fixture =
+        oxc_project().file("genea.jsonc", r#"{ "formatOnSave": false }"#).file("src/main.ts", "const  a=1").build();
+    let oxfmt = FakeLsp::new().formats(&[("const  a=1", "const a = 1;")]);
+    let mut session = open(fixture, &oxfmt, &linter());
+    session.open_file("src/main.ts");
+
+    session.dispatch(Command::ReformatFile);
+    session.settle();
+
+    assert_eq!(session.text(), "const a = 1;\n");
+    assert!(session.modified());
+    assert_eq!(session.disk("src/main.ts"), "const  a=1");
+
+    session.dispatch(Command::Undo);
+    assert_eq!(session.text(), "const  a=1\n", "formatting is one undo step");
+}
