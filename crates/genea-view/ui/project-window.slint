@@ -1,6 +1,6 @@
 // A project window: the native menu bar (muda), the editor area (one pane
 // of tabs, or two side by side after a split), the terminal pane on the
-// right (ticket #38) and the status bar. Every property is set from Rust (src/window.rs)
+// right or at the bottom (tickets #38, #39) and the status bar. Every property is set from Rust (src/window.rs)
 // out of the core's ProjectView; every callback turns input into a command.
 
 import { Theme } from "theme.slint";
@@ -109,9 +109,11 @@ export component ProjectWindow inherits Window {
     out property <length> viewport-height: left.viewport-height;
     out property <length> text-left: left.text-left;
 
-    // The terminal pane (ticket #38). Its width is the view's own: the
-    // splitter drags it.
+    // The terminal pane (tickets #38, #39). Its width (on the right) and
+    // height (at the bottom) are the view's own: the splitter drags them.
+    // `terminal-bottom` follows the config's `terminalPosition`.
     in property <bool> terminal-visible: true;
+    in property <bool> terminal-bottom;
     in property <bool> terminal-focused;
     in property <[TermTab]> terminal-tabs;
     in property <string> terminal-message;
@@ -119,6 +121,7 @@ export component ProjectWindow inherits Window {
     in property <TermCursor> terminal-cursor;
     in property <bool> terminal-mouse-reporting;
     in-out property <length> terminal-width: 520px;
+    in-out property <length> terminal-height: 260px;
     out property <length> terminal-char-width: terminal.char-width;
     out property <length> terminal-grid-width: terminal.grid-width;
     out property <length> terminal-grid-height: terminal.grid-height;
@@ -178,6 +181,8 @@ export component ProjectWindow inherits Window {
     callback terminal-mouse(kind: int, button: int, x: length, y: length, shift: bool, alt: bool, ctrl: bool, cmd: bool);
     callback terminal-scrolled(delta-y: length, x: length, y: length);
     callback terminal-size-changed();
+    callback new-terminal-tab();
+    callback terminal-tab-closed(index: int);
 
     // The finder: a shortcut opens it; the rest come from the overlay.
     callback open-finder(FinderKind);
@@ -278,7 +283,7 @@ export component ProjectWindow inherits Window {
             MenuItem {
                 title: "Close Tab";
                 shortcut: @keys(Control + W);
-                enabled: root.has-editor;
+                enabled: root.has-editor || root.terminal-focused;
                 activated => {
                     root.close-tab();
                 }
@@ -488,6 +493,14 @@ export component ProjectWindow inherits Window {
                     root.toggle-terminal();
                 }
             }
+
+            MenuItem {
+                title: "New Terminal Tab";
+                shortcut: @keys(Control + T);
+                activated => {
+                    root.new-terminal-tab();
+                }
+            }
         }
 
         Menu {
@@ -554,7 +567,7 @@ export component ProjectWindow inherits Window {
             MenuItem {
                 title: "Select Next Tab";
                 shortcut: @keys(Control + Shift + "]");
-                enabled: root.has-editor;
+                enabled: root.has-editor || root.terminal-focused;
                 activated => {
                     root.next-tab(true);
                 }
@@ -563,7 +576,7 @@ export component ProjectWindow inherits Window {
             MenuItem {
                 title: "Select Previous Tab";
                 shortcut: @keys(Control + Shift + "[");
-                enabled: root.has-editor;
+                enabled: root.has-editor || root.terminal-focused;
                 activated => {
                     root.next-tab(false);
                 }
@@ -582,202 +595,241 @@ export component ProjectWindow inherits Window {
     }
 
     VerticalLayout {
-        HorizontalLayout {
+        // The editor area and the terminal pane, placed by hand so the
+        // pane can move between the right and the bottom.
+        content := Rectangle {
             vertical-stretch: 1;
 
-            if root.left-column-visible: LeftColumn {
-                width: 300px;
-                view: root.left-view;
-                problems: root.problems;
-                files: root.files;
-                search-query: root.search-query;
-                search-regex: root.search-regex;
-                search-case-sensitive: root.search-case-sensitive;
-                search-whole-word: root.search-whole-word;
-                search-rows: root.search-rows;
-                search-status: root.search-status;
-                search-status-error: root.search-status-error;
-                show(view) => {
-                    root.show-view(view);
+            // The pane's size. The placeholders below take part in the
+            // layout, so it must not depend on the area's own size (a
+            // binding loop): the splitter clamps it while dragging instead.
+            property <length> pane-width: root.terminal-width;
+            property <length> pane-height: root.terminal-height;
+            property <bool> right-pane: root.terminal-visible && !root.terminal-bottom;
+            property <bool> bottom-pane: root.terminal-visible && root.terminal-bottom;
+
+            // The editor area fills what the pane leaves: placeholders
+            // hold the pane's room on the right or at the bottom.
+            VerticalLayout {
+                HorizontalLayout {
+                    vertical-stretch: 1;
+
+                    if root.left-column-visible: LeftColumn {
+                        width: 300px;
+                        view: root.left-view;
+                        problems: root.problems;
+                        files: root.files;
+                        search-query: root.search-query;
+                        search-regex: root.search-regex;
+                        search-case-sensitive: root.search-case-sensitive;
+                        search-whole-word: root.search-whole-word;
+                        search-rows: root.search-rows;
+                        search-status: root.search-status;
+                        search-status-error: root.search-status-error;
+                        show(view) => {
+                            root.show-view(view);
+                        }
+                        problem-clicked(index) => {
+                            root.problem-clicked(index);
+                        }
+                        file-clicked(index) => {
+                            root.file-clicked(index);
+                        }
+                        search(text, regex, case-sensitive, whole-word) => {
+                            root.search(text, regex, case-sensitive, whole-word);
+                        }
+                        search-result-clicked(index) => {
+                            root.search-result-clicked(index);
+                        }
+                    }
+
+                    if root.left-column-visible: Rectangle {
+                        width: 1px;
+                        background: Theme.chrome-border;
+                    }
+
+                    left := EditorPane {
+                        horizontal-stretch: 1;
+                        tabs: root.left-tabs;
+                        focused: root.focused-pane == 0;
+                        has-editor: root.left-has-editor;
+                        can-split: root.can-split;
+                        geometry: root.left-geometry;
+                        hunk: root.left-hunk;
+                        assist: root.left-assist;
+                        completion-clicked(index) => {
+                            root.completion-clicked(index);
+                        }
+                        pointer-moved(x, y) => {
+                            root.pointer-moved(0, x, y);
+                        }
+                        pointer-left => {
+                            root.pointer-left(0);
+                        }
+                        rollback-hunk => {
+                            root.rollback-hunk();
+                        }
+                        hide-hunk => {
+                            root.hide-hunk();
+                        }
+                        conflict: root.left-conflict;
+                        conflict-resolved(reload) => {
+                            root.conflict-resolved(0, reload);
+                        }
+                        tab-clicked(index) => {
+                            root.tab-clicked(0, index);
+                        }
+                        tab-closed(index) => {
+                            root.tab-closed(0, index);
+                        }
+                        tab-moved(index) => {
+                            root.tab-moved(0, index);
+                        }
+                        split-right => {
+                            root.split-right();
+                        }
+                        scrolled(delta-y) => {
+                            root.scrolled(0, delta-y);
+                        }
+                        pressed(x, y, shift, alt) => {
+                            root.pressed(0, x, y, shift, alt);
+                        }
+                        dragged(x, y) => {
+                            root.dragged(0, x, y);
+                        }
+                        double-clicked(x, y) => {
+                            root.double-clicked(0, x, y);
+                        }
+                        key(text, shift, cmd, alt, ctrl) => {
+                            root.key(text, shift, cmd, alt, ctrl);
+                        }
+                        committed(text) => {
+                            root.committed(text);
+                        }
+                        preedit-changed(text) => {
+                            root.preedit-changed(text);
+                        }
+                    }
+
+                    Rectangle {
+                        width: 1px;
+                        background: Theme.chrome-border;
+                        visible: root.split;
+                    }
+
+                    right := EditorPane {
+                        horizontal-stretch: 1;
+                        visible: root.split;
+                        tabs: root.right-tabs;
+                        focused: root.focused-pane == 1;
+                        has-editor: root.right-has-editor;
+                        can-split: root.can-split;
+                        geometry: root.right-geometry;
+                        hunk: root.right-hunk;
+                        assist: root.right-assist;
+                        completion-clicked(index) => {
+                            root.completion-clicked(index);
+                        }
+                        pointer-moved(x, y) => {
+                            root.pointer-moved(1, x, y);
+                        }
+                        pointer-left => {
+                            root.pointer-left(1);
+                        }
+                        rollback-hunk => {
+                            root.rollback-hunk();
+                        }
+                        hide-hunk => {
+                            root.hide-hunk();
+                        }
+                        conflict: root.right-conflict;
+                        conflict-resolved(reload) => {
+                            root.conflict-resolved(1, reload);
+                        }
+                        tab-clicked(index) => {
+                            root.tab-clicked(1, index);
+                        }
+                        tab-closed(index) => {
+                            root.tab-closed(1, index);
+                        }
+                        tab-moved(index) => {
+                            root.tab-moved(1, index);
+                        }
+                        split-right => {
+                            root.split-right();
+                        }
+                        scrolled(delta-y) => {
+                            root.scrolled(1, delta-y);
+                        }
+                        pressed(x, y, shift, alt) => {
+                            root.pressed(1, x, y, shift, alt);
+                        }
+                        dragged(x, y) => {
+                            root.dragged(1, x, y);
+                        }
+                        double-clicked(x, y) => {
+                            root.double-clicked(1, x, y);
+                        }
+                        key(text, shift, cmd, alt, ctrl) => {
+                            root.key(text, shift, cmd, alt, ctrl);
+                        }
+                        committed(text) => {
+                            root.committed(text);
+                        }
+                        preedit-changed(text) => {
+                            root.preedit-changed(text);
+                        }
+                    }
+
+                    if content.right-pane: Rectangle {
+                        width: content.pane-width + 5px;
+                    }
                 }
-                problem-clicked(index) => {
-                    root.problem-clicked(index);
-                }
-                file-clicked(index) => {
-                    root.file-clicked(index);
-                }
-                search(text, regex, case-sensitive, whole-word) => {
-                    root.search(text, regex, case-sensitive, whole-word);
-                }
-                search-result-clicked(index) => {
-                    root.search-result-clicked(index);
+
+                if content.bottom-pane: Rectangle {
+                    height: content.pane-height + 5px;
                 }
             }
 
-            if root.left-column-visible: Rectangle {
-                width: 1px;
-                background: Theme.chrome-border;
-            }
-
-            left := EditorPane {
-                horizontal-stretch: 1;
-                tabs: root.left-tabs;
-                focused: root.focused-pane == 0;
-                has-editor: root.left-has-editor;
-                can-split: root.can-split;
-                geometry: root.left-geometry;
-                hunk: root.left-hunk;
-                assist: root.left-assist;
-                completion-clicked(index) => {
-                    root.completion-clicked(index);
-                }
-                pointer-moved(x, y) => {
-                    root.pointer-moved(0, x, y);
-                }
-                pointer-left => {
-                    root.pointer-left(0);
-                }
-                rollback-hunk => {
-                    root.rollback-hunk();
-                }
-                hide-hunk => {
-                    root.hide-hunk();
-                }
-                conflict: root.left-conflict;
-                conflict-resolved(reload) => {
-                    root.conflict-resolved(0, reload);
-                }
-                tab-clicked(index) => {
-                    root.tab-clicked(0, index);
-                }
-                tab-closed(index) => {
-                    root.tab-closed(0, index);
-                }
-                tab-moved(index) => {
-                    root.tab-moved(0, index);
-                }
-                split-right => {
-                    root.split-right();
-                }
-                scrolled(delta-y) => {
-                    root.scrolled(0, delta-y);
-                }
-                pressed(x, y, shift, alt) => {
-                    root.pressed(0, x, y, shift, alt);
-                }
-                dragged(x, y) => {
-                    root.dragged(0, x, y);
-                }
-                double-clicked(x, y) => {
-                    root.double-clicked(0, x, y);
-                }
-                key(text, shift, cmd, alt, ctrl) => {
-                    root.key(text, shift, cmd, alt, ctrl);
-                }
-                committed(text) => {
-                    root.committed(text);
-                }
-                preedit-changed(text) => {
-                    root.preedit-changed(text);
-                }
-            }
-
-            Rectangle {
-                width: 1px;
-                background: Theme.chrome-border;
-                visible: root.split;
-            }
-
-            right := EditorPane {
-                horizontal-stretch: 1;
-                visible: root.split;
-                tabs: root.right-tabs;
-                focused: root.focused-pane == 1;
-                has-editor: root.right-has-editor;
-                can-split: root.can-split;
-                geometry: root.right-geometry;
-                hunk: root.right-hunk;
-                assist: root.right-assist;
-                completion-clicked(index) => {
-                    root.completion-clicked(index);
-                }
-                pointer-moved(x, y) => {
-                    root.pointer-moved(1, x, y);
-                }
-                pointer-left => {
-                    root.pointer-left(1);
-                }
-                rollback-hunk => {
-                    root.rollback-hunk();
-                }
-                hide-hunk => {
-                    root.hide-hunk();
-                }
-                conflict: root.right-conflict;
-                conflict-resolved(reload) => {
-                    root.conflict-resolved(1, reload);
-                }
-                tab-clicked(index) => {
-                    root.tab-clicked(1, index);
-                }
-                tab-closed(index) => {
-                    root.tab-closed(1, index);
-                }
-                tab-moved(index) => {
-                    root.tab-moved(1, index);
-                }
-                split-right => {
-                    root.split-right();
-                }
-                scrolled(delta-y) => {
-                    root.scrolled(1, delta-y);
-                }
-                pressed(x, y, shift, alt) => {
-                    root.pressed(1, x, y, shift, alt);
-                }
-                dragged(x, y) => {
-                    root.dragged(1, x, y);
-                }
-                double-clicked(x, y) => {
-                    root.double-clicked(1, x, y);
-                }
-                key(text, shift, cmd, alt, ctrl) => {
-                    root.key(text, shift, cmd, alt, ctrl);
-                }
-                committed(text) => {
-                    root.committed(text);
-                }
-                preedit-changed(text) => {
-                    root.preedit-changed(text);
-                }
-            }
-
-            // The splitter: drag it to share the width between the editor
-            // and the terminal.
+            // The splitter: drag it to share the window between the editor
+            // area and the terminal.
             if root.terminal-visible: Rectangle {
-                width: 5px;
+                x: content.right-pane ? content.width - content.pane-width - 5px : 0px;
+                y: content.bottom-pane ? content.height - content.pane-height - 5px : 0px;
+                width: content.right-pane ? 5px : content.width;
+                height: content.bottom-pane ? 5px : content.height;
 
                 Rectangle {
-                    x: 2px;
-                    width: 1px;
+                    x: content.right-pane ? 2px : 0px;
+                    y: content.bottom-pane ? 2px : 0px;
+                    width: content.right-pane ? 1px : parent.width;
+                    height: content.bottom-pane ? 1px : parent.height;
                     background: Theme.chrome-border;
                 }
 
-                splitter := TouchArea {
-                    mouse-cursor: col-resize;
+                TouchArea {
+                    mouse-cursor: content.right-pane ? col-resize : row-resize;
                     moved => {
-                        if self.pressed {
+                        if self.pressed && content.right-pane {
                             root.terminal-width = clamp(
-                                root.terminal-width - (self.mouse-x - self.pressed-x),
+                                content.pane-width - (self.mouse-x - self.pressed-x),
                                 160px,
-                                max(160px, root.width - 320px));
+                                max(160px, content.width - 320px));
+                        } else if self.pressed {
+                            root.terminal-height = clamp(
+                                content.pane-height - (self.mouse-y - self.pressed-y),
+                                80px,
+                                max(80px, content.height - 120px));
                         }
                     }
                 }
             }
 
             terminal := TerminalPane {
-                width: root.terminal-visible ? root.terminal-width : 0px;
+                x: content.bottom-pane ? 0px : content.width - self.width;
+                y: content.bottom-pane ? content.height - self.height : 0px;
+                width: !root.terminal-visible ? 0px : content.bottom-pane ? content.width : content.pane-width;
+                height: content.bottom-pane ? content.pane-height : content.height;
                 visible: root.terminal-visible;
                 tabs: root.terminal-tabs;
                 message: root.terminal-message;
@@ -790,6 +842,12 @@ export component ProjectWindow inherits Window {
                 }
                 tab-clicked(index) => {
                     root.terminal-tab-clicked(index);
+                }
+                tab-closed(index) => {
+                    root.terminal-tab-closed(index);
+                }
+                new-tab => {
+                    root.new-terminal-tab();
                 }
                 key(text, shift, cmd, alt, ctrl) => {
                     root.terminal-key(text, shift, cmd, alt, ctrl);

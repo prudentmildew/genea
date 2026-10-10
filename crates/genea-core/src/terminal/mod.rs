@@ -1,9 +1,10 @@
-//! The terminal (tickets #38, #41): a pane of tabs, each a program on a
-//! PTY from the host, emulated by `alacritty_terminal`.
+//! The terminal (tickets #38, #39, #41): a pane of tabs, each a program on
+//! a PTY from the host, emulated by `alacritty_terminal`.
 //!
-//! The first tab is the shell: the user's `$SHELL` as a login shell, in the
-//! project root. "Install dependencies" adds a tab running the pinned
-//! package manager (`run_package_manager`). Every tab's program gets the
+//! The first tab is a shell: the user's `$SHELL` as a login shell, in the
+//! project root; `NewTerminalTab` opens more, and any tab can be closed.
+//! "Install dependencies" adds a tab running the pinned package manager
+//! (`run_package_manager`). Every tab's program gets the
 //! project environment and `TERM=xterm-256color`, and starts once that
 //! environment is final: the login-shell capture has landed and the
 //! toolchain has settled (so the pinned tools are on its PATH).
@@ -17,12 +18,16 @@
 //! the app reads once per frame. The reader wakes the main thread only when
 //! the last copy has been taken (or the program asked for something, like a
 //! new title).
+//!
+//! `path:line:col` references in a tab's output (`links.rs`) are found
+//! when its grid is copied, and resolved against the tab's directory when
+//! one is clicked (`file_link_at`).
 
 use std::{
     cell::{Ref, RefCell},
     ffi::OsStr,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -42,6 +47,7 @@ use genea_host::{Exit, Host, ProcessSpec, Pty, PtyControl, PtySize, SharedHost};
 
 mod grid;
 mod input;
+mod links;
 
 use grid::Screen;
 
@@ -49,6 +55,7 @@ use crate::{
     command::{Command, Modifiers, TerminalKey},
     environment::ProcessEnv,
     jobs::Jobs,
+    problems::TextPosition,
     view::{TerminalLine, TerminalStatus, TerminalTab, TerminalView},
     workbench::{Core, ProjectId},
 };
@@ -69,9 +76,13 @@ const DEFAULT_SHELL: &str = "/bin/zsh";
 /// The terminal pane.
 pub(crate) struct Terminal {
     project: ProjectId,
+    /// The project root: the folder the tabs' programs run in.
+    root: PathBuf,
     /// Every tab's grid size.
     size: Size,
-    /// The shell first, then the tabs opened since, left to right.
+    /// The tabs, left to right: a shell first, then the tabs opened since.
+    /// Empty once the user closed the last one; showing the pane again
+    /// opens a new shell.
     tabs: Vec<Tab>,
     /// Index into `tabs` of the one showing.
     active: usize,
@@ -98,6 +109,9 @@ pub(crate) enum Launch {
 /// One tab: its program, and what it showed.
 struct Tab {
     launch: Launch,
+    /// The folder its program runs in, which relative paths in its output
+    /// are relative to.
+    directory: PathBuf,
     process: Process,
     /// The generation of its last start.
     generation: u64,
@@ -252,7 +266,7 @@ impl Drop for Started {
 }
 
 impl Tab {
-    fn new(launch: Launch, size: Size) -> Self {
+    fn new(launch: Launch, size: Size, directory: PathBuf) -> Self {
         let name = match &launch {
             Launch::Shell => String::new(),
             Launch::PackageManager { name, args } => format!("{name} {}", args.join(" ")),
@@ -264,7 +278,15 @@ impl Tab {
             scrolled_back: 0,
             mode: TermMode::empty(),
         };
-        Tab { launch, process: Process::Waiting, generation: 0, screen: RefCell::new(screen), name, title: None }
+        Tab {
+            launch,
+            directory,
+            process: Process::Waiting,
+            generation: 0,
+            screen: RefCell::new(screen),
+            name,
+            title: None,
+        }
     }
 
     /// What the tab shows, copied from the emulator if it changed since the
@@ -322,11 +344,12 @@ impl Tab {
 }
 
 impl Terminal {
-    pub(crate) fn new(project: ProjectId) -> Self {
+    pub(crate) fn new(project: ProjectId, root: PathBuf) -> Self {
         Terminal {
             project,
+            tabs: vec![Tab::new(Launch::Shell, DEFAULT_SIZE, root.clone())],
+            root,
             size: DEFAULT_SIZE,
-            tabs: vec![Tab::new(Launch::Shell, DEFAULT_SIZE)],
             active: 0,
             generation: 0,
             visible: true,
@@ -335,12 +358,14 @@ impl Terminal {
         }
     }
 
-    fn tab(&self) -> &Tab {
-        &self.tabs[self.active]
+    /// The showing tab; `None` once the last one is closed.
+    fn tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.active)
     }
 
-    fn tab_mut(&mut self) -> &mut Tab {
-        &mut self.tabs[self.active]
+    /// The showing tab's program's modes, if it runs.
+    fn mode(&self) -> Option<TermMode> {
+        self.tab().and_then(Tab::mode)
     }
 
     /// The tab whose session was started as `generation`.
@@ -368,7 +393,7 @@ impl Terminal {
                 index
             }
             None => {
-                self.tabs.push(Tab::new(launch, self.size));
+                self.tabs.push(Tab::new(launch, self.size, self.root.clone()));
                 self.tabs.len() - 1
             }
         };
@@ -528,21 +553,25 @@ impl Terminal {
                     self.visible = false;
                     self.unfocus();
                 } else {
-                    self.visible = true;
-                    self.focus();
+                    self.show();
                 }
             }
-            Command::FocusTerminal => {
-                self.visible = true;
-                self.focus();
-            }
+            Command::FocusTerminal => self.show(),
             Command::SelectTerminalTab(index) => self.select(index),
-            Command::TerminalKey(TerminalKey::Enter, _) if self.tab().launch == Launch::Shell && self.tab().has_ended() => {
+            Command::NewTerminalTab => {
+                self.tabs.push(Tab::new(Launch::Shell, self.size, self.root.clone()));
+                self.select(self.tabs.len() - 1);
+                self.show();
+            }
+            Command::CloseTerminalTab(index) if index < self.tabs.len() => self.close(index),
+            Command::TerminalKey(TerminalKey::Enter, _)
+                if self.tab().is_some_and(|tab| tab.launch == Launch::Shell && tab.has_ended()) =>
+            {
                 let size = self.size;
-                self.tab_mut().restart(size)
+                self.tabs[self.active].restart(size)
             }
             Command::TerminalPaste => {
-                if let (Some(text), Some(mode)) = (host.clipboard().read_text(), self.tab().mode()) {
+                if let (Some(text), Some(mode)) = (host.clipboard().read_text(), self.mode()) {
                     self.send(input::paste(&text, mode));
                 }
             }
@@ -553,17 +582,65 @@ impl Terminal {
             Command::TerminalPreedit(text) => self.preedit = Some(text).filter(|text| !text.is_empty()),
             Command::ScrollTerminal { rows, line, column } => self.scroll(rows, line, column),
             Command::TerminalMouse { action, line, column, modifiers } => {
-                if let Some(mode) = self.tab().mode() {
+                if let Some(mode) = self.mode() {
                     self.send(input::mouse(action, line, column, modifiers, mode));
                 }
             }
             Command::TerminalKey(key, modifiers) => {
-                if let Some(mode) = self.tab().mode() {
+                if let Some(mode) = self.mode() {
                     self.send(input::key(key, modifiers, mode));
                 }
             }
             _ => {}
         }
+    }
+
+    /// Shows the pane and focuses it, with a new shell if it has no tabs.
+    fn show(&mut self) {
+        if self.tabs.is_empty() {
+            self.tabs.push(Tab::new(Launch::Shell, self.size, self.root.clone()));
+            self.active = 0;
+        }
+        self.visible = true;
+        self.focus();
+    }
+
+    /// Closes tab `index`; dropping its session hangs up its program. The
+    /// tab to its right shows, else the one to its left; closing the last
+    /// collapses the pane.
+    fn close(&mut self, index: usize) {
+        let closing_active = index == self.active;
+        if closing_active && self.focused {
+            self.report_focus(b"\x1b[O");
+        }
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            self.active = 0;
+            self.visible = false;
+            self.focused = false;
+            self.preedit = None;
+            return;
+        }
+        if index < self.active || self.active == self.tabs.len() {
+            self.active -= 1;
+        }
+        if closing_active {
+            self.preedit = None;
+            if self.focused {
+                self.report_focus(b"\x1b[I");
+            }
+        }
+    }
+
+    /// The file and place the reference at the showing tab's cell points
+    /// to: relative to the project root if it is inside it, else absolute.
+    pub(crate) fn file_link_at(&self, line: usize, column: usize) -> Option<(PathBuf, TextPosition)> {
+        let tab = self.tab()?;
+        let screen = tab.screen();
+        let link = screen.lines.get(line)?.links.iter().find(|link| link.columns.contains(&column))?;
+        let path = normalize(&tab.directory.join(&link.path));
+        let path = path.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or(path);
+        Some((path, link.at))
     }
 
     /// Whether the terminal has the keyboard focus rather than the editor.
@@ -587,7 +664,7 @@ impl Terminal {
     /// Tells the showing tab's program, if it asked (focus reporting),
     /// about a focus change.
     fn report_focus(&mut self, report: &[u8]) {
-        if self.tab().mode().is_some_and(|mode| mode.contains(TermMode::FOCUS_IN_OUT)) {
+        if self.mode().is_some_and(|mode| mode.contains(TermMode::FOCUS_IN_OUT)) {
             self.send(report.to_vec());
         }
     }
@@ -612,7 +689,7 @@ impl Terminal {
 
     /// The scroll wheel: the program's if it takes it, else the scrollback.
     fn scroll(&mut self, rows: i32, line: usize, column: usize) {
-        let Some(mode) = self.tab().mode() else { return };
+        let Some(mode) = self.mode() else { return };
         if rows == 0 {
             return;
         }
@@ -623,16 +700,18 @@ impl Terminal {
         } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
             let key = if up { TerminalKey::Up } else { TerminalKey::Down };
             self.send(input::key(key, Modifiers::default(), mode).repeat(count));
-        } else if let Process::Running(session) = &self.tab().process {
+        } else if let Some(tab) = self.tab()
+            && let Process::Running(session) = &tab.process
+        {
             session.term.lock().unwrap().scroll_display(Scroll::Delta(-rows));
-            self.tab().touched();
+            tab.touched();
         }
     }
 
     /// Sends input to the showing tab's program, scrolling back to the
     /// bottom first.
     fn send(&mut self, bytes: Vec<u8>) {
-        let tab = self.tab();
+        let Some(tab) = self.tab() else { return };
         let Process::Running(session) = &tab.process else { return };
         if bytes.is_empty() {
             return;
@@ -646,12 +725,25 @@ impl Terminal {
 
     pub(crate) fn view(&self) -> TerminalView {
         let tab = self.tab();
-        let screen = tab.screen();
+        let blank;
+        let screen = match tab {
+            Some(tab) => tab.screen(),
+            None => {
+                blank = RefCell::new(Screen {
+                    lines: blank_lines(self.size),
+                    cursor: None,
+                    history: 0,
+                    scrolled_back: 0,
+                    mode: TermMode::empty(),
+                });
+                blank.borrow()
+            }
+        };
         TerminalView {
             visible: self.visible,
             focused: self.focused,
-            status: tab.status(),
-            title: tab.title(),
+            status: tab.map_or(TerminalStatus::Starting, Tab::status),
+            title: tab.map(Tab::title).unwrap_or_default(),
             tabs: self
                 .tabs
                 .iter()
@@ -748,5 +840,20 @@ fn blank_lines(size: Size) -> Vec<TerminalLine> {
 }
 
 fn blank_line() -> TerminalLine {
-    TerminalLine { text: String::new(), runs: Vec::new() }
+    TerminalLine { text: String::new(), runs: Vec::new(), links: Vec::new() }
+}
+
+/// `path` with `.` and `..` worked out, without touching the disk.
+fn normalize(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normal.pop();
+            }
+            component => normal.push(component),
+        }
+    }
+    normal
 }

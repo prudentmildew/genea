@@ -73,7 +73,8 @@ pub use view::{
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use view::{
-    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalTab, TerminalView,
+    TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle,
+    TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
 pub use view::{
