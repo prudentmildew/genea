@@ -608,6 +608,22 @@ message types. `project/language.rs` is a project's side of it.
   `language_timer` route Oxlint's by generation; "Restart language server"
   restarts both.
 
+- **Completion, hover and signature help** (ticket #43;
+  `project/assist.rs`, protocol in `lsp/assist.rs`, popups in
+  `EditorView::{completion, hover, signature_help}`): requested after a
+  command, once `sync` has sent the text, each remembering the focused
+  file, version and primary caret. An answer is used only if the editor is
+  still exactly there and it is the newest request of its kind; a popup for
+  another state closes, is narrowed (the completion list, filtered here as
+  you type unless the server said `isIncomplete`) or asked again (signature
+  help). The selected completion is resolved in the background for its
+  documentation and auto-import edit (`additionalTextEdits`); accepting
+  inserts both as one undo step, or adds the import as a second step when
+  the item was accepted before its resolve answered (edits move with the
+  text typed meanwhile: `map_edits`). Completion is offered with one caret
+  only. The view's popups are `ui/assist-popups.slint` and
+  `genea-view/src/assist.rs` (keys while open, the 500 ms hover rest).
+
 Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
 the test host as `tsc` (and as `node` or `bun` for Oxlint in
 `tests/oxlint.rs`): scripted per test to report markers, crash, stay

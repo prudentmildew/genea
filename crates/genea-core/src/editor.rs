@@ -11,6 +11,7 @@
 //! the primary, which the view scrolls to and the status bar reports.
 
 mod decorations;
+mod assist;
 mod indent;
 mod navigation;
 mod structural;
@@ -963,6 +964,9 @@ impl Editor {
             brackets: self.matched_brackets(),
             gutter: Vec::new(),
             hunk: None,
+            completion: None,
+            hover: None,
+            signature_help: None,
         }
     }
 

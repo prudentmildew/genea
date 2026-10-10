@@ -44,6 +44,9 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
     if m.alt && !(m.ctrl || m.cmd || m.shift) && is(Key::Return) {
         return Some(Command::ShowQuickFixes);
     }
+    if let Some(command) = assist(text, m) {
+        return Some(command);
+    }
     if m.ctrl || m.cmd {
         return None;
     }
@@ -116,6 +119,30 @@ fn structural(text: &str, m: Modifiers) -> Option<Command> {
     }
     if m.alt && m.cmd && !m.ctrl && matches!(text, "+" | "±") {
         return Some(Command::ExpandFold);
+    }
+    None
+}
+
+/// Completion, hover and signature help (ticket #43), WebStorm's keys:
+/// ⌃Space (Code Completion), F1 or ⌃J (Quick Documentation) and ⌘P
+/// (Parameter Info). With ⌃ held, the key's text may be the control
+/// character (NUL for Space, LF for J).
+fn assist(text: &str, m: Modifiers) -> Option<Command> {
+    let is = |key: Key| text == SharedString::from(key).as_str();
+    let plain = !(m.shift || m.cmd || m.alt || m.ctrl);
+    if m.ctrl && !(m.shift || m.cmd || m.alt) {
+        if matches!(text, " " | "\u{0}") {
+            return Some(Command::ShowCompletion);
+        }
+        if matches!(text, "j" | "J" | "\n") {
+            return Some(Command::ShowHover);
+        }
+    }
+    if plain && is(Key::F1) {
+        return Some(Command::ShowHover);
+    }
+    if m.cmd && !(m.shift || m.alt || m.ctrl) && text.eq_ignore_ascii_case("p") {
+        return Some(Command::ShowSignatureHelp);
     }
     None
 }

@@ -34,6 +34,7 @@
 //! every background result.
 
 pub(crate) mod actions;
+pub(crate) mod assist;
 mod connection;
 pub(crate) mod oxc;
 pub(crate) mod symbols;
@@ -129,6 +130,9 @@ pub(crate) enum Output {
     /// Semantic tokens, inlay hints and code lenses for an open editor
     /// (ticket #46).
     Decorations(decorations::Output),
+    /// The answer to a completion, hover or signature help request
+    /// (ticket #43), by the tag it was sent with.
+    Assist { tag: u64, result: Result<Value, String> },
 }
 
 /// A request waiting for its answer.
@@ -146,6 +150,8 @@ pub(crate) enum Pending {
     Navigation(navigation::Ask),
     /// Semantic tokens, inlay hints or code lenses (ticket #46).
     Decorations(decorations::Pending),
+    /// Completion, hover or signature help (ticket #43): the project's tag.
+    Assist(u64),
 }
 
 /// A timer of a server's, on the host clock.
@@ -213,6 +219,8 @@ pub(crate) struct LanguageServer {
     watchers: Watchers,
     /// Semantic tokens, inlay hints and code lenses (ticket #46).
     decorations: decorations::Decorations,
+    /// What the server offers for completion, hover and signature help.
+    assist: assist::AssistCapabilities,
 }
 
 impl LanguageServer {
@@ -234,6 +242,7 @@ impl LanguageServer {
             requests: HashMap::new(),
             watchers: Watchers::default(),
             decorations: decorations::Decorations::default(),
+            assist: assist::AssistCapabilities::default(),
         }
     }
 
@@ -316,6 +325,16 @@ impl LanguageServer {
     /// The server's columns: positions it sends and expects are in these.
     pub(crate) fn encoding(&self) -> Encoding {
         self.encoding
+    }
+
+    /// What it offers for completion, hover and signature help.
+    pub(crate) fn assist_capabilities(&self) -> &assist::AssistCapabilities {
+        &self.assist
+    }
+
+    /// The URI a file of the project's has on the server.
+    pub(crate) fn uri(&self, path: &std::path::Path) -> String {
+        text::uri(&self.root.join(path))
     }
 
     /// The status-bar item.
@@ -458,6 +477,7 @@ impl LanguageServer {
                 Some(Pending::Decorations(pending)) => {
                     self.decorations.answered(pending, id, result, self.encoding).into_iter().map(Output::Decorations).collect()
                 }
+                Some(Pending::Assist(tag)) => vec![Output::Assist { tag, result: result.map_err(|e| e.message) }],
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
@@ -555,6 +575,7 @@ impl LanguageServer {
         };
         let mut params = serde_json::to_value(params).expect("initialize params are JSON");
         decorations::add_capabilities(&mut params);
+        assist::client_capabilities(&mut params["capabilities"]["textDocument"]);
         params
     }
 
@@ -568,6 +589,7 @@ impl LanguageServer {
         match result {
             Ok(result) => {
                 self.encoding = Encoding::from_lsp(result.capabilities.position_encoding.as_ref().map(|k| k.as_str()));
+                self.assist = assist::AssistCapabilities::new(&result.capabilities);
                 if let Some(version) = result.server_info.and_then(|info| info.version) {
                     self.label = format!("{} {version}", self.spec.name);
                 }
@@ -684,7 +706,6 @@ impl LanguageServer {
     /// Sends a request to a ready server, remembering what it is for; the
     /// answer comes back to [`event`](Self::event) as that [`Pending`].
     /// `None` while the server isn't ready.
-    #[allow(dead_code)] // The seam for completion, hover, … (#43–#47).
     pub(crate) fn request(&mut self, method: &str, params: Value, pending: Pending) -> Option<i64> {
         let connection = self.connection.as_mut().filter(|_| self.state == State::Ready)?;
         let id = connection.request(method, params);

@@ -51,6 +51,9 @@ pub(crate) use navigation::uri;
 mod decorations;
 pub use decorations::{Decorations, HintMarker, LensMarker, TokenMarker};
 
+mod assist;
+pub use assist::{AssistScript, FakeSignature};
+
 /// How long [`FakeLsp::wait_for`] waits before failing the test. Real
 /// time: it only guards against hangs.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -77,6 +80,11 @@ pub struct LspScript {
     pub code_actions: Vec<ScriptedAction>,
     /// Semantic tokens, inlay hints and code lenses (ticket #46).
     pub decorations: Decorations,
+    /// Completion, hover and signature help answers (ticket #43).
+    pub assist: AssistScript,
+    /// Waits this long (real time) before answering a method, on top of
+    /// `delay`.
+    pub slow: Vec<(String, Duration)>,
 }
 
 /// Text the fake reports wherever it occurs.
@@ -106,6 +114,8 @@ impl LspScript {
             "watch": self.watch,
             "codeActions": self.code_actions.iter().map(ScriptedAction::to_json).collect::<Vec<_>>(),
             "decorations": self.decorations.to_json(),
+            "assist": self.assist.to_json(),
+            "slow": self.slow.iter().map(|(method, delay)| json!([method, delay.as_millis() as u64])).collect::<Vec<_>>(),
         })
         .to_string()
     }
@@ -139,6 +149,15 @@ impl LspScript {
                 .map(ScriptedAction::from_json)
                 .collect(),
             decorations: Decorations::from_json(&value["decorations"]),
+            assist: AssistScript::from_json(&value["assist"]),
+            slow: value["slow"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|pair| {
+                    (pair[0].as_str().unwrap_or_default().to_owned(), Duration::from_millis(pair[1].as_u64().unwrap_or(0)))
+                })
+                .collect(),
         })
     }
 }
@@ -288,6 +307,45 @@ impl FakeLsp {
         self
     }
 
+    /// Waits `delay` (real time) before answering `method`.
+    pub fn slow(self, method: &str, delay: Duration) -> Self {
+        self.script.lock().unwrap().slow.push((method.into(), delay));
+        self
+    }
+
+    /// Offers this LSP `CompletionItem` in every completion list.
+    pub fn completion(self, item: Value) -> Self {
+        self.script.lock().unwrap().assist.completions.push(item);
+        self
+    }
+
+    /// Adds `fields` to the item labelled `label` when it is resolved
+    /// (`completionItem/resolve`), e.g. an auto-import's
+    /// `additionalTextEdits`.
+    pub fn resolve(self, label: &str, fields: Value) -> Self {
+        self.script.lock().unwrap().assist.resolved.push((label.into(), fields));
+        self
+    }
+
+    /// Hovering over `word` shows this Markdown.
+    pub fn hover(self, word: &str, markdown: &str) -> Self {
+        self.script.lock().unwrap().assist.hovers.push((word.into(), markdown.into()));
+        self
+    }
+
+    /// Signature help inside a call of `function`: its signature `label`,
+    /// whose `parameters` are substrings, and Markdown documentation.
+    pub fn signature(self, function: &str, label: &str, parameters: &[&str], documentation: &str) -> Self {
+        let signature = FakeSignature {
+            function: function.into(),
+            label: label.into(),
+            parameters: parameters.iter().map(|p| (*p).to_owned()).collect(),
+            documentation: documentation.into(),
+        };
+        self.script.lock().unwrap().assist.signatures.push(signature);
+        self
+    }
+
     /// The script, e.g. to write it beside the binary.
     pub fn script(&self) -> LspScript {
         self.script.lock().unwrap().clone()
@@ -395,9 +453,10 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
             return 1;
         }
         let id = message.get("id").cloned();
+        let slow = script.slow.iter().filter(|(m, _)| *m == method).map(|(_, d)| *d).sum::<Duration>();
         let answer = |out: &mut Output<_>, result: Value| {
             if let Some(id) = &id {
-                std::thread::sleep(script.delay);
+                std::thread::sleep(script.delay + slow);
                 out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             }
         };
@@ -431,6 +490,9 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                     "renameProvider": { "prepareProvider": true },
                 });
                 decorations::capabilities(&mut capabilities);
+                if let (Some(capabilities), Value::Object(assist)) = (capabilities.as_object_mut(), assist::capabilities()) {
+                    capabilities.extend(assist);
+                }
                 answer(&mut out, json!({ "capabilities": capabilities, "serverInfo": { "name": "fake-lsp", "version": "7.0.0-fake" } }));
                 for i in 0..script.flood {
                     out.send(&json!({ "jsonrpc": "2.0", "method": "window/logMessage", "params": { "type": 4, "message": format!("flood {i}") } }));
@@ -493,6 +555,15 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 answer(&mut out, decorations::code_lenses(&script.decorations, text, utf8, shown.1));
             }
             "codeLens/resolve" => answer(&mut out, decorations::resolve_code_lens(&script.decorations, params.clone())),
+            "textDocument/completion" | "completionItem/resolve" | "textDocument/hover" | "textDocument/signatureHelp" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let text = documents.get(uri).map(String::as_str);
+                let offset = |text: &str, at: &Value| offset(text, at, utf8);
+                let position = |text: &str, at: usize| position(text, at, utf8);
+                if let Some(result) = assist::answer(&script.assist, &method, &params, text, offset, position) {
+                    answer(&mut out, result);
+                }
+            }
             "shutdown" => answer(&mut out, Value::Null),
             "exit" => return 0,
             _ if id.is_some() => {
@@ -685,6 +756,18 @@ mod tests {
                 edits: vec![("x".into(), "y".into())],
             }],
             decorations: Decorations::default(),
+            assist: AssistScript {
+                completions: vec![json!({ "label": "count" })],
+                resolved: vec![("count".into(), json!({ "detail": "let count: number" }))],
+                hovers: vec![("count".into(), "`count`".into())],
+                signatures: vec![FakeSignature {
+                    function: "add".into(),
+                    label: "add(a, b)".into(),
+                    parameters: vec!["a".into(), "b".into()],
+                    documentation: "Adds.".into(),
+                }],
+            },
+            slow: vec![("textDocument/hover".into(), Duration::from_millis(7))],
         };
         assert_eq!(LspScript::from_json(&script.to_json()).unwrap(), script);
     }

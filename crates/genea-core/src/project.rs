@@ -3,6 +3,7 @@
 mod changes;
 mod check;
 mod decorations;
+mod assist;
 mod external;
 mod language;
 mod oxlint;
@@ -49,6 +50,7 @@ use crate::{
     workspace::Workspace,
 };
 use check::Check;
+use assist::Assist;
 use language::Language;
 use quick_fixes::QuickFixes;
 use tabs::Panes;
@@ -112,6 +114,8 @@ pub(crate) struct Project {
     language: Language,
     /// The project check (ticket #48).
     check: Check,
+    /// Completion, hover and signature help (ticket #43).
+    assist: Assist,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
@@ -160,6 +164,7 @@ impl Project {
             environment: None,
             language: Language::default(),
             check: Check::default(),
+            assist: Assist::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -477,6 +482,7 @@ impl Project {
         if !scrolling {
             self.clear_hint();
         }
+        let assist = assist::Trigger::of(&command);
         match command {
             Command::ShowHunk { line } => {
                 self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
@@ -550,6 +556,16 @@ impl Project {
                 self.restart_language_server();
                 self.restart_oxlint();
             }
+            Command::ShowCompletion
+            | Command::MoveCompletionSelection(_)
+            | Command::SelectCompletionItem(_)
+            | Command::AcceptCompletion
+            | Command::CloseCompletion
+            | Command::HoverAt { .. }
+            | Command::ShowHover
+            | Command::HideHover
+            | Command::ShowSignatureHelp
+            | Command::HideSignatureHelp => self.assist_command(command, now),
             Command::AddTypeScript => self.add_typescript(jobs),
             Command::AddOxlintAndOxfmt => self.add_oxc(jobs),
             Command::OpenFinder(_)
@@ -790,6 +806,7 @@ impl Project {
         self.refresh_views();
         self.sync_language();
         self.sync_project_check();
+        self.assist_after(assist);
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
@@ -839,6 +856,7 @@ impl Project {
                 .as_ref()
                 .filter(|(path, _)| path == e.path())
                 .and_then(|(path, line)| self.git.hunk_view(path, e.version(), *line));
+            self.assist_view(e, &mut view);
             view
         });
         let mut tabs = self.tabs_view(editor.as_ref());

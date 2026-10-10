@@ -58,6 +58,15 @@ impl Language {
     pub(super) fn context(&self) -> Option<(SharedHost, Jobs)> {
         self.context.clone()
     }
+
+    /// tsgo, while it runs.
+    pub(super) fn server(&self) -> Option<&LanguageServer> {
+        self.typescript.as_ref()
+    }
+
+    pub(super) fn server_mut(&mut self) -> Option<&mut LanguageServer> {
+        self.typescript.as_mut()
+    }
 }
 
 impl Project {
@@ -282,6 +291,11 @@ impl Project {
                 Output::CodeActions { ticket, fixes } => self.code_actions_answered(ticket, fixes),
                 Output::Navigation(answer) => self.navigation_answered(answer),
                 Output::Decorations(output) => self.apply_decorations(output),
+                Output::Assist { tag, result } => {
+                    let Some((host, _)) = &self.language.context else { continue };
+                    let now = host.clock().now();
+                    self.assist_answered(tag, result, now);
+                }
             }
         }
     }
