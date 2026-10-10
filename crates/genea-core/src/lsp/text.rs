@@ -149,12 +149,12 @@ mod tests {
     #[test]
     fn char_indices_go_to_the_servers_positions_and_back() {
         let text = Rope::from_str("ab\né😀x\n");
-        // `x` is char 6: line 1, after `é` (2 bytes, 1 unit) and `😀` (4 bytes, 2 units).
-        assert_eq!(lsp_position(&text, 6, Encoding::Utf8), (1, 6));
-        assert_eq!(lsp_position(&text, 6, Encoding::Utf16), (1, 3));
-        assert_eq!(lsp_position(&text, 6, Encoding::Utf32), (1, 2));
-        assert_eq!(char_index(&text, 1, 6, Encoding::Utf8), 6);
-        assert_eq!(char_index(&text, 1, 3, Encoding::Utf16), 6);
+        // `x` is char 5: line 1, after `é` (2 bytes, 1 unit) and `😀` (4 bytes, 2 units).
+        assert_eq!(lsp_position(&text, 5, Encoding::Utf8), (1, 6));
+        assert_eq!(lsp_position(&text, 5, Encoding::Utf16), (1, 3));
+        assert_eq!(lsp_position(&text, 5, Encoding::Utf32), (1, 2));
+        assert_eq!(char_index(&text, 1, 6, Encoding::Utf8), 5);
+        assert_eq!(char_index(&text, 1, 3, Encoding::Utf16), 5);
         assert_eq!(lsp_position(&text, 99, Encoding::Utf16), (2, 0));
     }
 

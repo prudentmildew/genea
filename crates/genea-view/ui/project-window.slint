@@ -5,6 +5,7 @@
 
 import { Theme } from "theme.slint";
 import { Line, HunkPopup } from "editor-surface.slint";
+import { AssistPopups } from "assist-popups.slint";
 import { EditorPane, TabEntry, SurfaceGeometry } from "editor-pane.slint";
 import { StatusBar } from "status-bar.slint";
 import { LeftColumn, LeftView } from "left-column.slint";
@@ -96,6 +97,10 @@ export component ProjectWindow inherits Window {
     // The shown git change, in the focused pane only.
     in property <HunkPopup> left-hunk;
     in property <HunkPopup> right-hunk;
+    // Completion, hover and signature help (ticket #43), in the focused
+    // pane only.
+    in property <AssistPopups> left-assist;
+    in property <AssistPopups> right-assist;
     // Each pane's file changed on disk while it had unsaved edits (#32).
     in property <bool> left-conflict;
     in property <bool> right-conflict;
@@ -202,6 +207,11 @@ export component ProjectWindow inherits Window {
     // The shown git change's buttons (ticket #56).
     callback rollback-hunk();
     callback hide-hunk();
+    // A click on a completion; the pointer moving over a pane's text and
+    // leaving it (ticket #43).
+    callback completion-clicked(index: int);
+    callback pointer-moved(pane: int, x: length, y: length);
+    callback pointer-left(pane: int);
 
     title: root.window-title;
     preferred-width: 1200px;
@@ -617,6 +627,16 @@ export component ProjectWindow inherits Window {
                 can-split: root.can-split;
                 geometry: root.left-geometry;
                 hunk: root.left-hunk;
+                assist: root.left-assist;
+                completion-clicked(index) => {
+                    root.completion-clicked(index);
+                }
+                pointer-moved(x, y) => {
+                    root.pointer-moved(0, x, y);
+                }
+                pointer-left => {
+                    root.pointer-left(0);
+                }
                 rollback-hunk => {
                     root.rollback-hunk();
                 }
@@ -677,6 +697,16 @@ export component ProjectWindow inherits Window {
                 can-split: root.can-split;
                 geometry: root.right-geometry;
                 hunk: root.right-hunk;
+                assist: root.right-assist;
+                completion-clicked(index) => {
+                    root.completion-clicked(index);
+                }
+                pointer-moved(x, y) => {
+                    root.pointer-moved(1, x, y);
+                }
+                pointer-left => {
+                    root.pointer-left(1);
+                }
                 rollback-hunk => {
                     root.rollback-hunk();
                 }

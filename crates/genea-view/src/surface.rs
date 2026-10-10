@@ -14,7 +14,7 @@ use genea_core::{EditorView, Fold, Highlight, HighlightSpan, HunkView, LineChang
 use slint::{Model, ModelRc, VecModel};
 use unicode_width::UnicodeWidthChar;
 
-use crate::{HunkPopup, Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry};
+use crate::{HunkPopup, Line, Mark, ProjectWindow, Run, Span, SurfaceGeometry, assist::Popups};
 
 /// Menlo 13 pt × 1.2 (spec #19). Keep in step with `Theme.line-height` in
 /// ui/theme.slint.
@@ -64,6 +64,8 @@ pub struct Surface {
     scroll_top: f64,
     /// The shown git change and its popover's `y`, as last pushed.
     hunk: Option<(HunkView, f32)>,
+    /// Completion, hover and signature help, as last pushed (ticket #43).
+    assist: Popups,
 }
 
 impl Surface {
@@ -74,7 +76,7 @@ impl Surface {
         } else {
             window.set_right_lines(ModelRc::from(lines.clone()));
         }
-        Surface { pane, lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0, hunk: None }
+        Surface { pane, lines, slots: Vec::new(), base: 0, rows: 0.0, scroll_top: 0.0, hunk: None, assist: Popups::default() }
     }
 
     /// The viewport's height in rows, if it changed since the last call.
@@ -273,6 +275,15 @@ impl Surface {
         }
         set_geometry(window, self.pane, geometry);
         self.sync_hunk(window, editor.and_then(|e| e.hunk.as_ref()));
+        let mut assist = std::mem::take(&mut self.assist);
+        let line_top = |line: usize| ((self.row_of_line(line) - base) * LINE_HEIGHT as f64) as f32;
+        assist.sync(window, self.pane, editor, &line_top, LINE_HEIGHT);
+        self.assist = assist;
+    }
+
+    /// The popups this pane shows, for the keys they take.
+    pub fn popups(&self) -> &Popups {
+        &self.assist
     }
 
     /// Shows or hides the git change's popover, below the change's lines
