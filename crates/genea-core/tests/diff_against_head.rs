@@ -114,6 +114,53 @@ fn in_a_repository_without_a_commit_every_file_is_all_added() {
 }
 
 #[test]
+fn the_diff_follows_edits_in_the_buffer() {
+    let fixture = repository(FixtureProject::new().file("main.ts", "one\ntwo\n"));
+    let (mut workbench, project) = open(&fixture, "main.ts");
+    workbench.dispatch(project, Command::ShowDiffAgainstHead);
+    workbench.settle().unwrap();
+    assert_eq!(rows(&editor(&workbench, project)), [" one", " two", " "]);
+
+    type_at(&mut workbench, project, 1, 0, "2\n");
+    workbench.settle().unwrap();
+
+    assert_eq!(rows(&editor(&workbench, project)), [" one", "+2", " two", " "]);
+}
+
+#[test]
+fn a_commit_in_the_terminal_moves_the_diff_to_the_new_head() {
+    let fixture = repository(FixtureProject::new().file("main.ts", "one\ntwo\n"));
+    fixture.write("main.ts", "one\n2\n");
+    let (mut workbench, project) = open(&fixture, "main.ts");
+    workbench.dispatch(project, Command::ShowDiffAgainstHead);
+    workbench.settle().unwrap();
+    assert_eq!(rows(&editor(&workbench, project)), [" one", "-two", "+2", " "]);
+
+    git(fixture.root(), &["commit", "--quiet", "--all", "--message", "Two"]);
+    workbench.settle().unwrap();
+
+    let view = editor(&workbench, project);
+    assert_eq!(rows(&view), [" one", " 2", " "]);
+    assert_eq!(view.inline_diff.unwrap().against, DiffAgainst::Head);
+}
+
+#[test]
+fn close_inline_diff_shows_the_file_plainly() {
+    let fixture = repository(FixtureProject::new().file("main.ts", "one\n"));
+    fixture.write("main.ts", "1\n");
+    let (mut workbench, project) = open(&fixture, "main.ts");
+    workbench.dispatch(project, Command::ShowDiffAgainstHead);
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::CloseInlineDiff);
+    workbench.settle().unwrap();
+
+    let view = editor(&workbench, project);
+    assert_eq!(view.inline_diff, None);
+    assert_eq!(view.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["1", ""]);
+}
+
+#[test]
 fn outside_a_repository_a_notice_says_so_and_the_file_shows_plainly() {
     let fixture = FixtureProject::new().file("main.ts", "one\n").build();
     let (mut workbench, project) = open(&fixture, "main.ts");

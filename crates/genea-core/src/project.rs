@@ -232,6 +232,7 @@ impl Project {
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
             self.git.reload(open, jobs);
+            self.head_moved(jobs);
         }
         self.check_open_files(&changes, jobs);
         self.review.files_changed(&changes, jobs);
