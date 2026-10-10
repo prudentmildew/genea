@@ -508,6 +508,20 @@ message types. `project/language.rs` is a project's side of it.
   (`lsp/watch.rs`, case-insensitive: tsgo lowercases paths) are matched in
   the background against the project watcher's batches, each path sent as
   created, changed or deleted (`FileChanges::created`).
+- **Code actions** (ticket #45; `lsp/actions.rs`, `project/quick_fixes.rs`):
+  `Command::ShowQuickFixes` (⌥⏎) asks every ready server for `quickfix`
+  actions at the primary selection, sending the diagnostics that server
+  last reported there (or else on those lines: tsgo fixes by diagnostic
+  code, not by range). `ProjectView::quick_fixes` shows once one answers;
+  any command but `MoveQuickFixSelection`, `ApplyQuickFix` and scrolling
+  closes it and drops later answers. `Command::OrganizeImports` (⌃⌥O) asks
+  tsgo alone for `source.organizeImports` and applies it when it answers;
+  nothing else (not saving) organizes imports. Only actions that carry
+  their `edit` are offered (tsgo's all do): no `codeAction/resolve`, no
+  `workspace/executeCommand`. An edit applies to open files only, each as
+  one undo step (`Editor::apply_text_edits`), and only if none of them
+  changed since the request; otherwise a notice says why and nothing
+  changes.
 - **Lifecycle** (`LanguageServer`): starting, ready, not responding (no
   answer to `initialize` within `START_TIMEOUT` of the open or a start; it
   keeps running), restarting (`RESTART_DELAY` after a crash), failed (more
@@ -522,11 +536,14 @@ message types. `project/language.rs` is a project's side of it.
 
 Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
 the test host as `tsc`: scripted per test to report markers, crash, stay
-silent, delay or flood, and asked afterwards what reached it. As a binary
+silent, delay or flood, offer code actions (`quick_fix`,
+`organize_imports`: edits as text to find and replace), and asked
+afterwards what reached it. As a binary
 (`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
 tsgo in the harness's `typing-silent-lsp`. It answers `documentSymbol` and `workspace/symbol` from a rough reading of the declarations in the files (`genea-testkit/src/fake_symbols.rs`). The slow lane
 `tests/language_server_slow.rs` (`-- --ignored`) installs TypeScript 7 with
-pnpm and checks real diagnostics.
+pnpm and checks real diagnostics; `tests/quick_fixes_slow.rs` checks a real
+missing-import fix and organize imports.
 
 ### Project check
 

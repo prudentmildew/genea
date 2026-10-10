@@ -81,4 +81,5 @@ pub use view::{
     TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
+pub use view::QuickFixesView;
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

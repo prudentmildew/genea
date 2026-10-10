@@ -346,6 +346,28 @@ pub enum Command {
     AcceptFinder,
     /// Esc: closes the finder.
     CloseFinder,
+
+    // Quick fixes and organize imports (ticket #45): the language servers'
+    // code actions. ADR 0002: no refactors.
+    /// ⌥⏎: asks the language servers for their fixes at the primary caret
+    /// (or selection) for the problems there, and shows them in
+    /// `ProjectView::quick_fixes` once they answer. Any command but the
+    /// quick-fix ones closes it.
+    ShowQuickFixes,
+    /// ↑ and ↓ in the quick-fix popup: moves the selection by a number of
+    /// fixes (negative is up), wrapping around at either end.
+    MoveQuickFixSelection(isize),
+    /// Return (the selected fix) or a click: applies a fix by its index in
+    /// `QuickFixesView::items`, as one undo step per file, and closes the
+    /// popup. Files that changed since the fixes were offered are left
+    /// alone.
+    ApplyQuickFix(usize),
+    /// Esc: closes the quick-fix popup.
+    CloseQuickFixes,
+    /// ⌃⌥O: sorts the focused file's imports and removes unused ones, as
+    /// the language server does it (`source.organizeImports`), as one undo
+    /// step. Only ever on this command: saving never organizes imports.
+    OrganizeImports,
 }
 
 /// A key for the terminal that [`Command::TerminalText`] can't carry.

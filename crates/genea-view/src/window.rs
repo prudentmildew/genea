@@ -16,18 +16,19 @@ use std::{
 use genea_core::{
     ChangeItem, ChangeKind, CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
     LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
-    SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme, ToolchainOption,
-    Workbench,
+    QuickFixesView, SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme,
+    ToolchainOption, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    ChangeMark, ChangeRow, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, SearchRow, TabEntry, Theme, app::with_app,
+    ChangeMark, ChangeRow, FileEntry, FinderRow, LeftView, PickerRow, ProblemRow, ProjectWindow, QuickFixPopup, SearchRow,
+    TabEntry, Theme, app::with_app,
     dialogs, fonts,
-    keys::Modifiers,
+    keys::{Modifiers, PopupKey},
     links,
     surface::Surface,
     terminal::{self, TerminalSurface},
@@ -83,6 +84,9 @@ pub struct WindowController {
     finder_mode: Option<FinderMode>,
     finder_items: Vec<FinderItem>,
     finder_rows: Rc<VecModel<FinderRow>>,
+    /// The quick-fix popup as last pushed, and the pane it shows in
+    /// (ticket #45).
+    quick_fixes: Option<(QuickFixesView, usize)>,
 }
 
 /// How far left of the text a press still hits a git gutter marker: its
@@ -138,6 +142,7 @@ impl WindowController {
             finder_mode: None,
             finder_items: Vec::new(),
             finder_rows,
+            quick_fixes: None,
         })
     }
 
@@ -472,6 +477,7 @@ impl WindowController {
         }
         window.set_terminal_bottom(view.config.terminal_position == TerminalPosition::Bottom);
         self.terminal.sync(window, &view.terminal);
+        self.sync_quick_fixes(view.quick_fixes.as_ref(), view.focused_pane);
         crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
         if let Some(editor) = editor.filter(|e| !e.lines.is_empty()) {
             crate::journal::mark_shown(&editor.path);
@@ -537,6 +543,37 @@ impl WindowController {
         }
         window.set_finder_selected(finder.selected.map_or(-1, |i| i as i32));
         false
+    }
+
+    /// Shows the quick-fix popup in the focused pane, as the core has it.
+    fn sync_quick_fixes(&mut self, quick_fixes: Option<&QuickFixesView>, pane: usize) {
+        let wanted = quick_fixes.map(|q| (q.clone(), pane));
+        if wanted == self.quick_fixes {
+            return;
+        }
+        let popup = |shown: bool| match quick_fixes.filter(|_| shown) {
+            Some(q) => QuickFixPopup {
+                shown: true,
+                items: ModelRc::new(VecModel::from(q.items.iter().map(SharedString::from).collect::<Vec<_>>())),
+                selected: q.selected as i32,
+            },
+            None => QuickFixPopup::default(),
+        };
+        self.window.set_left_quick_fixes(popup(pane == 0));
+        self.window.set_right_quick_fixes(popup(pane == 1));
+        self.quick_fixes = wanted;
+    }
+
+    /// The command for a popup key while the quick-fix popup shows.
+    pub fn quick_fix_command(&self, key: PopupKey) -> Option<Command> {
+        let (quick_fixes, _) = self.quick_fixes.as_ref()?;
+        Some(match key {
+            PopupKey::Up => Command::MoveQuickFixSelection(-1),
+            PopupKey::Down => Command::MoveQuickFixSelection(1),
+            PopupKey::Accept if quick_fixes.items.is_empty() => Command::CloseQuickFixes,
+            PopupKey::Accept => Command::ApplyQuickFix(quick_fixes.selected),
+            PopupKey::Close => Command::CloseQuickFixes,
+        })
     }
 
     /// A finder result was clicked: choose it.
