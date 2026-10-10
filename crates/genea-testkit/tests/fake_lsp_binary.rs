@@ -2,7 +2,7 @@
 //! benchmark harness installs it in place of tsgo.
 
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Write},
     process::{Command, Stdio},
 };
 
