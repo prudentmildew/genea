@@ -18,7 +18,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     ProjectWindow, TermCursor, TermLink, TermRow, TermRun as SlintRun, TermTab, fonts, keys::Modifiers,
-    surface::LINE_HEIGHT,
+    surface::line_height,
 };
 
 pub struct TerminalSurface {
@@ -59,7 +59,7 @@ impl TerminalSurface {
             return None;
         }
         let columns = ((window.get_terminal_grid_width() / char_width).floor() as usize).max(2);
-        let rows = ((window.get_terminal_grid_height() / LINE_HEIGHT).floor() as usize).max(1);
+        let rows = ((window.get_terminal_grid_height() / line_height(window)).floor() as usize).max(1);
         (self.size != Some((rows, columns))).then(|| {
             self.size = Some((rows, columns));
             (rows, columns)
@@ -69,7 +69,7 @@ impl TerminalSurface {
     /// The cell under a point in grid coordinates.
     pub fn cell_at(&self, window: &ProjectWindow, x: f32, y: f32) -> (usize, usize) {
         let char_width = window.get_terminal_char_width().max(1.0);
-        ((y / LINE_HEIGHT).max(0.0) as usize, (x / char_width).max(0.0) as usize)
+        ((y / line_height(window)).max(0.0) as usize, (x / char_width).max(0.0) as usize)
     }
 
     /// The link under a cell, if any.
@@ -104,8 +104,8 @@ impl TerminalSurface {
     }
 
     /// The wheel over the grid, as whole rows (negative is up).
-    pub fn scroll(&mut self, delta_y: f32) -> Option<i32> {
-        self.scroll_rest -= delta_y / LINE_HEIGHT;
+    pub fn scroll(&mut self, window: &ProjectWindow, delta_y: f32) -> Option<i32> {
+        self.scroll_rest -= delta_y / line_height(window);
         let rows = self.scroll_rest.trunc();
         self.scroll_rest -= rows;
         (rows != 0.0).then_some(rows as i32)
@@ -150,7 +150,7 @@ impl TerminalSurface {
             }
             fonts::prepare(&line.text);
             let row = TermRow {
-                y: index as f32 * LINE_HEIGHT,
+                y: index as f32 * line_height(window),
                 runs: if line.runs.is_empty() {
                     ModelRc::default()
                 } else {
@@ -176,7 +176,7 @@ impl TerminalSurface {
             Some(cursor) if view.status == TerminalStatus::Running => TermCursor {
                 visible: true,
                 x: cursor.column as f32 * char_width,
-                y: cursor.line as f32 * LINE_HEIGHT,
+                y: cursor.line as f32 * line_height(window),
                 preedit_width: preedit.width() as f32 * char_width,
                 preedit: preedit.into(),
             },

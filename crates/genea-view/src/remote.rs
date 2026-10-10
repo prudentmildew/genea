@@ -76,7 +76,7 @@ use objc2::{
 use objc2_app_kit::{NSApplication, NSApplicationOcclusionState, NSEvent};
 use slint::ComponentHandle;
 
-use crate::{app, journal, surface::LINE_HEIGHT};
+use crate::{app, journal, surface::line_height};
 
 /// Starts the reader thread. `main` calls it once the backend is up, while
 /// the journal is on.
@@ -244,6 +244,9 @@ fn handle(line: &str) {
             reply(&format!(r#"{{"pids":[{}]}}"#, pids.join(",")));
         }
         ["quit"] => {
+            // As ⌘Q does: the session is saved (ticket #59), so the next
+            // start restores it.
+            app::quit();
             reply(r#"{"ok":true}"#);
             std::process::exit(0);
         }
@@ -385,7 +388,7 @@ fn scroll(px: f32, duration: Duration) {
             window.invoke_scrolled(0, -px * direction.get());
             // At an end the core clamps, and a step that moves less than a
             // pixel draws no frame, which would end the chain: turn around.
-            let moved = (scroll_top().unwrap_or_default() - before).abs() * f64::from(LINE_HEIGHT);
+            let moved = (scroll_top().unwrap_or_default() - before).abs() * f64::from(line_height(&window));
             if moved < 1.0 {
                 direction.set(-direction.get());
                 window.invoke_scrolled(0, -px * direction.get());

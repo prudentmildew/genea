@@ -18,6 +18,7 @@ use crate::{
     command::{CloseChoice, Command},
     editor::{Cursor, Editor},
     jobs::Jobs,
+    session::{PaneSession, TabSession},
     view::{ClosePrompt, EditorTab, EditorView, PaneView},
 };
 
@@ -404,6 +405,94 @@ impl Project {
             left.active = active;
         }
         self.panes.focused = 0;
+        self.unpark();
+    }
+
+    /// The tabs as the session keeps them (ticket #59): each side's tabs
+    /// with their carets and scroll positions, and the focused side.
+    pub(super) fn tabs_session(&self) -> (Vec<PaneSession>, usize) {
+        let panes = &self.panes;
+        let sides = panes.sides.iter().enumerate().map(|(p, side)| PaneSession {
+            active: side.active,
+            tabs: side
+                .tabs
+                .iter()
+                .enumerate()
+                .filter_map(|(t, tab)| {
+                    let editor = self.open_editor(&tab.path)?;
+                    // The focused tab's editor holds its live cursor.
+                    let focused = p == panes.focused && t == side.active && self.editor.is_some();
+                    let cursor = if focused { editor.cursor() } else { tab.cursor.clone() };
+                    let selections = editor.cursor_positions(&cursor);
+                    Some(TabSession { path: tab.path.clone(), selections, scroll_top: cursor.scroll_top() })
+                })
+                .collect(),
+        });
+        (sides.filter(|side| !side.tabs.is_empty()).collect(), panes.focused)
+    }
+
+    /// Brings back a session's tabs (ticket #59), once their files are read
+    /// into `editors`; tabs whose file couldn't be read are left out. Tabs
+    /// opened meanwhile (a file named on the command line) stay, after the
+    /// restored ones, and keep the focus.
+    pub(super) fn restore_tabs(&mut self, panes: Vec<PaneSession>, focused: usize, editors: Vec<Editor>) {
+        let keep = self.active_tab().map(|(pane, tab, _)| (pane, self.panes.sides[pane].tabs[tab].path.clone()));
+        self.park();
+        for editor in editors {
+            if self.open_editor(editor.path()).is_none() {
+                self.panes.parked.push(editor);
+            }
+        }
+        let mut focus = None;
+        for (p, pane) in panes.into_iter().take(2).enumerate() {
+            let active_path = pane.tabs.get(pane.active).map(|t| t.path.clone());
+            if p == self.panes.sides.len() {
+                self.panes.sides.push(Pane::default());
+            }
+            let Project { panes: Panes { sides, parked, .. }, .. } = self;
+            let side = &mut sides[p];
+            let restored: Vec<Tab> = pane
+                .tabs
+                .into_iter()
+                .filter(|tab| side.position(&tab.path).is_none())
+                .filter_map(|tab| {
+                    let editor = parked.iter().find(|e| e.path() == tab.path)?;
+                    Some(Tab::new(tab.path, editor.cursor_at(&tab.selections, tab.scroll_top)))
+                })
+                .collect();
+            let had_tabs = !side.tabs.is_empty();
+            let count = restored.len();
+            side.tabs.splice(0..0, restored);
+            if had_tabs {
+                side.active += count;
+            } else if let Some(active) = active_path.and_then(|path| side.position(&path)) {
+                side.active = active;
+            }
+            if p == focused
+                && let Some(tab) = side.tabs.get(side.active)
+            {
+                focus = Some((p, tab.path.clone()));
+            }
+        }
+        // The tab opened meanwhile keeps the focus; else the session's.
+        let focus = keep.or(focus);
+        // A side left without tabs (its files are gone) closes.
+        self.panes.sides.retain(|side| !side.tabs.is_empty());
+        if self.panes.sides.is_empty() {
+            self.panes.sides.push(Pane::default());
+        }
+        self.panes.focused = 0;
+        if let Some((pane, path)) = focus {
+            let sides = &mut self.panes.sides;
+            // Its side, or the one left of it if a side before it closed.
+            let found = std::iter::once(pane.min(sides.len() - 1))
+                .chain(0..sides.len())
+                .find_map(|p| sides[p].position(&path).map(|t| (p, t)));
+            if let Some((pane, tab)) = found {
+                self.panes.focused = pane;
+                sides[pane].active = tab;
+            }
+        }
         self.unpark();
     }
 

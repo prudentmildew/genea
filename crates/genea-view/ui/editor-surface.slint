@@ -147,6 +147,10 @@ export component EditorSurface inherits Rectangle {
 
     probe := Text {
         visible: false;
+        // Measures, and nothing else: without this, its 100 characters
+        // would be the surface's minimum width (and two surfaces' the
+        // window's), wider than the screen.
+        min-width: 0px;
         font-family: Theme.editor-font;
         font-size: Theme.editor-font-size;
         text: "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";

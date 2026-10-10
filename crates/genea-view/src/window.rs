@@ -19,7 +19,7 @@ use genea_core::{
     DiffAgainst, InlineDiffView,
     LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
     QuickFixesView, SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme,
-    ToolchainOption, Workbench,
+    ToolchainOption, WindowFrame, WindowLayout, Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -35,6 +35,7 @@ use crate::{
     keys::{Modifiers, PopupKey},
     links,
     navigation::Navigation,
+    screens,
     surface::Surface,
     terminal::{self, TerminalSurface},
 };
@@ -112,6 +113,9 @@ pub struct WindowController {
 /// column and the fold-marker column to its right (ui/editor-surface.slint).
 /// A press on a line's fold marker toggles the fold instead.
 const GIT_MARKER_WIDTH: f32 = 22.0;
+
+/// The smallest window a restored session gets, in points.
+const MIN_WINDOW: (f64, f64) = (480.0, 320.0);
 
 /// A press this soon after a double-click on the same line is a triple-click.
 const TRIPLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
@@ -208,6 +212,53 @@ impl WindowController {
             ns_window.makeKeyAndOrderFront(None);
         }
         NSApplication::sharedApplication(mtm).activate();
+    }
+
+    /// Where the window is and how it is laid out, for the session
+    /// (ticket #59).
+    pub fn layout(&self) -> WindowLayout {
+        let window = self.window.window();
+        let scale = window.scale_factor();
+        let position = window.position().to_logical(scale);
+        let size = window.size().to_logical(scale);
+        WindowLayout {
+            frame: WindowFrame {
+                x: f64::from(position.x),
+                y: f64::from(position.y),
+                width: f64::from(size.width),
+                height: f64::from(size.height),
+            },
+            left_column_width: f64::from(self.window.get_left_column_width()),
+            terminal_width: f64::from(self.window.get_terminal_width()),
+            terminal_height: f64::from(self.window.get_terminal_height()),
+        }
+    }
+
+    /// Lays the window out as the session saved it, before it shows: its
+    /// size, its position if that is still on a screen, the left column's
+    /// width, the terminal's size, and the zoom.
+    pub fn restore_layout(&self, workbench: &Workbench) {
+        let Some(view) = workbench.project(self.project) else { return };
+        self.window.global::<Theme>().set_editor_font_size(view.font_size as f32);
+        let Some(layout) = view.window_layout else { return };
+        let frame = layout.frame;
+        let window = self.window.window();
+        let visible = screens::visible_frames();
+        // Never larger than the biggest screen, nor too small to use.
+        let (max_width, max_height) =
+            visible.iter().fold((0.0_f64, 0.0_f64), |(w, h), s| (w.max(s.width), h.max(s.height)));
+        let width = frame.width.clamp(MIN_WINDOW.0, max_width.max(MIN_WINDOW.0));
+        let height = frame.height.clamp(MIN_WINDOW.1, max_height.max(MIN_WINDOW.1));
+        window.set_size(slint::LogicalSize::new(width as f32, height as f32));
+        if screens::shows(&visible, WindowFrame { width, height, ..frame }) {
+            // Set before the native window exists: winit places the
+            // content's top there (see `title_bar_height`).
+            let y = frame.y + screens::title_bar_height();
+            window.set_position(slint::LogicalPosition::new(frame.x as f32, y as f32));
+        }
+        self.window.set_left_column_width(layout.left_column_width.clamp(160.0, (width - 400.0).max(160.0)) as f32);
+        self.window.set_terminal_width(layout.terminal_width.clamp(160.0, (width - 320.0).max(160.0)) as f32);
+        self.window.set_terminal_height(layout.terminal_height.clamp(80.0, (height - 120.0).max(80.0)) as f32);
     }
 
     /// Converts a press on the surface into a caret placement: ⇧ extends
@@ -315,7 +366,8 @@ impl WindowController {
 
     /// A key press in the terminal.
     pub fn terminal_key(&mut self, workbench: &mut Workbench, text: &str, modifiers: Modifiers) {
-        if let Some(command) = terminal::command_for(text, modifiers) {
+        let zoom = crate::keys::zoom(text, modifiers);
+        if let Some(command) = zoom.or_else(|| terminal::command_for(text, modifiers)) {
             self.dispatch(workbench, command);
         }
     }
@@ -341,7 +393,7 @@ impl WindowController {
     /// The scroll wheel over the terminal's grid.
     pub fn terminal_scrolled(&mut self, workbench: &mut Workbench, delta_y: f32, x: f32, y: f32) {
         let (line, column) = self.terminal.cell_at(&self.window, x, y);
-        if let Some(rows) = self.terminal.scroll(delta_y) {
+        if let Some(rows) = self.terminal.scroll(&self.window, delta_y) {
             self.dispatch(workbench, Command::ScrollTerminal { rows, line, column });
         }
     }
@@ -394,6 +446,14 @@ impl WindowController {
         let theme = window.global::<Theme>();
         theme.set_follow_system(view.config.theme == ConfigTheme::System);
         theme.set_pinned_dark(view.config.theme == ConfigTheme::Dark);
+        // Zoom (ticket #59). The rows that fit and the terminal's grid
+        // follow the new font at the next sync.
+        let font_size = view.font_size as f32;
+        if theme.get_editor_font_size() != font_size {
+            theme.set_editor_font_size(font_size);
+            let key = self.key;
+            slint::Timer::single_shot(Duration::ZERO, move || with_app(move |app| app.sync(key)));
+        }
 
         window.set_left_column_visible(view.left_column.is_some());
         match view.left_column {

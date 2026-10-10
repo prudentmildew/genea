@@ -58,6 +58,7 @@ use crate::{
     environment::ProcessEnv,
     jobs::Jobs,
     problems::TextPosition,
+    session::{TerminalSession, TerminalTabSession},
     view::{ScriptLink, TerminalLine, TerminalStatus, TerminalTab, TerminalView},
     workbench::{Core, ProjectId},
 };
@@ -738,6 +739,54 @@ impl Terminal {
                 self.report_focus(b"\x1b[I");
             }
         }
+    }
+
+    /// The tabs as the session keeps them (ticket #59).
+    pub(crate) fn session(&self) -> TerminalSession {
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|tab| match &tab.launch {
+                Launch::Shell => TerminalTabSession::Shell,
+                Launch::PackageManager { name, args } => {
+                    TerminalTabSession::PackageManager { name: name.clone(), args: args.clone(), title: tab.name.clone() }
+                }
+                Launch::Script { script } => TerminalTabSession::Script {
+                    script: script.clone(),
+                    directory: tab.directory.strip_prefix(&self.root).unwrap_or(&tab.directory).to_owned(),
+                    title: tab.name.clone(),
+                },
+            })
+            .collect();
+        TerminalSession { tabs, active: self.active, visible: self.visible }
+    }
+
+    /// Brings back a session's tabs, before any has started: shells start
+    /// afresh in their places; a command's tab comes back stopped, without
+    /// running, until Re-run.
+    pub(crate) fn restore(&mut self, session: &TerminalSession) {
+        self.tabs = session
+            .tabs
+            .iter()
+            .map(|tab| {
+                let (launch, directory, title) = match tab {
+                    TerminalTabSession::Shell => return Tab::new(Launch::Shell, self.size, self.root.clone()),
+                    TerminalTabSession::PackageManager { name, args, title } => {
+                        (Launch::PackageManager { name: name.clone(), args: args.clone() }, self.root.clone(), title)
+                    }
+                    TerminalTabSession::Script { script, directory, title } => {
+                        (Launch::Script { script: script.clone() }, self.root.join(directory), title)
+                    }
+                };
+                let mut restored = Tab::new(launch, self.size, directory);
+                restored.name.clone_from(title);
+                restored.stopped = true;
+                restored.process = Process::Exited(Exit { code: None, signal: None });
+                restored
+            })
+            .collect();
+        self.active = session.active.min(self.tabs.len().saturating_sub(1));
+        self.visible = session.visible && !self.tabs.is_empty();
     }
 
     /// The file and place the reference at the showing tab's cell points

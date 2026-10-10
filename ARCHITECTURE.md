@@ -53,6 +53,7 @@ use, and nothing else:
 | Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`, then the showing tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `NewTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | Shell tabs, plus a tab per package-manager command (`src/terminal/`, below). |
 | Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
 | Scripts | `ProjectView::scripts` (`PackageScripts`, `Script`), `Command::RunScript`, `StopTerminalTab`, `RerunTerminalTab`, `TerminalView::url`, `StatusBar::script_links`, `SCRIPT_STOP_TIMEOUT` | The workspace model and the script runner (below). |
+| Session | `restore_session() -> Vec<ProjectId>`, `quit()`; `Command::ZoomIn`, `ZoomOut`, `ResetZoom`, `SetWindowLayout(WindowLayout)`; `ProjectView::font_size`, `window_layout` | Ticket #59, below. |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
 ### Extending it
@@ -232,6 +233,28 @@ use, and nothing else:
   `Project::open_editor(_mut)`, e.g. in an Apply whose file may have lost
   the focus meanwhile. `ProjectView::editor` is the focused file;
   `ProjectView::panes` lists each side's tabs and editor.
+- **Session state** (`src/session.rs`, `src/project/session.rs`, ticket
+  #59): each project's session is `sessions/<key>.json` in the support
+  folder: its tabs and split (carets as anchor/caret line and char column,
+  the primary last, and each tab's scroll row), the left column's view, the
+  terminal's tabs (`Terminal::session`/`restore`), the zoom and the
+  `WindowLayout` the view reports (frame, left column width, terminal
+  width and height). It is read at `open_project` (a small read: the app
+  needs the frame before it shows the window), so every open restores it;
+  the tabs' files are read in one background job and their tabs go in
+  front of any opened meanwhile, which keep the focus
+  (`Project::restore_tabs`). Nothing is saved until that lands. After every
+  command and Apply, `Project::save_session_later` writes the session in a
+  job 1 s (host clock) after it last changed; closing a project writes it at
+  once. `open-projects.txt` lists the open projects, which
+  `restore_session` reopens. `quit()` writes everything (sessions, the open
+  list, the recent projects) synchronously and stops later saves, so
+  windows closing during the quit don't change what the next start
+  reopens. Shell tabs come back as fresh shells in their places; a
+  command's tab (script, install) comes back `Stopped`, not run, for
+  Re-run. A new view-only setting goes in `WindowLayout`; a new core one in
+  `ProjectSession` and its JSON (missing keys fall back, so old files
+  load).
 - **Carets** (`src/editor.rs`, ticket #52): an editor has one or more
   carets, each with its own selection, in the order they were added; the
   last is the primary (the one scrolled to and shown in the status bar).
@@ -336,7 +359,8 @@ started with; `SHELL` names the login shell), and `support_dir()`, Genea's appli
 folder, where the core keeps its own files (recent projects, the toolchain
 store; session state, review baselines, …). The folder is used through the
 real filesystem; the host only says where it is, so tests never touch the
-user's. `Downloads::fetch_with_length` also reports the response's
+user's. `RealHost` uses `GENEA_SUPPORT_DIR` instead when it is set, to run
+Genea without touching the user's folder. `Downloads::fetch_with_length` also reports the response's
 `Content-Length`, for progress.
 
 - `RealHost`: the monotonic clock with one lazily started timer thread (so no
@@ -753,6 +777,18 @@ chrome, native menus via muda (Slint's `MenuBar`).
   window (or focuses its existing one). The welcome window shows while no
   project is open; closing it quits. The event loop runs with
   `run_event_loop_until_quit`, so closing the last project window doesn't.
+  Session (ticket #59): started without a folder, the app calls
+  `restore_session` and gives each project a window, laid out from
+  `ProjectView::window_layout` before it shows
+  (`WindowController::restore_layout`: size clamped to the screens, the
+  position only if the title bar would be on a screen, `src/screens.rs`).
+  Resizing the window or dragging the left column's edge or the terminal's
+  splitter dispatches `SetWindowLayout` (the position is read when the
+  window closes or the app quits). `app::quit` reports every window's
+  layout and calls `Workbench::quit`; it runs on AppKit's
+  `NSApplicationWillTerminateNotification` (⌘Q is `terminate:`, after
+  which nothing else runs), after the event loop ends (the welcome closed)
+  and on the harness's `quit`.
 - `src/window.rs`: `WindowController::sync`, the only place view state flows
   into Slint. `WindowController::focus` brings a window to the front.
   `src/welcome.rs`: the welcome window's sync.
@@ -807,8 +843,15 @@ Rules: push to Slint only on change. Use no repeating timers (the caret is
 steady). Install no rendering notifier or run-loop observer unless the
 benchmark journal is on. Idle must be 0 % CPU.
 
-The editor font is Menlo 13 pt with a line height of 1.2 (`Theme` in
-`ui/theme.slint` and `LINE_HEIGHT` in `src/surface.rs`; keep them in step).
+The editor font is Menlo 13 pt with a line height of 1.2 at zoom 0. Zoom
+sets `Theme.editor-font-size` per window from `ProjectView::font_size`;
+`Theme.line-height` follows it, and Rust reads it with
+`surface::line_height(window)` (never a constant).
+
+Layout: an element's implicit minimum width reaches the window's, so a
+measuring element (the surfaces' 100-character `probe`) sets
+`min-width: 0px`, and the hidden right `EditorPane` gets `max-width: 0` and
+no stretch while there is no split.
 
 ## Build
 

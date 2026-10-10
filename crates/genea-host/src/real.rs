@@ -37,7 +37,12 @@ impl Default for RealHost {
             processes: OsProcesses::default(),
             ptys: OsPtys,
             downloads: HttpDownloads::default(),
-            support_dir: home.join("Library/Application Support/Genea"),
+            // `GENEA_SUPPORT_DIR` runs Genea on another support folder (its
+            // own session, recent projects and stores), e.g. to try it
+            // without touching the user's.
+            support_dir: std::env::var_os("GENEA_SUPPORT_DIR")
+                .filter(|dir| !dir.is_empty())
+                .map_or_else(|| home.join("Library/Application Support/Genea"), PathBuf::from),
             clipboard: ClipboardSlot::default(),
         }
     }
