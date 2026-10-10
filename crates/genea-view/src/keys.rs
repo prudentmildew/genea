@@ -36,6 +36,14 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
     if let Some(command) = structural(text, m) {
         return Some(command);
     }
+    // ⌥⏎ and ⌃⌥O (ticket #45), in case the Code menu doesn't take them.
+    // With ⌃⌥ held, O may come as `o`, `ø` or its control character.
+    if m.ctrl && m.alt && !m.cmd && matches!(text, "o" | "O" | "ø" | "Ø" | "\u{f}") {
+        return Some(Command::OrganizeImports);
+    }
+    if m.alt && !(m.ctrl || m.cmd || m.shift) && is(Key::Return) {
+        return Some(Command::ShowQuickFixes);
+    }
     if m.ctrl || m.cmd {
         return None;
     }
@@ -58,6 +66,36 @@ pub fn command_for(text: &str, m: Modifiers) -> Option<Command> {
     } else if is_typed_text(text) {
         // ⌥ with a letter types a character on macOS, so it counts as text.
         Some(Command::InsertText(text.to_owned()))
+    } else {
+        None
+    }
+}
+
+/// A key the quick-fix popup (ticket #45) takes from the editor while it
+/// shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PopupKey {
+    Up,
+    Down,
+    Accept,
+    Close,
+}
+
+/// The popup key a key press is, if it is one: ↑, ↓, Return or Esc, with no
+/// modifiers.
+pub fn popup_key(text: &str, m: Modifiers) -> Option<PopupKey> {
+    let is = |key: Key| text == SharedString::from(key).as_str();
+    if m.shift || m.cmd || m.alt || m.ctrl {
+        return None;
+    }
+    if is(Key::UpArrow) {
+        Some(PopupKey::Up)
+    } else if is(Key::DownArrow) {
+        Some(PopupKey::Down)
+    } else if is(Key::Return) {
+        Some(PopupKey::Accept)
+    } else if is(Key::Escape) {
+        Some(PopupKey::Close)
     } else {
         None
     }

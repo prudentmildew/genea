@@ -76,6 +76,16 @@ export struct HunkPopup {
     more: string,
 }
 
+// The quick-fix popup (⌥⏎, ticket #45) of the focused editor, below its
+// primary caret: the language servers' fixes there. ↑, ↓, Return and Esc
+// reach it through the keys (src/window.rs).
+export struct QuickFixPopup {
+    shown: bool,
+    // The fixes' titles; empty when there are none here.
+    items: [string],
+    selected: int,
+}
+
 export component EditorSurface inherits Rectangle {
     in property <[Line]> lines;
     // Offset of the line container: -(scroll_top - base_line) * line_height.
@@ -88,6 +98,7 @@ export component EditorSurface inherits Rectangle {
     in property <length> compose-x;
     in property <length> preedit-width;
     in property <HunkPopup> hunk;
+    in property <QuickFixPopup> quick-fixes;
 
     // The width of one grid cell, measured by Slint's own shaper.
     out property <length> char-width: probe.preferred-width / 100;
@@ -109,6 +120,8 @@ export component EditorSurface inherits Rectangle {
     // The shown change's buttons.
     callback rollback-hunk();
     callback hide-hunk();
+    // A click on a quick fix: apply it.
+    callback quick-fix-clicked(int);
 
     // The IME is enabled only for a focused TextInput in a native window
     // that exists, so the app calls this once the window is shown.
@@ -398,6 +411,61 @@ export component EditorSurface inherits Rectangle {
                 text: root.hunk.more;
                 color: Theme.chrome-muted;
                 font-size: Theme.chrome-font-size;
+            }
+        }
+    }
+    // The quick-fix popup: below the caret, or above it if it doesn't fit.
+    // Above the TouchArea, so its clicks stay its own.
+    if root.quick-fixes.shown: Rectangle {
+        property <length> below: root.offset-y + root.caret-y + Theme.line-height;
+        x: max(0px, min(Theme.gutter-width + root.caret-x, root.width - self.width - 8px));
+        y: self.below + self.height > root.height ? max(0px, root.offset-y + root.caret-y - self.height) : self.below;
+        width: min(fixes.preferred-width, root.width - 16px);
+        height: fixes.preferred-height;
+        background: Theme.chrome-background;
+        border-width: 1px;
+        border-color: Theme.chrome-border;
+        border-radius: 4px;
+
+        // Clicks between the fixes don't reach the text below.
+        TouchArea {
+            mouse-cursor: default;
+        }
+
+        fixes := VerticalLayout {
+            padding: 4px;
+
+            if root.quick-fixes.items.length == 0: Text {
+                height: 22px;
+                vertical-alignment: center;
+                text: "  No quick fixes here  ";
+                color: Theme.chrome-muted;
+                font-size: Theme.chrome-font-size;
+            }
+
+            for item[index] in root.quick-fixes.items: Rectangle {
+                height: 22px;
+                border-radius: 3px;
+                background: index == root.quick-fixes.selected ? Theme.selection : touch.has-hover ? Theme.chrome-highlight : transparent;
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+
+                    Text {
+                        vertical-alignment: center;
+                        text: item;
+                        color: Theme.chrome-foreground;
+                        font-size: Theme.chrome-font-size;
+                    }
+                }
+
+                touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.quick-fix-clicked(index);
+                    }
+                }
             }
         }
     }

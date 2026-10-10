@@ -6,6 +6,7 @@ mod external;
 mod language;
 mod oxlint;
 mod finder;
+mod quick_fixes;
 mod symbols;
 mod tabs;
 
@@ -47,6 +48,7 @@ use crate::{
 };
 use check::Check;
 use language::Language;
+use quick_fixes::QuickFixes;
 use tabs::Panes;
 
 /// The status-bar item for a large file.
@@ -129,6 +131,8 @@ pub(crate) struct Project {
     /// Commands only the workbench can carry out (New Project…), from a
     /// menu or the finder; it takes them after each dispatch.
     for_workbench: Vec<Command>,
+    /// Code-action requests and the quick-fix popup (ticket #45).
+    quick_fixes: QuickFixes,
 }
 
 impl Project {
@@ -163,6 +167,7 @@ impl Project {
             shown_hunk: None,
             install_requested: false,
             finder: None,
+            quick_fixes: QuickFixes::default(),
             finder_generation: 0,
             finder_files: 0,
             recent_files: Vec::new(),
@@ -450,6 +455,7 @@ impl Project {
         // A shown change closes on anything but scrolling.
         let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
         let shown = if scrolling { None } else { self.shown_hunk.take() };
+        self.quick_fixes_before(&command);
         match command {
             Command::ShowHunk { line } => {
                 self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
@@ -511,6 +517,11 @@ impl Project {
             Command::RevertChange(path) => self.review.revert(Some(path), jobs),
             Command::KeepAllChanges => self.review.keep(None, jobs),
             Command::RevertAllChanges => self.review.revert(None, jobs),
+            Command::ShowQuickFixes
+            | Command::MoveQuickFixSelection(_)
+            | Command::ApplyQuickFix(_)
+            | Command::CloseQuickFixes
+            | Command::OrganizeImports => self.quick_fix_command(command, now, jobs),
             Command::RunProjectCheck => self.run_project_check(),
             Command::RestartLanguageServer => {
                 self.restart_language_server();
@@ -852,6 +863,7 @@ impl Project {
             review_banner: self.review.banner(),
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
+            quick_fixes: self.quick_fixes_view(),
         }
     }
 

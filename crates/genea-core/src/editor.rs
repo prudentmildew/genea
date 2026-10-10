@@ -12,6 +12,7 @@
 
 mod indent;
 mod structural;
+mod text_edits;
 
 use std::{
     ops::Range,
