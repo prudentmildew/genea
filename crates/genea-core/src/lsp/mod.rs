@@ -619,7 +619,6 @@ impl LanguageServer {
     /// Sends a request to a ready server, remembering what it is for; the
     /// answer comes back to [`event`](Self::event) as that [`Pending`].
     /// `None` while the server isn't ready.
-    #[allow(dead_code)] // The seam for completion, hover, … (#43–#47).
     pub(crate) fn request(&mut self, method: &str, params: Value, pending: Pending) -> Option<i64> {
         let connection = self.connection.as_mut().filter(|_| self.state == State::Ready)?;
         let id = connection.request(method, params);
