@@ -166,6 +166,8 @@ pub(crate) struct Project {
     inline_diffs: InlineDiffs,
     /// Saves being written, so a file's saves take turns.
     saves: Saves,
+    /// The files Revert All Changes is asking about, while it asks.
+    revert_all_prompt: Option<Vec<PathBuf>>,
 }
 
 impl Project {
@@ -210,6 +212,7 @@ impl Project {
             quick_fixes: QuickFixes::default(),
             inline_diffs: InlineDiffs::default(),
             saves: Saves::default(),
+            revert_all_prompt: None,
             finder_generation: 0,
             finder_files: 0,
             recent_files: Vec::new(),
@@ -595,7 +598,13 @@ impl Project {
             Command::KeepChange(path) => self.review.keep(Some(path), jobs),
             Command::RevertChange(path) => self.review.revert(Some(path), jobs),
             Command::KeepAllChanges => self.review.keep(None, jobs),
-            Command::RevertAllChanges => self.review.revert(None, jobs),
+            Command::RevertAllChanges => self.ask_revert_all(),
+            Command::ConfirmRevertAll => {
+                if let Some(paths) = self.revert_all_prompt.take() {
+                    self.review.revert_paths(paths, jobs);
+                }
+            }
+            Command::CancelRevertAll => self.revert_all_prompt = None,
             Command::OpenChange(_) | Command::ShowDiffAgainstHead => {
                 self.terminal.unfocus();
                 self.inline_diff_command(command, jobs)
@@ -973,6 +982,10 @@ impl Project {
             files: self.files.rows(),
             changes: self.review.rows(),
             review_banner: self.review.banner(),
+            revert_all_prompt: self
+                .revert_all_prompt
+                .as_ref()
+                .map(|paths| crate::view::RevertAllPrompt { files: paths.len() }),
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
             quick_fixes: self.quick_fixes_view(),
@@ -1113,6 +1126,14 @@ impl Project {
                 }
             })
         });
+    }
+
+    /// Revert All Changes: asks about the listed files that can be
+    /// reverted, if there are any.
+    fn ask_revert_all(&mut self) {
+        let paths: Vec<PathBuf> =
+            self.review.rows().iter().filter(|change| change.can_revert).map(|change| change.path.clone()).collect();
+        self.revert_all_prompt = (!paths.is_empty()).then_some(paths);
     }
 
     /// "Open config": opens the root `genea.jsonc`, creating it as `{}`

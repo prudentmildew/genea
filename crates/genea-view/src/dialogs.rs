@@ -1,5 +1,6 @@
-//! The native Open panel for project folders (NSOpenPanel), and the sheet
-//! that asks to save a closing tab's edits (NSAlert).
+//! The native Open panel for project folders (NSOpenPanel), and the sheets
+//! that ask to save a closing tab's edits and to revert every listed change
+//! (NSAlert).
 //!
 //! The panel is modeless (`beginWithCompletionHandler:`), not
 //! `runModal`: a nested modal run loop inside winit's event handling is
@@ -83,6 +84,39 @@ pub fn ask_to_save(window: &ProjectWindow, title: &str, done: impl FnOnce(CloseC
         };
         if let Some(done) = done.borrow_mut().take() {
             let _ = slint::invoke_from_event_loop(move || done(choice));
+        }
+    });
+    alert.beginSheetModalForWindow_completionHandler(&ns_window, Some(&handler));
+}
+
+/// Asks whether to revert every file listed in Changes (`files` of them),
+/// as a sheet on `window`: Revert All or Cancel. `done` gets whether to go
+/// ahead through Slint's event loop.
+pub fn ask_to_revert_all(window: &ProjectWindow, files: usize, done: impl FnOnce(bool) + Send + 'static) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        eprintln!("genea: alerts must be shown from the main thread");
+        return;
+    };
+    let Some(ns_window) = ns_window(window) else {
+        // No native window to attach to: revert nothing.
+        let _ = slint::invoke_from_event_loop(move || done(false));
+        return;
+    };
+    let alert = NSAlert::new(mtm);
+    let what = if files == 1 { "the file".to_owned() } else { format!("all {files} files") };
+    alert.setMessageText(&NSString::from_str(&format!("Revert {what} changed outside Genea?")));
+    alert.setInformativeText(&NSString::from_str(
+        "Each file goes back to how it was at your last review. The changes on disk will be lost.",
+    ));
+    // In this order: the response codes are the first and second button.
+    alert.addButtonWithTitle(&NSString::from_str("Revert All"));
+    alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+
+    let done = RefCell::new(Some(done));
+    let handler = RcBlock::new(move |response: NSModalResponse| {
+        let confirmed = response == NSAlertFirstButtonReturn;
+        if let Some(done) = done.borrow_mut().take() {
+            let _ = slint::invoke_from_event_loop(move || done(confirmed));
         }
     });
     alert.beginSheetModalForWindow_completionHandler(&ns_window, Some(&handler));

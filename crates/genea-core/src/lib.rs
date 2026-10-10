@@ -81,7 +81,10 @@ pub use view::{
     RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
     ToolchainView, VisibleLine, WelcomeView,
 };
-pub use view::{ChangeItem, ChangeKind, ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
+pub use view::{
+    ChangeItem, ChangeKind, ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, RevertAllPrompt, SearchFile,
+    SearchMatch, SearchView,
+};
 pub use view::{
     TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle,
     TerminalTab, TerminalView,

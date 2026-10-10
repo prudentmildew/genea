@@ -113,7 +113,11 @@ use, and nothing else:
   deleted; `diffable` false for binary or large files; `can_revert` false
   when the baseline's blob wasn't stored, which only happens to files over
   5 MB above the store's 1 GiB cap) with `review_banner`. `KeepChange`,
-  `RevertChange`, `KeepAllChanges` and `RevertAllChanges` settle them; a
+  `RevertChange`, `KeepAllChanges` and `RevertAllChanges` settle them;
+  `RevertAllChanges` asks first (`ProjectView::revert_all_prompt`, about
+  the revertible files listed then; `ConfirmRevertAll` reverts those still
+  listed, `CancelRevertAll` closes it, and the view shows it as a sheet,
+  `dialogs::ask_to_revert_all`), while a single Revert doesn't. A
   Revert reloads open editors right away. Everything that touches the disk
   or the store is an op, and ops run one at a time, in order.
   **Writing a project file from the core**: announce it first with
@@ -877,7 +881,7 @@ chrome, native menus via muda (Slint's `MenuBar`).
   project opens showing it; Search is ⌘⇧F, and focuses its query field
   when it appears; Changes has a menu item but no shortcut, since ⌘0 is
   zoom; Problems is ⌘6). The review banner over the window's content
-  (`review-banner`) offers Review, Keep All and Revert All. A new
+  (`review-banner`) offers Review, Keep All and Revert All…. A new
   view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
   switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`

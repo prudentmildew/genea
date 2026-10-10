@@ -59,6 +59,8 @@ pub struct WindowController {
     terminal_focused: bool,
     /// The close prompt's sheet is showing.
     prompting: bool,
+    /// The Revert All prompt's sheet is showing.
+    asking_revert_all: bool,
     /// A window-level message, e.g. why a folder couldn't be opened.
     pub notice: Option<String>,
     /// The command behind the shown notice's button, if it has one.
@@ -151,6 +153,7 @@ impl WindowController {
             terminal,
             terminal_focused: false,
             prompting: false,
+            asking_revert_all: false,
             notice: None,
             notice_action: None,
             last_double_click: None,
@@ -673,6 +676,16 @@ impl WindowController {
                 with_app(move |app| app.resolve_close(key, choice))
             });
         }
+
+        if let Some(prompt) = &view.revert_all_prompt
+            && !self.asking_revert_all
+        {
+            self.asking_revert_all = true;
+            let key = self.key;
+            dialogs::ask_to_revert_all(&self.window, prompt.files, move |confirmed| {
+                with_app(move |app| app.resolve_revert_all(key, confirmed))
+            });
+        }
     }
 
     /// Shows the finder overlay as the core has it. Returns whether it just
@@ -750,6 +763,12 @@ impl WindowController {
     pub fn click_finder_item(&mut self, workbench: &mut Workbench, index: usize) {
         workbench.dispatch(self.project, Command::SelectFinderItem(index));
         self.dispatch(workbench, Command::AcceptFinder);
+    }
+
+    /// The Revert All prompt was answered.
+    pub fn resolve_revert_all(&mut self, workbench: &mut Workbench, confirmed: bool) {
+        self.asking_revert_all = false;
+        self.dispatch(workbench, if confirmed { Command::ConfirmRevertAll } else { Command::CancelRevertAll });
     }
 
     /// The close prompt was answered.

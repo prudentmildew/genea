@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use genea_core::{
-    ChangeItem, ChangeKind, Command, FinderMode, LARGE_FILE_BYTES, LeftColumnView, ProjectId, ToolchainPickerKind,
-    Workbench,
+    ChangeItem, ChangeKind, Command, FinderMode, LARGE_FILE_BYTES, LeftColumnView, ProjectId, RevertAllPrompt,
+    ToolchainPickerKind, Workbench,
 };
 use genea_testkit::{FixtureProject, TestHost};
 
@@ -230,17 +230,68 @@ fn keep_all_accepts_every_change() {
     assert!(!fixture.path("old/deleted.ts").exists());
 }
 
+fn revert_all_prompt(workbench: &Workbench, project: ProjectId) -> Option<RevertAllPrompt> {
+    workbench.project(project).unwrap().revert_all_prompt
+}
+
 #[test]
-fn revert_all_restores_every_file() {
+fn revert_all_asks_first_and_restores_every_file_once_confirmed() {
     let (fixture, mut workbench, project) = three_changes();
 
     workbench.dispatch(project, Command::RevertAllChanges);
     workbench.settle().unwrap();
+    assert_eq!(revert_all_prompt(&workbench, project), Some(RevertAllPrompt { files: 3 }));
+    assert_eq!(changes(&workbench, project).len(), 3, "nothing is reverted before the answer");
+    assert_eq!(fixture.read("edited.ts"), "after\n");
 
+    workbench.dispatch(project, Command::ConfirmRevertAll);
+    workbench.settle().unwrap();
+
+    assert_eq!(revert_all_prompt(&workbench, project), None);
     assert_eq!(changes(&workbench, project), []);
     assert_eq!(fixture.read("edited.ts"), "before\n");
     assert!(!fixture.path("created.ts").exists());
     assert_eq!(fixture.read("old/deleted.ts"), "deleted\n");
+}
+
+#[test]
+fn cancelling_revert_all_changes_nothing() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    workbench.dispatch(project, Command::RevertAllChanges);
+    workbench.dispatch(project, Command::CancelRevertAll);
+    workbench.settle().unwrap();
+
+    assert_eq!(revert_all_prompt(&workbench, project), None);
+    assert_eq!(changes(&workbench, project).len(), 3);
+    assert_eq!(fixture.read("edited.ts"), "after\n");
+    assert_eq!(fixture.read("created.ts"), "created\n");
+}
+
+#[test]
+fn revert_all_reverts_only_the_files_it_asked_about() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    workbench.dispatch(project, Command::RevertAllChanges);
+    workbench.settle().unwrap();
+    fixture.write("later.ts", "later\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::ConfirmRevertAll);
+    workbench.settle().unwrap();
+
+    assert_eq!(changes(&workbench, project), [("later.ts".into(), ChangeKind::Created)]);
+    assert_eq!(fixture.read("later.ts"), "later\n");
+}
+
+#[test]
+fn reverting_one_change_doesnt_ask() {
+    let (fixture, mut workbench, project) = three_changes();
+
+    workbench.dispatch(project, Command::RevertChange("edited.ts".into()));
+    workbench.settle().unwrap();
+
+    assert_eq!(revert_all_prompt(&workbench, project), None);
+    assert_eq!(fixture.read("edited.ts"), "before\n");
 }
 
 #[test]
@@ -377,6 +428,7 @@ fn binary_and_large_files_are_listed_without_a_diff_and_revert_still_restores_th
     assert_eq!(items(&workbench, project), [item("big.ts", false), item("image.png", false), item("text.ts", true)]);
 
     workbench.dispatch(project, Command::RevertAllChanges);
+    workbench.dispatch(project, Command::ConfirmRevertAll);
     workbench.settle().unwrap();
     assert_eq!(changes(&workbench, project), []);
     assert_eq!(std::fs::read(fixture.path("image.png")).unwrap(), image);
