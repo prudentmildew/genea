@@ -66,6 +66,9 @@ pub enum Action {
     ShowScripts,
     ShowTerminal,
     NewTerminalTab,
+    ZoomIn,
+    ZoomOut,
+    ResetZoom,
     SplitRight,
     MoveTabToOtherSide,
     CloseSplit,
@@ -76,7 +79,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 55] = [
+    pub const ALL: [Action; 58] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -127,6 +130,9 @@ impl Action {
         Action::ShowScripts,
         Action::ShowTerminal,
         Action::NewTerminalTab,
+        Action::ZoomIn,
+        Action::ZoomOut,
+        Action::ResetZoom,
         Action::SplitRight,
         Action::MoveTabToOtherSide,
         Action::CloseSplit,
@@ -182,6 +188,9 @@ impl Action {
             Action::ShowScripts => "Scripts",
             Action::ShowTerminal => "Terminal",
             Action::NewTerminalTab => "New Terminal Tab",
+            Action::ZoomIn => "Zoom In",
+            Action::ZoomOut => "Zoom Out",
+            Action::ResetZoom => "Reset Zoom",
             Action::SplitRight => "Split Right",
             Action::MoveTabToOtherSide => "Move Tab to Other Side",
             Action::CloseSplit => "Close Split",
@@ -231,6 +240,9 @@ impl Action {
             Action::ShowProblems => "⌘6",
             Action::ShowTerminal => "⌥F12",
             Action::NewTerminalTab => "⌘T",
+            Action::ZoomIn => "⌘+",
+            Action::ZoomOut => "⌘−",
+            Action::ResetZoom => "⌘0",
             Action::SelectNextTab => "⇧⌘]",
             Action::SelectPreviousTab => "⇧⌘[",
             Action::GoToDefinition => "⌘B",
@@ -340,6 +352,9 @@ impl Action {
             Action::ShowScripts => Command::ToggleLeftColumn(LeftColumnView::Scripts),
             Action::ShowTerminal => Command::ToggleTerminal,
             Action::NewTerminalTab => Command::NewTerminalTab,
+            Action::ZoomIn => Command::ZoomIn,
+            Action::ZoomOut => Command::ZoomOut,
+            Action::ResetZoom => Command::ResetZoom,
             Action::SplitRight => Command::SplitRight,
             Action::CloseSplit => Command::CloseSplit,
             Action::GoToDefinition => Command::GoToDefinition,

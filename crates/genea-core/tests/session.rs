@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use genea_core::{
-    CaretMove, Command, LeftColumnView, MAX_FONT_SIZE, MIN_FONT_SIZE, ProjectId, ProjectView, TerminalStatus,
+    CaretMove, Command, FinderMode, LeftColumnView, MAX_FONT_SIZE, MIN_FONT_SIZE, ProjectId, ProjectView, TerminalStatus,
     TerminalTab, WindowFrame, WindowLayout, Workbench,
 };
 use genea_testkit::{FixtureProject, TestHost};
@@ -191,6 +191,23 @@ fn zoom_steps_the_editor_and_terminal_font_a_point_at_a_time_within_limits() {
     assert_eq!(view(&workbench, project).font_size, MAX_FONT_SIZE);
     run(&mut workbench, project, (0..40).map(|_| Command::ZoomOut));
     assert_eq!(view(&workbench, project).font_size, MIN_FONT_SIZE);
+}
+
+#[test]
+fn zoom_in_from_find_action_zooms() {
+    let fixture = FixtureProject::new().build();
+    let mut workbench = Workbench::new(TestHost::new().shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+
+    run(
+        &mut workbench,
+        project,
+        [Command::OpenFinder(FinderMode::Actions), Command::SetFinderQuery("zoom in".into())],
+    );
+    assert_eq!(view(&workbench, project).finder.unwrap().items[0].label, "Zoom In");
+    run(&mut workbench, project, [Command::AcceptFinder]);
+
+    assert_eq!(view(&workbench, project).font_size, 14.0);
 }
 
 #[test]
