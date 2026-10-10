@@ -111,12 +111,12 @@ fn genea(cx: &Context) -> Result<Value, String> {
     }))
 }
 
-fn can_purge() -> bool {
+pub(super) fn can_purge() -> bool {
     Command::new("sudo").args(["-n", "true"]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
 /// Drops the file cache so binaries and libraries come from disk.
-fn purge() -> Result<(), String> {
+pub(super) fn purge() -> Result<(), String> {
     let status = Command::new("sudo").args(["-n", "purge"]).status().map_err(|e| format!("purge: {e}"))?;
     if !status.success() {
         return Err(format!("purge failed: {status}"));

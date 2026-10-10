@@ -26,7 +26,8 @@
 //! | `search TEXT` | after showing the Search view and searching for TEXT (literal, any case): `at`, when |
 //! | `toggle-folder PATH` | after expanding or collapsing a folder in the Files view: `at`, when |
 //! | `expect NAME CONDITION…` | at once; from now on, notes when a synced view first meets the condition |
-//! | `await NAME MS` | once a frame drawn after the view met NAME's condition is presented: `met`, when it was met; an error after MS ms |
+//! | `check CONDITION…` | whether the first window's view meets the condition now: `holds` |
+//! | `await NAME MS` | once a frame drawn after the view met NAME's condition is presented: `met`, when it was met; after MS ms, `met` and `"presented":false` if it was met but no frame came (nothing on screen changed), else an error |
 //! | `processes` | the pids of Genea's child processes and theirs (language servers, shells) |
 //! | `quit` | exits |
 //!
@@ -223,6 +224,17 @@ fn handle(line: &str) {
                 Err(message) => error(&format!("expect: {message}")),
             }
         }
+        ["check", kind, ..] => {
+            let rest = line.splitn(3, char::is_whitespace).nth(2).unwrap_or("").trim();
+            match condition(kind, rest) {
+                Ok(condition) => app::with_app(move |app| {
+                    let Some((controller, workbench)) = app.first_window() else { return error("no project window") };
+                    let holds = workbench.project(controller.project).is_some_and(|view| condition(&view));
+                    reply(&format!(r#"{{"holds":{holds}}}"#));
+                }),
+                Err(message) => error(&format!("check: {message}")),
+            }
+        }
         ["await", name, ms] => match ms.parse() {
             Ok(ms) => wait_for(name.to_string(), Duration::from_millis(ms)),
             Err(_) => error("await: bad timeout"),
@@ -307,7 +319,11 @@ fn wait_for(name: String, timeout: Duration) {
     slint::Timer::single_shot(timeout, move || {
         if !answered.replace(true) {
             journal::forget_presented(&name);
-            error(&format!("await: {name} not met within {} ms", timeout.as_millis()));
+            // Met, but nothing on screen changed, so no frame came.
+            match journal::met(&name) {
+                Some(met) => reply(&format!(r#"{{"met":{met},"presented":false}}"#)),
+                None => error(&format!("await: {name} not met within {} ms", timeout.as_millis())),
+            }
         }
     });
 }

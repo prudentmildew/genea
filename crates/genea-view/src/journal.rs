@@ -247,6 +247,12 @@ pub fn when_presented(name: &str, f: impl FnOnce(Option<u64>) + 'static) {
     }
 }
 
+/// When the view first met the condition watched as `name` (ns since
+/// boot), if it has.
+pub fn met(name: &str) -> Option<u64> {
+    LOG.with_borrow(|log| log.expected.get(name)?.met.map(ns))
+}
+
 /// Stops calling back for `name` (the harness gave up waiting).
 pub fn forget_presented(name: &str) {
     LOG.with_borrow_mut(|log| {

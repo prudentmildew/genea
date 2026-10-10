@@ -48,6 +48,14 @@ impl Usage {
     }
 }
 
+/// A process's executable, `None` once the process is gone.
+pub fn executable(pid: u32) -> Option<std::path::PathBuf> {
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: proc_pidpath writes at most the buffer's size.
+    let n = unsafe { libc::proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    (n > 0).then(|| std::path::PathBuf::from(String::from_utf8_lossy(&buffer[..n as usize]).into_owned()))
+}
+
 /// `None` once the process is gone.
 pub fn usage(pid: u32) -> Option<Usage> {
     // SAFETY: proc_pid_rusage fills the struct we pass.
