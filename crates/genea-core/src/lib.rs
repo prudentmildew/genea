@@ -49,6 +49,7 @@ mod update;
 mod view;
 mod watcher;
 mod workbench;
+mod workspace;
 
 pub use action::Action;
 pub use command::{CaretMove, Command, Modifiers, MouseAction, MouseButton, SearchQuery, TerminalKey};
@@ -77,4 +78,5 @@ pub use view::{
     TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
+pub use view::{PackageScripts, Script};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

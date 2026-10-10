@@ -61,6 +61,30 @@ pub struct ProjectView {
     pub search: SearchView,
     /// The fuzzy finder overlay, while it is open (ticket #33).
     pub finder: Option<FinderView>,
+    /// The script runner (ticket #40): every package's `package.json`
+    /// scripts, the root package first, then the others in path order.
+    pub scripts: Vec<PackageScripts>,
+}
+
+/// A package in the script runner: its `package.json` scripts, in the
+/// file's order. `Command::RunScript { package: path, script: name }` runs
+/// one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageScripts {
+    /// The package's `name`, else its folder's name.
+    pub name: String,
+    /// Its folder, relative to the project root: empty for the root
+    /// package.
+    pub path: PathBuf,
+    pub scripts: Vec<Script>,
+}
+
+/// A `package.json` script.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Script {
+    pub name: String,
+    /// What it runs.
+    pub command: String,
 }
 
 /// The fuzzy finder overlay: a query and the results matching it.

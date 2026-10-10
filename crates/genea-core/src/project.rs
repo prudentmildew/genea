@@ -36,6 +36,7 @@ use crate::{
     view::{InlineProblem, LeftColumnView, Notice, NoticeAction, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
+    workspace::Workspace,
 };
 use language::Language;
 use tabs::Panes;
@@ -101,6 +102,8 @@ pub(crate) struct Project {
     pub(crate) terminal: Terminal,
     /// Whether `node_modules` is there (ticket #41).
     pub(crate) dependencies: Dependencies,
+    /// The packages and their scripts (ticket #40).
+    pub(crate) workspace: Workspace,
     /// "Install dependencies" came while `package.json` was being read: it
     /// runs once it is read.
     install_requested: bool,
@@ -123,6 +126,7 @@ impl Project {
             git: Git::new(id, root.clone()),
             terminal: Terminal::new(id, root.clone()),
             dependencies: Dependencies::new(id, &root),
+            workspace: Workspace::new(id, root.clone()),
             search: Search::new(id, root.clone()),
             root,
             editor: None,
@@ -167,6 +171,7 @@ impl Project {
         self.files.start(jobs);
         self.git.reload(Vec::new(), jobs);
         self.dependencies.check(jobs);
+        self.workspace.discover(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -180,6 +185,7 @@ impl Project {
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
         self.dependencies.files_changed(&changes, jobs);
+        self.workspace.files_changed(&changes, jobs);
         self.language_files_changed(&changes);
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
@@ -807,6 +813,7 @@ impl Project {
             files: self.files.rows(),
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
+            scripts: self.workspace.packages().to_vec(),
         }
     }
 
