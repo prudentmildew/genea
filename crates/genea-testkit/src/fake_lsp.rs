@@ -333,6 +333,7 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
             let method = request.unwrap_or_else(|| "(unknown response)".into());
             if method == "workspace/configuration" {
                 shown = decorations::settings(&message["result"]);
+                decorations::configured(shown, &mut out);
             }
             record(Received { method, params: message["result"].clone() });
             continue;

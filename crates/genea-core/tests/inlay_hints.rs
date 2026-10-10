@@ -61,6 +61,17 @@ impl Session {
         editor.lines.into_iter().find(|l| l.index == index).expect("the line is visible")
     }
 
+    /// The primary caret's cell as drawn: (line, grid column).
+    fn caret(&self) -> (usize, usize) {
+        let caret = self.workbench.project(self.project).unwrap().editor.unwrap().caret;
+        (caret.line, caret.column)
+    }
+
+    /// The status bar's caret position.
+    fn status_caret(&self) -> String {
+        self.workbench.project(self.project).unwrap().status.caret.unwrap()
+    }
+
     /// The text of a visible line as drawn.
     fn text(&self, index: usize) -> String {
         self.line(index).text
@@ -99,4 +110,27 @@ fn turning_inlay_hints_on_and_off_shows_and_hides_them_live() {
     session.config(r#"{ "inlayHints": false }"#);
     assert_eq!(session.text(0), "const total = twice(2);");
     assert_eq!(session.hints(0), Vec::<String>::new());
+}
+
+#[test]
+fn hints_push_the_text_along_but_carets_and_clicks_stay_on_the_files_text() {
+    let fake = FakeLsp::new().type_hint("total", ": number");
+    let mut session = open(project("const total = 1 + 2;\n").file("genea.jsonc", r#"{ "inlayHints": true }"#), &fake);
+    assert_eq!(session.text(0), "const total: number = 1 + 2;");
+
+    // A click on the `=` puts the caret before it in the file: the status
+    // bar counts the file's columns, the view the drawn ones.
+    session.dispatch(Command::PlaceCaret { line: 0, column: 20 });
+    assert_eq!(session.caret(), (0, 20));
+    assert_eq!(session.status_caret(), "1:13");
+
+    // A click in the hint puts the caret where the hint is, before it.
+    session.dispatch(Command::PlaceCaret { line: 0, column: 15 });
+    assert_eq!(session.caret(), (0, 11));
+    assert_eq!(session.status_caret(), "1:12");
+
+    // Typing there types onto the name, and its hint moves along at once.
+    session.dispatch(Command::InsertText("s".into()));
+    assert_eq!(session.text(0), "const totals: number = 1 + 2;");
+    assert_eq!(session.caret(), (0, 12));
 }

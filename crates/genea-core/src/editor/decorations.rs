@@ -107,6 +107,13 @@ impl Editor {
         self.decorations = Decorations::default();
     }
 
+    /// The primary caret as the status bar shows it: its line and the
+    /// display column in the file's text (hints don't count), 1-based.
+    pub(crate) fn caret_label(&self) -> String {
+        let caret = self.primary().caret;
+        format!("{}:{}", self.text.char_to_line(caret) + 1, self.display_column(caret) + 1)
+    }
+
     /// The bytes of a line's text, without its line ending.
     pub(super) fn line_bytes(&self, line: usize) -> Range<usize> {
         let start = self.text.line_to_byte(line);

@@ -137,6 +137,18 @@ pub(super) fn initialized(script: &Decorations, out: &mut Output<impl std::io::W
     out.request("workspace/configuration", json!({ "items": items }));
 }
 
+/// Once the settings are in, asks the client to fetch again what they turn
+/// on, as tsgo does: hints or lenses asked for before the settings came
+/// were answered with none.
+pub(super) fn configured((hints, lenses): (bool, bool), out: &mut Output<impl std::io::Write>) {
+    if hints {
+        out.request("workspace/inlayHint/refresh", Value::Null);
+    }
+    if lenses {
+        out.request("workspace/codeLens/refresh", Value::Null);
+    }
+}
+
 /// What the client's `workspace/configuration` answer turns on: (inlay
 /// hints, code lenses), from its `typescript` section.
 pub(super) fn settings(answer: &Value) -> (bool, bool) {
