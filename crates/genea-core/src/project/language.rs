@@ -17,11 +17,12 @@ use crate::{
     command::Command,
     jobs::Jobs,
     lsp::{
-        Event, LanguageServer, Output, START_TIMEOUT, ServerSpec, Timer,
+        Event, LanguageServer, Output, Pending, START_TIMEOUT, ServerSpec, Timer,
         text::{self, Encoding},
         typescript::{self, Detection},
     },
     problems::{Problem, ProblemSource, Severity},
+    review::store::hash_bytes,
     view::{LanguageServerState, LanguageServerStatus, Notice, NoticeAction},
     watcher::FileChanges,
 };
@@ -100,6 +101,15 @@ impl Project {
         });
     }
 
+    /// The project's TypeScript 7 `tsc` (the binary tsgo runs from), with
+    /// the host and jobs to run it: what the project check (ticket #48)
+    /// needs. `None` until TypeScript 7 is found.
+    pub(super) fn typescript_tsc(&self) -> Option<(PathBuf, SharedHost, Jobs)> {
+        let Some(Detection::Found { binary, .. }) = &self.language.detection else { return None };
+        let (host, jobs) = self.language.context.clone()?;
+        Some((binary.clone(), host, jobs))
+    }
+
     /// Starts, restarts or stops tsgo for what the look found.
     fn typescript_detected(&mut self, detection: Detection) {
         if self.language.detection.as_ref() == Some(&detection) {
@@ -162,6 +172,18 @@ impl Project {
         let editors = self.editor.iter().chain(self.panes.parked());
         let outputs = server.sync(editors);
         self.language_outputs(outputs);
+        // Requests go out after the sync, so the server has the current text.
+        self.request_symbols();
+    }
+
+    /// Sends a request to tsgo while it is ready; `None` otherwise.
+    pub(super) fn language_request(&mut self, method: &str, params: serde_json::Value, pending: Pending) -> Option<i64> {
+        self.language.typescript.as_mut()?.request(method, params, pending)
+    }
+
+    /// The columns tsgo counts in.
+    pub(super) fn language_encoding(&self) -> Encoding {
+        self.language.typescript.as_ref().map(LanguageServer::encoding).unwrap_or_default()
     }
 
     /// The watcher's changes: watched files go to the server, and changes
@@ -211,11 +233,16 @@ impl Project {
     /// "Add TypeScript 7": writes it to `package.json` in the background.
     pub(super) fn add_typescript(&mut self, jobs: &Jobs) {
         let (id, path) = (self.id, self.root.join("package.json"));
+        let own_writes = self.review.own_writes();
         jobs.spawn("add TypeScript 7", move || {
             let written = fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|text| typescript::add_typescript(&text))
-                .and_then(|text| fs::write(&path, text).map_err(|e| e.to_string()));
+                .and_then(|text| {
+                    // Review knows this write as Genea's own (ticket #53).
+                    let _writing = own_writes.writing(Path::new("package.json"), Some(hash_bytes(text.as_bytes())));
+                    fs::write(&path, text).map_err(|e| e.to_string())
+                });
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 project.language.problem =
@@ -243,6 +270,7 @@ impl Project {
                 }
                 Output::Clear(path) => self.problems.replace_file(source, &path, Vec::new()),
                 Output::ClearAll => self.problems.replace(source, Vec::new()),
+                Output::Symbols { id, symbols } => self.symbols_answered(id, symbols),
             }
         }
     }

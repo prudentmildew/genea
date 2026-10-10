@@ -12,11 +12,12 @@ import { ProblemRow } from "problems-view.slint";
 import { TerminalPane, TermRow, TermCursor, TermTab } from "terminal-pane.slint";
 import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
+import { ChangeRow } from "changes-view.slint";
 import { SearchRow } from "search-view.slint";
 import { Finder, FinderRow } from "finder.slint";
 
 // What the finder finds (the core's FinderMode).
-export enum FinderKind { files, recent-files, actions, everywhere }
+export enum FinderKind { files, recent-files, actions, everywhere, file-symbols, project-symbols }
 
 // The Code menu's items (ticket #25).
 export enum StructuralAction {
@@ -42,6 +43,10 @@ export component ProjectWindow inherits Window {
     in property <LeftView> left-view;
     in property <[ProblemRow]> problems;
     in property <[FileEntry]> files;
+    // The Changes view's rows, and the review banner's text (ticket #53),
+    // empty while nothing changed outside Genea.
+    in property <[ChangeRow]> changes;
+    in property <string> review-banner;
     // The Search view: the core's query and options, and its results.
     in property <string> search-query;
     in property <bool> search-regex;
@@ -55,6 +60,8 @@ export component ProjectWindow inherits Window {
     in property <string> status-indentation;
     in property <string> status-notice-action;
     in property <string> status-toolchain;
+    // "Checking project…" while a project check runs (ticket #48).
+    in property <string> status-project-check;
     in property <string> status-update;
     // The git branch (ticket #56), or empty outside a repository.
     in property <string> status-branch;
@@ -123,6 +130,8 @@ export component ProjectWindow inherits Window {
 
     // Menu commands.
     callback open-folder();
+    // Opens the New Project dialog (#61).
+    callback new-project();
     callback save();
     callback undo();
     callback redo();
@@ -133,6 +142,7 @@ export component ProjectWindow inherits Window {
     callback reload-environment();
     callback install-dependencies();
     callback restart-language-server();
+    callback run-project-check();
     // The Code menu's structural editing items (ticket #25).
     callback structural(StructuralAction);
     // Toolchain commands (ticket #37).
@@ -152,6 +162,13 @@ export component ProjectWindow inherits Window {
     callback problem-clicked(int);
     // A Files view row: open the file, or expand or collapse the folder.
     callback file-clicked(int);
+    // Review (ticket #53): a Changes row, its Keep and Revert, and Keep All
+    // and Revert All (from the Changes view or the banner).
+    callback change-clicked(int);
+    callback keep-change(int);
+    callback revert-change(int);
+    callback keep-all-changes();
+    callback revert-all-changes();
     // The Search view's query or options changed.
     callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
     // A Search view row: open the file, at the match for a match row.
@@ -255,6 +272,13 @@ export component ProjectWindow inherits Window {
             }
 
             MenuItem {
+                title: "New Project…";
+                activated => {
+                    root.new-project();
+                }
+            }
+
+            MenuItem {
                 title: "Open Config";
                 activated => {
                     root.open-config();
@@ -302,6 +326,14 @@ export component ProjectWindow inherits Window {
                 title: "Restart Language Server";
                 activated => {
                     root.restart-language-server();
+                }
+            }
+
+            // `tsc -b --noEmit` over the whole project (#48).
+            MenuItem {
+                title: "Run Project Check";
+                activated => {
+                    root.run-project-check();
                 }
             }
 
@@ -469,6 +501,13 @@ export component ProjectWindow inherits Window {
             }
 
             MenuItem {
+                title: "Changes";
+                activated => {
+                    root.toggle-view(LeftView.changes);
+                }
+            }
+
+            MenuItem {
                 title: "Problems";
                 shortcut: @keys(Control + "6");
                 activated => {
@@ -524,6 +563,23 @@ export component ProjectWindow inherits Window {
                 title: "Search Everywhere";
                 activated => {
                     root.open-finder(FinderKind.everywhere);
+                }
+            }
+
+            // Symbols from tsgo (ticket #47).
+            MenuItem {
+                title: "File Structure";
+                shortcut: @keys(Control + F12);
+                activated => {
+                    root.open-finder(FinderKind.file-symbols);
+                }
+            }
+
+            MenuItem {
+                title: "Go to Symbol…";
+                shortcut: @keys(Control + Alt + O);
+                activated => {
+                    root.open-finder(FinderKind.project-symbols);
                 }
             }
         }
@@ -585,6 +641,52 @@ export component ProjectWindow inherits Window {
     }
 
     VerticalLayout {
+        // The review banner: shown while files changed outside Genea.
+        if root.review-banner != "": Rectangle {
+            height: 30px;
+            background: Theme.chrome-highlight;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.chrome-border;
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 16px;
+
+                Text {
+                    text: root.review-banner;
+                    color: Theme.warning;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                for action[index] in ["Review", "Keep All", "Revert All"]: Text {
+                    text: action;
+                    color: banner-touch.has-hover ? Theme.link : Theme.chrome-foreground;
+                    font-weight: 600;
+                    vertical-alignment: center;
+
+                    banner-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if index == 0 {
+                                root.show-view(LeftView.changes);
+                            } else if index == 1 {
+                                root.keep-all-changes();
+                            } else {
+                                root.revert-all-changes();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // The editor area and the terminal pane, placed by hand so the
         // pane can move between the right and the bottom.
         content := Rectangle {
@@ -609,6 +711,22 @@ export component ProjectWindow inherits Window {
                         view: root.left-view;
                         problems: root.problems;
                         files: root.files;
+                        changes: root.changes;
+                        change-clicked(index) => {
+                            root.change-clicked(index);
+                        }
+                        keep-change(index) => {
+                            root.keep-change(index);
+                        }
+                        revert-change(index) => {
+                            root.revert-change(index);
+                        }
+                        keep-all-changes => {
+                            root.keep-all-changes();
+                        }
+                        revert-all-changes => {
+                            root.revert-all-changes();
+                        }
                         search-query: root.search-query;
                         search-regex: root.search-regex;
                         search-case-sensitive: root.search-case-sensitive;
@@ -847,6 +965,7 @@ export component ProjectWindow inherits Window {
                 root.notice-action();
             }
             toolchain: root.status-toolchain;
+            project-check: root.status-project-check;
             branch: root.status-branch;
             caret: root.status-caret;
             encoding: root.status-encoding;

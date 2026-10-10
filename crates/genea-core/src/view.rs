@@ -57,10 +57,43 @@ pub struct ProjectView {
     /// a snapshot doesn't copy a large tree, and unchanged trees compare
     /// equal at once.
     pub files: Arc<[FileRow]>,
+    /// The Changes view (ticket #53): files changed on disk outside Genea
+    /// since the review baseline, by path. Shared like `files`.
+    pub changes: Arc<[ChangeItem]>,
+    /// The review banner, e.g. "2 files changed outside Genea", shown while
+    /// `changes` isn't empty.
+    pub review_banner: Option<String>,
     /// The Search view (⌘⇧F): the last query and its results.
     pub search: SearchView,
     /// The fuzzy finder overlay, while it is open (ticket #33).
     pub finder: Option<FinderView>,
+}
+
+/// A file in the Changes view: it differs on disk from its review baseline
+/// because something other than Genea changed it. `Command::KeepChange`
+/// and `Command::RevertChange` settle it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeItem {
+    /// Relative to the project root.
+    pub path: PathBuf,
+    pub kind: ChangeKind,
+    /// Both sides are text and at most 5 MB, so it can be shown as a diff.
+    /// Binary and large files are listed with Keep only.
+    pub diffable: bool,
+    /// Revert is available: the baseline's content is in the store (or the
+    /// file was created, and Revert deletes it).
+    pub can_revert: bool,
+}
+
+/// How a listed file differs from its review baseline. A rename is a
+/// delete plus a create.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeKind {
+    Modified,
+    /// It has no baseline: it was created.
+    Created,
+    /// It has a baseline but is gone from disk.
+    Deleted,
 }
 
 /// The fuzzy finder overlay: a query and the results matching it.
@@ -90,18 +123,29 @@ pub enum FinderMode {
     RecentFiles,
     /// ⌘⇧A: every action, with its shortcut. Choosing one runs it.
     Actions,
-    /// ⇧⇧: files and actions together, best match first. With an empty
-    /// query, the recent files.
+    /// ⇧⇧: files, symbols and actions together, best match first. With an
+    /// empty query, the recent files.
     Everywhere,
+    /// ⌘F12: the current file's symbols (`textDocument/documentSymbol`),
+    /// in the file's order, each member right after what contains it. A
+    /// query narrows them, best match first. Choosing one moves the caret
+    /// there.
+    FileSymbols,
+    /// ⌥⌘O: the project's symbols matching the query (`workspace/symbol`),
+    /// without `node_modules` and the config's `exclude`. Nothing with an
+    /// empty query. Choosing one opens its file there.
+    ProjectSymbols,
 }
 
 /// A result in the finder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinderItem {
-    /// A file's name, or an action's.
+    /// A file's name, an action's, or a symbol's.
     pub label: String,
     /// A file's folder, relative to the project root (empty at the root,
-    /// and for actions).
+    /// and for actions). For a symbol in the current file, what it is
+    /// declared in (a class, …; or empty); for a symbol in the project,
+    /// that and its file: `Circle · src/shapes.ts`.
     pub detail: String,
     /// The keyboard shortcut of an action that has one, e.g. `⌘S`.
     pub shortcut: Option<String>,
@@ -115,6 +159,9 @@ pub enum FinderItemKind {
     File(PathBuf),
     /// Runs the action's command.
     Action(Action),
+    /// Opens the file (relative to the project root) with the caret at the
+    /// symbol's name.
+    Symbol { path: PathBuf, at: TextPosition },
 }
 
 /// The Search view: a query and its results, grouped by file.
@@ -223,6 +270,8 @@ pub enum LeftColumnView {
     Problems,
     /// ⌘⇧F: project search.
     Search,
+    /// The files changed outside Genea, to review (ticket #53).
+    Changes,
 }
 
 /// An item in the Problems view. Clicking it opens the file at the problem
@@ -238,6 +287,10 @@ pub struct ProblemItem {
     /// `position` as the user reads it: `line:column`, 1-based.
     pub location: String,
     pub message: String,
+    /// A project-check result (ticket #48) for a file that changed since
+    /// the check: it may be out of date, and is shown dimmed until the next
+    /// check.
+    pub stale: bool,
 }
 
 /// A problem underlined in the editor, on one visible line.
@@ -440,6 +493,8 @@ pub struct StatusBar {
     /// The project's language servers (tsgo now; Oxlint and Oxfmt later),
     /// one item each. Empty for a folder without a root `package.json`.
     pub language_servers: Vec<LanguageServerStatus>,
+    /// `Checking project…` while a project check (ticket #48) runs.
+    pub project_check: Option<String>,
 }
 
 /// A language server's status-bar item.

@@ -29,6 +29,7 @@ use crate::{
     command::Command,
     jobs::Jobs,
     problems::{Problem, ProblemSource, Severity, TextPosition},
+    review::{OwnWrites, store::hash_bytes},
     templates::{PackageManagerPin, RuntimePin},
     view::{
         Notice, NoticeAction, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
@@ -98,6 +99,14 @@ pub(crate) struct Toolchain {
     package_manager_at: TextPosition,
     /// Bumped by every lockfile check, so a slow one can't undo a newer one.
     lockfile_generation: u64,
+    /// Writing pins to `package.json` is Genea's own write (ticket #53).
+    own_writes: OwnWrites,
+}
+
+/// Writes pins to `package.json` as Genea's own write.
+fn write_package_json(own_writes: &OwnWrites, path: &Path, text: &str) -> Result<(), String> {
+    let _writing = own_writes.writing(Path::new("package.json"), Some(hash_bytes(text.as_bytes())));
+    fs::write(path, text).map_err(|e| e.to_string())
 }
 
 /// The lockfiles Genea cross-checks, at the project root only: pnpm's, and
@@ -169,8 +178,9 @@ enum SlotState {
 }
 
 impl Toolchain {
-    pub(crate) fn new(project: ProjectId, root: PathBuf, context: ToolchainContext) -> Self {
+    pub(crate) fn new(project: ProjectId, root: PathBuf, context: ToolchainContext, own_writes: OwnWrites) -> Self {
         Toolchain {
+            own_writes,
             project,
             root,
             context,
@@ -330,6 +340,7 @@ impl Toolchain {
             return;
         }
         let (id, path) = (self.project, self.root.join("package.json"));
+        let own_writes = self.own_writes.clone();
         jobs.spawn("pin toolchain defaults", move || {
             let written = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|text| {
                 let text = pins::write(
@@ -337,7 +348,7 @@ impl Toolchain {
                     runtime.as_ref().map(|(t, v)| (*t, v)),
                     package_manager.as_ref().map(|(t, v)| (*t, v)),
                 )?;
-                fs::write(&path, text).map_err(|e| e.to_string())
+                write_package_json(&own_writes, &path, &text)
             });
             Box::new(move |core| {
                 let Some(toolchain) = toolchain_mut(core, id) else { return };
@@ -436,6 +447,7 @@ impl Toolchain {
         };
         let (id, path) = (self.project, self.root.join("package.json"));
         let written_version = version.clone();
+        let own_writes = self.own_writes.clone();
         jobs.spawn("write toolchain pin", move || {
             let written = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|text| {
                 let pin = Some((tool, &written_version));
@@ -443,7 +455,7 @@ impl Toolchain {
                     Role::Runtime => pins::write(&text, pin, None),
                     Role::PackageManager => pins::write(&text, None, pin),
                 }?;
-                fs::write(&path, &text).map_err(|e| e.to_string())?;
+                write_package_json(&own_writes, &path, &text)?;
                 Ok(package_manager_position(&text))
             });
             Box::new(move |core| {

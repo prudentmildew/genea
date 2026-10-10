@@ -48,6 +48,7 @@ use, and nothing else:
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
+| New project | `dispatch_new_project(NewProjectCommand)`, `new_project_dialog() -> Option<NewProjectDialog>`; `Command::NewProject` from a project window | The dialog belongs to the workbench, not a project (`src/new_project.rs`, ticket #61). Its pickers list the newest release of each major version (`genea_toolchain::published`) plus Genea's defaults, which are chosen. Create checks the name as a new npm package's, generates into `<parent>/<name>` (`templates::create_then`), then the core opens the project and dispatches `InstallDependencies`; the app gives any open project without a window one. The parent folder is remembered in `new-project-folder.txt` in the application-support folder (default: `HOME`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
 | Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`, then the showing tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `NewTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | Shell tabs, plus a tab per package-manager command (`src/terminal/`, below). |
 | Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
@@ -57,7 +58,10 @@ use, and nothing else:
 
 - **A new user action**: add a `Command` variant, handle it in
   `Project::dispatch` (`src/project.rs`), and add what the user sees to the
-  view-state structs.
+  view-state structs. A command that only the workbench can carry out
+  (`NewProject`) is pushed to `Project::for_workbench` in
+  `Project::dispatch`, and `Core::dispatch` acts on it afterwards, so it
+  works from Find Action too.
 - **Background work**: never block the main thread. Use `Jobs::spawn` (in
   `src/jobs.rs`). The closure runs on a background thread and returns an
   `Apply`, a `FnOnce(&mut Core)` that changes state on the main thread.
@@ -72,7 +76,7 @@ use, and nothing else:
 - **Files changing on disk**: each project has one `notify` watcher
   (FSEvents) over its whole folder (`src/watcher.rs`). Changes arrive in
   batches at `Project::files_changed(FileChanges, jobs)`; react there (the
-  config, the file index and open editors do; review hooks in beside them).
+  config, the file index, open editors and review do).
   `settle` waits for the watcher by writing a cookie file into
   `<support>/watch-sync`, which the same FSEvents stream watches: once its
   event is back, every earlier change has been delivered. So a test writes a
@@ -86,8 +90,31 @@ use, and nothing else:
   the changed stretch, so carets outside it keep their place) or, with
   unsaved edits, sets `EditorView::conflict` until
   `Command::ResolveConflict` (Reload or Keep my edits) or a save. A result
-  whose buffer or disk text moved on meanwhile is checked again. Review
-  (#53) should reuse the same "what Genea last wrote" comparison.
+  whose buffer or disk text moved on meanwhile is checked again.
+- **Review** (`src/review/`, `src/project/changes.rs`, ticket #53): every
+  file in scope (not ignored by a `.gitignore` in the project, outside
+  `.git` and `node_modules`; `exclude` doesn't count) has a review
+  baseline in a per-project store under `<support>/review/<key>/`
+  (`store.rs`: SHA-256 blobs plus `index.json` of path → hash, size, mtime,
+  text, stored). The first open snapshots every file in the background; a
+  later open loads the index (#54 adds the rescan). Watcher batches become
+  checks that hash each changed file (a new or moved-in folder is read
+  whole, a gone one marks everything under it gone, a `.gitignore` change
+  rescans everything) and compare it with the baseline; a difference is
+  listed in `ProjectView::changes` (`ChangeItem`: modified, created or
+  deleted; `diffable` false for binary or large files; `can_revert` false
+  when the baseline's blob wasn't stored, which only happens to files over
+  5 MB above the store's 1 GiB cap) with `review_banner`. `KeepChange`,
+  `RevertChange`, `KeepAllChanges` and `RevertAllChanges` settle them; a
+  Revert reloads open editors right away. Everything that touches the disk
+  or the store is an op, and ops run one at a time, in order.
+  **Writing a project file from the core**: announce it first with
+  `Project::review.own_writes().writing(relative_path, Some(hash))`
+  (`review/own.rs`) and hold the guard until the write is done, as saves,
+  "Open config", toolchain pins, "Add TypeScript 7" and Revert do. Review
+  then knows the content as Genea's own (a file without a pending change
+  moves its baseline; one with a pending change stays listed), ignores what
+  it read mid-write, and checks the file again when the guard drops.
 - **The file index** (`src/files.rs`, ticket #30): every file and folder
   outside `node_modules` and `.git`, read once in the background at open and
   then kept up to date from the watcher's batches (a changed path re-lists
@@ -141,7 +168,20 @@ use, and nothing else:
   step with `genea-view`'s menus and `src/keys.rs`). A file chosen takes
   the focus from the terminal, as `OpenFile` does; editing actions
   (`Action::edits`) do what the Edit menu does while the terminal has it.
-  Symbols (#47) add a `FinderItemKind` and a mode.
+  **Symbols** (ticket #47, `src/project/symbols.rs`, `src/lsp/symbols.rs`):
+  File Structure (⌘F12, `FinderMode::FileSymbols`) asks tsgo for the
+  current file's `textDocument/documentSymbol`; Go to Symbol (⌥⌘O,
+  `ProjectSymbols`) and Search Everywhere ask `workspace/symbol` for each
+  non-empty query. A request is *wanted* when the finder opens or its
+  query changes and goes out after the next `sync_language` (so the server
+  has the current text, and a server that isn't ready yet is asked once it
+  is); only the latest request's answer is kept, in the `Finder`, and
+  `refresh_finder` matches it like files and actions (nucleo on the name,
+  so everything ranks together). The project's symbols leave out what the
+  finder hides (`FileIndex::lists`). Server columns become char columns in
+  the match job, for the shown results only (`Positions`, reading files
+  that aren't open). Choosing one is `OpenFileAt`
+  (`FinderItemKind::Symbol`).
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -499,9 +539,37 @@ the test host as `tsc` (and as `node` or `bun` for Oxlint in
 `tests/oxlint.rs`): scripted per test to report markers, crash, stay
 silent, delay or flood, and asked afterwards what reached it. As a binary
 (`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
-tsgo in the harness's `typing-silent-lsp`. The slow lane
+tsgo in the harness's `typing-silent-lsp`. It answers `documentSymbol` and `workspace/symbol` from a rough reading of the declarations in the files (`genea-testkit/src/fake_symbols.rs`). The slow lane
 `tests/language_server_slow.rs` (`-- --ignored`) installs TypeScript 7 with
 pnpm and checks real diagnostics.
+
+### Project check
+
+`genea-core/src/project_check.rs` (ticket #48) runs and reads the check,
+and `project/check.rs` is a project's side of it. `Command::RunProjectCheck`
+runs `tsc -b --noEmit --pretty false` with the binary tsgo runs from, in
+the project environment, on a background thread (a new check stops a
+running one; closing the project kills it); `StatusBar::project_check`
+shows it running. Its output (`file(line,col): error TS…`, columns in
+UTF-16 units, indented continuation lines) becomes
+`ProblemSource::ProjectCheck`, replacing the last check's. Results are
+hidden in files open on the language server (`Problems::set_live`, kept in
+step after every command and Apply), and marked stale
+(`ProblemItem::stale`, drawn dimmed) in files the watcher sees change after
+the check started, until the next check. A failed check keeps the last
+results and says why in a notice.
+
+**TS6310**: TypeScript 7 won't check a project that references other
+projects under `-b --noEmit` ("Referenced project may not disable emit", at
+the referencing `tsconfig.json`; probed with 7.0.2: those projects are
+skipped, the others checked). Nothing is wrong in the user's config and no
+flag avoids it without writing build output, so TS6310 isn't listed as a
+problem: a notice names the skipped `tsconfig.json`s. Live diagnostics
+there are unaffected.
+
+Tests play `tsc` with `genea_testkit::FakeTsc`, which hands `--lsp` starts
+to a `FakeLsp` and answers the rest with scripted output; the slow lane
+`tests/project_check_slow.rs` runs the real one on a references project.
 
 ## Tests
 
@@ -571,7 +639,9 @@ chrome, native menus via muda (Slint's `MenuBar`).
   view, shown while the core's `left_column` is `Some`. A view's shortcut
   is a menu item that dispatches `ToggleLeftColumn` (Files is ⌘1, and a
   project opens showing it; Search is ⌘⇧F, and focuses its query field
-  when it appears; Problems is ⌘6). A new
+  when it appears; Changes has a menu item but no shortcut, since ⌘0 is
+  zoom; Problems is ⌘6). The review banner over the window's content
+  (`review-banner`) offers Review, Keep All and Revert All. A new
   view adds a `LeftColumnView` variant in the core, a `LeftView` value, a
   switcher tab and its component.
 - Keys and text reach the surface through a hidden, focused `TextInput`

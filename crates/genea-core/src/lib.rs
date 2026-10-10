@@ -35,10 +35,13 @@ mod history;
 mod indentation;
 mod jobs;
 mod lsp;
+mod new_project;
 mod problems;
 mod project;
+mod project_check;
 mod reading;
 mod recent;
+mod review;
 mod search;
 mod syntax;
 mod templates;
@@ -63,6 +66,7 @@ pub use lsp::{MAX_RESTARTS, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT};
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
 pub use grid::{GridPiece, grid_pieces};
+pub use new_project::{NewProjectCommand, NewProjectDialog, NewProjectOption};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
@@ -71,7 +75,7 @@ pub use view::{
     RecentProject, StatusBar, ToolState, ToolView, ToolchainOption, ToolchainPicker, ToolchainPickerKind,
     ToolchainView, VisibleLine, WelcomeView,
 };
-pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
+pub use view::{ChangeItem, ChangeKind, ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use view::{
     TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle,
     TerminalTab, TerminalView,

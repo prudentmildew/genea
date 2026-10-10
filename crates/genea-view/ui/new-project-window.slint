@@ -1,0 +1,213 @@
+// The New Project dialog (ticket #61), a window of its own because the
+// welcome window and every project window open it. Every property is set
+// from Rust (src/new_project.rs) out of the core's NewProjectDialog; every
+// control turns into a NewProjectCommand.
+
+import { Button, ComboBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export component NewProjectWindow inherits Window {
+    in property <[string]> templates;
+    in property <int> template-index;
+    // What the template makes, under its picker.
+    in property <string> template-description;
+    // The name as the core has it; the field pushes edits back.
+    in-out property <string> name;
+    // What is wrong with the name, or empty.
+    in property <string> name-problem;
+    // The parent folder, with the home folder shown as `~`, or empty.
+    in property <string> parent;
+    // Where Create puts the project (`~/dev/my-app`), or empty.
+    in property <string> destination;
+    in property <[string]> runtimes;
+    in property <int> runtime-index;
+    in property <[string]> package-managers;
+    in property <int> package-manager-index;
+    // "Listing versions…", or why a list is missing.
+    in property <string> versions-message;
+    // Why the last Create was refused, or empty.
+    in property <string> error;
+    in property <bool> creating;
+
+    callback template-chosen(int);
+    callback name-edited(string);
+    callback choose-parent();
+    callback runtime-chosen(int);
+    callback package-manager-chosen(int);
+    callback create();
+    callback cancel();
+
+    public function focus-name() {
+        name-field.focus();
+    }
+
+    title: "New Project";
+    preferred-width: 520px;
+    min-width: 440px;
+    background: Theme.editor-background;
+    default-font-size: Theme.chrome-font-size;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+
+        GridLayout {
+            spacing: 10px;
+
+            Row {
+                Text {
+                    text: "Template";
+                    color: Theme.chrome-foreground;
+                    vertical-alignment: center;
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    ComboBox {
+                        model: root.templates;
+                        current-index: root.template-index;
+                        enabled: !root.creating;
+                        selected => {
+                            root.template-chosen(self.current-index);
+                        }
+                    }
+
+                    Text {
+                        text: root.template-description;
+                        color: Theme.chrome-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            Row {
+                Text {
+                    text: "Name";
+                    color: Theme.chrome-foreground;
+                    vertical-alignment: center;
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    name-field := LineEdit {
+                        text <=> root.name;
+                        placeholder-text: "my-app";
+                        enabled: !root.creating;
+                        edited(text) => {
+                            root.name-edited(text);
+                        }
+                        accepted => {
+                            root.create();
+                        }
+                    }
+
+                    if root.name-problem != "": Text {
+                        text: root.name-problem;
+                        color: Theme.error;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            Row {
+                Text {
+                    text: "Location";
+                    color: Theme.chrome-foreground;
+                    vertical-alignment: center;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.parent == "" ? "No folder chosen" : root.parent;
+                        color: root.parent == "" ? Theme.chrome-muted : Theme.chrome-foreground;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Button {
+                        text: "Choose…";
+                        enabled: !root.creating;
+                        clicked => {
+                            root.choose-parent();
+                        }
+                    }
+                }
+            }
+
+            Row {
+                Text {
+                    text: "Runtime";
+                    color: Theme.chrome-foreground;
+                    vertical-alignment: center;
+                }
+
+                ComboBox {
+                    model: root.runtimes;
+                    current-index: root.runtime-index;
+                    enabled: !root.creating;
+                    selected => {
+                        root.runtime-chosen(self.current-index);
+                    }
+                }
+            }
+
+            Row {
+                Text {
+                    text: "Package manager";
+                    color: Theme.chrome-foreground;
+                    vertical-alignment: center;
+                }
+
+                ComboBox {
+                    model: root.package-managers;
+                    current-index: root.package-manager-index;
+                    enabled: !root.creating;
+                    selected => {
+                        root.package-manager-chosen(self.current-index);
+                    }
+                }
+            }
+        }
+
+        if root.versions-message != "": Text {
+            text: root.versions-message;
+            color: Theme.chrome-muted;
+            wrap: word-wrap;
+        }
+
+        if root.destination != "": Text {
+            text: "Creates " + root.destination + ", then installs its dependencies in the terminal.";
+            color: Theme.chrome-muted;
+            wrap: word-wrap;
+        }
+
+        if root.error != "": Text {
+            text: root.error;
+            color: Theme.error;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+
+            Button {
+                text: "Cancel";
+                clicked => {
+                    root.cancel();
+                }
+            }
+
+            Button {
+                text: root.creating ? "Creating…" : "Create";
+                primary: true;
+                enabled: !root.creating;
+                clicked => {
+                    root.create();
+                }
+            }
+        }
+    }
+}

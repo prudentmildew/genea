@@ -1,9 +1,12 @@
 //! One open project: its folder and what its window shows.
 
+mod changes;
+mod check;
 mod external;
 mod language;
 mod oxlint;
 mod finder;
+mod symbols;
 mod tabs;
 
 use std::{
@@ -30,6 +33,10 @@ use crate::{
     jobs::Jobs,
     problems::{Problem, ProblemSource, Problems, Severity, TextPosition},
     reading::{self, Contents, FirstScreen},
+    review::{
+        Review,
+        store::{hash_bytes, hash_rope},
+    },
     search::Search,
     syntax::ParseJob,
     terminal::Terminal,
@@ -38,6 +45,7 @@ use crate::{
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use check::Check;
 use language::Language;
 use tabs::Panes;
 
@@ -94,8 +102,12 @@ pub(crate) struct Project {
     pub(crate) toolchain: Option<Toolchain>,
     /// What its processes get (ticket #36); set by `start_environment`.
     pub(crate) environment: Option<Environment>,
+    /// External changes against the review baseline (ticket #53).
+    pub(crate) review: Review,
     /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
     language: Language,
+    /// The project check (ticket #48).
+    check: Check,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
@@ -114,12 +126,16 @@ pub(crate) struct Project {
     finder_files: u64,
     /// Files opened lately, most recent first: Recent Files (⌘E).
     recent_files: Vec<PathBuf>,
+    /// Commands only the workbench can carry out (New Project…), from a
+    /// menu or the finder; it takes them after each dispatch.
+    for_workbench: Vec<Command>,
 }
 
 impl Project {
-    pub(crate) fn new(id: ProjectId, root: PathBuf) -> Self {
+    pub(crate) fn new(id: ProjectId, root: PathBuf, jobs: &Jobs) -> Self {
         Project {
             id,
+            review: Review::new(id, root.clone(), jobs),
             files: FileIndex::new(id, root.clone()),
             git: Git::new(id, root.clone()),
             terminal: Terminal::new(id, root.clone()),
@@ -134,6 +150,7 @@ impl Project {
             toolchain: None,
             environment: None,
             language: Language::default(),
+            check: Check::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -149,7 +166,13 @@ impl Project {
             finder_generation: 0,
             finder_files: 0,
             recent_files: Vec::new(),
+            for_workbench: Vec::new(),
         }
+    }
+
+    /// The commands this project's last dispatch left for the workbench.
+    pub(crate) fn take_workbench_commands(&mut self) -> Vec<Command> {
+        std::mem::take(&mut self.for_workbench)
     }
 
     /// Starts the project's background work once it is open: the watcher,
@@ -166,6 +189,7 @@ impl Project {
         self.load_indentation(jobs);
         self.find_nested_configs(jobs);
         self.files.start(jobs);
+        self.review.start(host.support_dir(), jobs);
         self.git.reload(Vec::new(), jobs);
         self.dependencies.check(jobs);
     }
@@ -182,11 +206,13 @@ impl Project {
         self.files.files_changed(&changes, jobs);
         self.dependencies.files_changed(&changes, jobs);
         self.language_files_changed(&changes);
+        self.project_check_files_changed(&changes);
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
             self.git.reload(open, jobs);
         }
         self.check_open_files(&changes, jobs);
+        self.review.files_changed(&changes, jobs);
         let root_config = self.root.join(CONFIG_FILE);
         if let Some(toolchain) = &mut self.toolchain
             && (changes.rescan || LOCKFILES.iter().any(|name| changes.paths.contains(&self.root.join(name))))
@@ -400,7 +426,8 @@ impl Project {
         if !self.root.join("package.json").exists() {
             return;
         }
-        let toolchain = self.toolchain.insert(Toolchain::new(self.id, self.root.clone(), context));
+        let own_writes = self.review.own_writes();
+        let toolchain = self.toolchain.insert(Toolchain::new(self.id, self.root.clone(), context, own_writes));
         toolchain.load(jobs);
     }
 
@@ -480,6 +507,11 @@ impl Project {
             | Command::NewTerminalTab
             | Command::CloseTerminalTab(_) => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
+            Command::KeepChange(path) => self.review.keep(Some(path), jobs),
+            Command::RevertChange(path) => self.review.revert(Some(path), jobs),
+            Command::KeepAllChanges => self.review.keep(None, jobs),
+            Command::RevertAllChanges => self.review.revert(None, jobs),
+            Command::RunProjectCheck => self.run_project_check(),
             Command::RestartLanguageServer => {
                 self.restart_language_server();
                 self.restart_oxlint();
@@ -559,6 +591,8 @@ impl Project {
             }
             // The workbench handles it: it needs the recent projects.
             Command::RemoveUnusedToolchains => {}
+            // The dialog isn't the project's (ticket #61).
+            Command::NewProject => self.for_workbench.push(command),
             Command::ReloadEnvironment => {
                 if let Some(environment) = &mut self.environment {
                     environment.capture(jobs);
@@ -713,6 +747,7 @@ impl Project {
         }
         self.refresh_views();
         self.sync_language();
+        self.sync_project_check();
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
@@ -787,6 +822,7 @@ impl Project {
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
             language_servers: self.language_status().into_iter().chain(self.oxlint_status()).collect(),
+            project_check: self.project_check_status(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
@@ -794,6 +830,7 @@ impl Project {
         notices.extend(self.environment.iter().flat_map(Environment::notices));
         notices.extend(self.language_notices());
         notices.extend(self.oxlint_notices());
+        notices.extend(self.project_check_notices());
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -811,6 +848,8 @@ impl Project {
             terminal: self.terminal.view(),
             toolchain_picker: self.toolchain.as_ref().and_then(Toolchain::picker_view),
             files: self.files.rows(),
+            changes: self.review.rows(),
+            review_banner: self.review.banner(),
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
         }
@@ -895,12 +934,16 @@ impl Project {
         let snapshot = editor.start_save();
         let absolute = self.root.join(&snapshot.path);
         let id = self.id;
+        let own = self.review.own_writes();
         jobs.spawn("save file", move || {
+            // Review knows this write as Genea's own (ticket #53).
+            let writing = own.writing(&snapshot.path, Some(hash_rope(&snapshot.text)));
             let written = File::create(&absolute).and_then(|file| {
                 let mut writer = BufWriter::new(file);
                 snapshot.text.write_to(&mut writer)?;
                 writer.flush()
             });
+            drop(writing);
             Box::new(move |core| {
                 let jobs = core.jobs.clone();
                 let Some(project) = core.project_mut(id) else { return };
@@ -932,11 +975,19 @@ impl Project {
     fn open_config(&mut self, jobs: &Jobs) {
         let path = self.root.join(CONFIG_FILE);
         let id = self.id;
+        let own = self.review.own_writes();
         jobs.spawn("create config", move || {
-            let created = match File::create_new(&path) {
-                Ok(mut file) => file.write_all(b"{}\n"),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-                Err(error) => Err(error),
+            const EMPTY: &[u8] = b"{}\n";
+            let created = if path.exists() {
+                Ok(())
+            } else {
+                // Review knows this write as Genea's own (ticket #53).
+                let _writing = own.writing(Path::new(CONFIG_FILE), Some(hash_bytes(EMPTY)));
+                match File::create_new(&path) {
+                    Ok(mut file) => file.write_all(EMPTY),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+                    Err(error) => Err(error),
+                }
             };
             Box::new(move |core| {
                 let jobs = core.jobs.clone();

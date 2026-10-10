@@ -13,6 +13,7 @@ use genea_host::{Child, ProcessSpec, SharedHost};
 use crate::{
     command::Command,
     jobs::{self, Inbox, Jobs},
+    new_project::{self, NewProjectCommand, NewProjectDialog, NewProjectFlow},
     project::Project,
     recent::RecentProjects,
     templates::{self, Creations, NewProject, ProjectCreation},
@@ -57,6 +58,8 @@ pub(crate) struct Core {
     next_id: u64,
     recent: RecentProjects,
     pub(crate) creations: Creations,
+    /// The New Project dialog (ticket #61).
+    pub(crate) new_project: NewProjectFlow,
     /// A newer Genea release, once the update check has found one.
     pub(crate) update_notice: Option<UpdateNotice>,
     /// Lives as long as the core. Host timers hold a weak reference to it,
@@ -73,6 +76,56 @@ impl Core {
         self.projects.values()
     }
 
+    /// [`Workbench::open_project`], for Applies too (the new-project flow
+    /// opens what it created).
+    pub(crate) fn open_project(&mut self, root: &Path) -> Result<ProjectId, OpenProjectError> {
+        let error = |reason| OpenProjectError { path: root.to_owned(), reason };
+        let checked = root.canonicalize().map_err(|e| e.to_string()).and_then(|canonical| {
+            if canonical.is_dir() { Ok(canonical) } else { Err("it isn't a folder".into()) }
+        });
+        let root = match checked {
+            Ok(root) => root,
+            Err(reason) => {
+                // A recent project that can't be opened any more leaves the list.
+                self.recent.forget(root, &self.jobs, self.host.clock());
+                return Err(error(reason));
+            }
+        };
+        self.recent.opened(&root, &self.jobs, self.host.clock());
+        if let Some((id, _)) = self.projects.iter().find(|(_, p)| p.root() == root) {
+            return Ok(*id);
+        }
+        let id = ProjectId(self.next_id);
+        self.next_id += 1;
+        let project = self.projects.entry(id).or_insert(Project::new(id, root, &self.jobs));
+        project.start(&self.jobs, self.host.as_ref());
+        project.start_toolchain(self.toolchain.clone(), &self.jobs);
+        project.start_environment(self.host.clone(), &self.jobs);
+        project.start_language(self.host.clone(), &self.jobs);
+        project.start_terminal_when_ready(&self.host, &self.jobs);
+        Ok(id)
+    }
+
+    /// [`Workbench::dispatch`], for Applies too.
+    pub(crate) fn dispatch(&mut self, project: ProjectId, command: Command) {
+        if command == Command::RemoveUnusedToolchains {
+            if self.projects.contains_key(&project) {
+                toolchain::remove_unused(self, project);
+            }
+            return;
+        }
+        let Core { projects, jobs, host, .. } = self;
+        let Some(project) = projects.get_mut(&project) else { return };
+        project.dispatch(command, jobs, host.as_ref());
+        // A command may restart the terminal's shell.
+        project.start_terminal_when_ready(host, jobs);
+        for command in project.take_workbench_commands() {
+            if command == Command::NewProject {
+                new_project::dispatch(self, NewProjectCommand::Open);
+            }
+        }
+    }
+
     /// The recent projects' roots, most recent first.
     pub(crate) fn recent_roots(&self) -> &[PathBuf] {
         self.recent.roots()
@@ -86,8 +139,19 @@ impl Workbench {
         let toolchain = ToolchainContext::new(host.clone());
         let creations = Creations::default();
         let (update_notice, alive) = (None, Arc::new(()));
-        let core =
-            Core { host, toolchain, jobs, projects: BTreeMap::new(), next_id: 0, recent, creations, update_notice, alive };
+        let new_project = NewProjectFlow::default();
+        let core = Core {
+            host,
+            toolchain,
+            jobs,
+            projects: BTreeMap::new(),
+            next_id: 0,
+            recent,
+            creations,
+            new_project,
+            update_notice,
+            alive,
+        };
         Workbench { core, inbox, applied: 0 }
     }
 
@@ -104,34 +168,7 @@ impl Workbench {
     /// existing id; the app then focuses that project's window. A folder
     /// that can't be opened leaves the recent projects.
     pub fn open_project(&mut self, root: impl AsRef<Path>) -> Result<ProjectId, OpenProjectError> {
-        let root = root.as_ref();
-        let error = |reason| OpenProjectError { path: root.to_owned(), reason };
-        let checked = root.canonicalize().map_err(|e| e.to_string()).and_then(|canonical| {
-            if canonical.is_dir() { Ok(canonical) } else { Err("it isn't a folder".into()) }
-        });
-        let root = match checked {
-            Ok(root) => root,
-            Err(reason) => {
-                // A recent project that can't be opened any more leaves the list.
-                let Core { recent, jobs, host, .. } = &mut self.core;
-                recent.forget(root, jobs, host.clock());
-                return Err(error(reason));
-            }
-        };
-        let Core { recent, jobs, host, .. } = &mut self.core;
-        recent.opened(&root, jobs, host.clock());
-        if let Some((id, _)) = self.core.projects.iter().find(|(_, p)| p.root() == root) {
-            return Ok(*id);
-        }
-        let id = ProjectId(self.core.next_id);
-        self.core.next_id += 1;
-        let project = self.core.projects.entry(id).or_insert(Project::new(id, root));
-        project.start(&self.core.jobs, self.core.host.as_ref());
-        project.start_toolchain(self.core.toolchain.clone(), &self.core.jobs);
-        project.start_environment(self.core.host.clone(), &self.core.jobs);
-        project.start_language(self.core.host.clone(), &self.core.jobs);
-        project.start_terminal_when_ready(&self.core.host, &self.core.jobs);
-        Ok(id)
+        self.core.open_project(root.as_ref())
     }
 
     /// Closes a project. Background results for it are dropped.
@@ -153,18 +190,7 @@ impl Workbench {
     /// Applies a command to a project. Commands for a closed project are
     /// ignored.
     pub fn dispatch(&mut self, project: ProjectId, command: Command) {
-        if command == Command::RemoveUnusedToolchains {
-            if self.core.projects.contains_key(&project) {
-                toolchain::remove_unused(&mut self.core, project);
-            }
-            return;
-        }
-        let Core { projects, jobs, host, .. } = &mut self.core;
-        if let Some(project) = projects.get_mut(&project) {
-            project.dispatch(command, jobs, host.as_ref());
-            // A command may restart the terminal's shell.
-            project.start_terminal_when_ready(host, jobs);
-        }
+        self.core.dispatch(project, command);
     }
 
     /// A snapshot of what the project's window shows, or `None` if the
@@ -201,6 +227,19 @@ impl Workbench {
     /// any.
     pub fn project_creation(&self) -> Option<ProjectCreation> {
         self.core.creations.view()
+    }
+
+    /// Applies a New Project dialog command (ticket #61). `Open` shows the
+    /// dialog (also [`Command::NewProject`] from a project window); its
+    /// Create generates the project in the background, then opens it and
+    /// installs its dependencies.
+    pub fn dispatch_new_project(&mut self, command: NewProjectCommand) {
+        new_project::dispatch(&mut self.core, command);
+    }
+
+    /// The New Project dialog, while it is open.
+    pub fn new_project_dialog(&self) -> Option<NewProjectDialog> {
+        self.core.new_project.view()
     }
 
     /// Starts the release-update check: at most once a day, the first one a
@@ -291,6 +330,8 @@ impl Workbench {
             project.refresh_views();
             // Language servers follow the open editors (ticket #42).
             project.sync_language();
+            // Open files show live diagnostics, not the project check's (ticket #48).
+            project.sync_project_check();
             // The terminal waits for the environment (ticket #38).
             project.start_terminal_when_ready(&self.core.host, &self.core.jobs);
             project.refresh_finder(&self.core.jobs);

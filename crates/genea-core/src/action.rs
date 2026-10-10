@@ -16,12 +16,14 @@ use crate::{
 /// Something the user can run from the finder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
+    NewProject,
     Save,
     CloseTab,
     OpenConfig,
     ReloadEnvironment,
     InstallDependencies,
     RestartLanguageServer,
+    RunProjectCheck,
     SetRuntime,
     SetPackageManager,
     UpdateToolchain,
@@ -48,8 +50,11 @@ pub enum Action {
     RecentFiles,
     FindAction,
     SearchEverywhere,
+    FileStructure,
+    GoToSymbol,
     ShowFiles,
     ShowSearch,
+    ShowChanges,
     ShowProblems,
     ShowTerminal,
     NewTerminalTab,
@@ -63,13 +68,15 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 42] = [
+    pub const ALL: [Action; 47] = [
+        Action::NewProject,
         Action::Save,
         Action::CloseTab,
         Action::OpenConfig,
         Action::ReloadEnvironment,
         Action::InstallDependencies,
         Action::RestartLanguageServer,
+        Action::RunProjectCheck,
         Action::SetRuntime,
         Action::SetPackageManager,
         Action::UpdateToolchain,
@@ -96,8 +103,11 @@ impl Action {
         Action::RecentFiles,
         Action::FindAction,
         Action::SearchEverywhere,
+        Action::FileStructure,
+        Action::GoToSymbol,
         Action::ShowFiles,
         Action::ShowSearch,
+        Action::ShowChanges,
         Action::ShowProblems,
         Action::ShowTerminal,
         Action::NewTerminalTab,
@@ -111,12 +121,14 @@ impl Action {
     /// The action's name, as menus show it.
     pub fn name(self) -> &'static str {
         match self {
+            Action::NewProject => "New Project…",
             Action::Save => "Save",
             Action::CloseTab => "Close Tab",
             Action::OpenConfig => "Open Config",
             Action::ReloadEnvironment => "Reload Environment",
             Action::InstallDependencies => "Install Dependencies",
             Action::RestartLanguageServer => "Restart Language Server",
+            Action::RunProjectCheck => "Run Project Check",
             Action::SetRuntime => "Set Runtime…",
             Action::SetPackageManager => "Set Package Manager…",
             Action::UpdateToolchain => "Update Toolchain…",
@@ -143,8 +155,11 @@ impl Action {
             Action::RecentFiles => "Recent Files",
             Action::FindAction => "Find Action…",
             Action::SearchEverywhere => "Search Everywhere",
+            Action::FileStructure => "File Structure",
+            Action::GoToSymbol => "Go to Symbol…",
             Action::ShowFiles => "Files",
             Action::ShowSearch => "Search",
+            Action::ShowChanges => "Changes",
             Action::ShowProblems => "Problems",
             Action::ShowTerminal => "Terminal",
             Action::NewTerminalTab => "New Terminal Tab",
@@ -183,6 +198,8 @@ impl Action {
             Action::RecentFiles => "⌘E",
             Action::FindAction => "⇧⌘A",
             Action::SearchEverywhere => "⇧⇧",
+            Action::FileStructure => "⌘F12",
+            Action::GoToSymbol => "⌥⌘O",
             Action::ShowFiles => "⌘1",
             Action::ShowSearch => "⇧⌘F",
             Action::ShowProblems => "⌘6",
@@ -190,10 +207,12 @@ impl Action {
             Action::NewTerminalTab => "⌘T",
             Action::SelectNextTab => "⇧⌘]",
             Action::SelectPreviousTab => "⇧⌘[",
-            Action::OpenConfig
+            Action::NewProject
+            | Action::OpenConfig
             | Action::ReloadEnvironment
             | Action::InstallDependencies
             | Action::RestartLanguageServer
+            | Action::RunProjectCheck
             | Action::SetRuntime
             | Action::SetPackageManager
             | Action::UpdateToolchain
@@ -202,7 +221,9 @@ impl Action {
             | Action::CollapseAllFolds
             | Action::SplitRight
             | Action::MoveTabToOtherSide
-            | Action::CloseSplit => return None,
+            | Action::CloseSplit
+            // ⌘0 is zoom (spec #19), so Changes has no shortcut.
+            | Action::ShowChanges => return None,
         })
     }
 
@@ -236,11 +257,13 @@ impl Action {
     /// which tab is active. `None` for the tab actions.
     pub(crate) fn command(self) -> Option<Command> {
         Some(match self {
+            Action::NewProject => Command::NewProject,
             Action::Save => Command::Save,
             Action::OpenConfig => Command::OpenConfig,
             Action::ReloadEnvironment => Command::ReloadEnvironment,
             Action::InstallDependencies => Command::InstallDependencies,
             Action::RestartLanguageServer => Command::RestartLanguageServer,
+            Action::RunProjectCheck => Command::RunProjectCheck,
             Action::SetRuntime => Command::OpenToolchainPicker(ToolchainPickerKind::Runtime),
             Action::SetPackageManager => Command::OpenToolchainPicker(ToolchainPickerKind::PackageManager),
             Action::UpdateToolchain => Command::OpenToolchainPicker(ToolchainPickerKind::Update),
@@ -267,8 +290,11 @@ impl Action {
             Action::RecentFiles => Command::OpenFinder(FinderMode::RecentFiles),
             Action::FindAction => Command::OpenFinder(FinderMode::Actions),
             Action::SearchEverywhere => Command::OpenFinder(FinderMode::Everywhere),
+            Action::FileStructure => Command::OpenFinder(FinderMode::FileSymbols),
+            Action::GoToSymbol => Command::OpenFinder(FinderMode::ProjectSymbols),
             Action::ShowFiles => Command::ToggleLeftColumn(LeftColumnView::Files),
             Action::ShowSearch => Command::ToggleLeftColumn(LeftColumnView::Search),
+            Action::ShowChanges => Command::ToggleLeftColumn(LeftColumnView::Changes),
             Action::ShowProblems => Command::ToggleLeftColumn(LeftColumnView::Problems),
             Action::ShowTerminal => Command::ToggleTerminal,
             Action::NewTerminalTab => Command::NewTerminalTab,

@@ -7,6 +7,11 @@
 //! match job; a newer query (or a closed finder) drops an older job's
 //! result. When the file list changes while the finder is open, the query
 //! is matched again, so results follow files being created and deleted.
+//!
+//! Symbols (ticket #47) come from the language server
+//! (`project/symbols.rs`): the current file's for ⌘F12, the project's
+//! matching the query for ⌥⌘O and ⇧⇧. They are matched here like the rest,
+//! so the server's answers and the files and actions rank together.
 
 use std::{
     cmp::Reverse,
@@ -21,6 +26,7 @@ use nucleo_matcher::{
 
 use crate::{
     action::Action,
+    lsp::symbols::{Positions, Symbol},
     view::{FinderItem, FinderItemKind, FinderMode, FinderView},
 };
 
@@ -36,11 +42,38 @@ pub(crate) struct Finder {
     /// The query changed since the last results came in: the next ones
     /// select their best result.
     new_query: bool,
+    /// The symbols the finder asks the language server for (ticket #47).
+    pub(crate) symbols: FinderSymbols,
+}
+
+/// The finder's symbols from the language server (ticket #47).
+#[derive(Default)]
+pub(crate) struct FinderSymbols {
+    /// What to ask the server for once it can be asked.
+    pub(crate) wanted: Option<SymbolRequest>,
+    /// The request whose answer the finder waits for.
+    pub(crate) waiting: Option<i64>,
+    /// The last answer: the current file's symbols, or the project's for a
+    /// recent query (until the current one's answer replaces them; matching
+    /// filters them by the current query meanwhile). Relative paths.
+    pub(crate) found: Arc<[Symbol]>,
+    /// `found` changed since the last match.
+    pub(crate) changed: bool,
+}
+
+/// A symbols request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SymbolRequest {
+    /// `textDocument/documentSymbol` for an open file (relative path).
+    Document(PathBuf),
+    /// `workspace/symbol` for a query.
+    Workspace(String),
 }
 
 impl Finder {
     pub(crate) fn new(mode: FinderMode) -> Self {
-        Finder { mode, query: String::new(), items: Vec::new(), selected: 0, new_query: true }
+        let symbols = FinderSymbols::default();
+        Finder { mode, query: String::new(), items: Vec::new(), selected: 0, new_query: true, symbols }
     }
 
     pub(crate) fn set_query(&mut self, query: String) {
@@ -95,6 +128,10 @@ pub(crate) struct Candidates {
     pub(crate) files: Arc<[String]>,
     /// The files opened lately, most recent first.
     pub(crate) recent: Vec<String>,
+    /// The symbols, for the symbol modes and Search Everywhere.
+    pub(crate) symbols: Arc<[Symbol]>,
+    /// Where the symbols are, as the editor counts.
+    pub(crate) positions: Positions,
 }
 
 /// Matches `query` against the candidates (a background thread).
@@ -103,14 +140,21 @@ pub(crate) fn run_match(mode: FinderMode, query: &str, candidates: &Candidates) 
     match mode {
         // An empty query lists the recent files.
         FinderMode::Files | FinderMode::Everywhere if scorer.is_empty() => recent_files(&mut scorer, candidates),
-        FinderMode::Files => best(files(&mut scorer, candidates)),
+        FinderMode::Files => best(files(&mut scorer, candidates), mode, candidates),
         FinderMode::RecentFiles => recent_files(&mut scorer, candidates),
-        FinderMode::Actions => best(actions(&mut scorer)),
+        FinderMode::Actions => best(actions(&mut scorer), mode, candidates),
         FinderMode::Everywhere => {
             let mut matched = files(&mut scorer, candidates);
+            matched.extend(symbols(&mut scorer, candidates));
             matched.extend(actions(&mut scorer));
-            best(matched)
+            best(matched, mode, candidates)
         }
+        // An empty query lists them all, in the file's order.
+        FinderMode::FileSymbols if scorer.is_empty() => {
+            let all = candidates.symbols.iter().take(MAX_RESULTS);
+            all.map(|symbol| symbol_item(symbol, mode, &candidates.positions)).collect()
+        }
+        FinderMode::FileSymbols | FinderMode::ProjectSymbols => best(symbols(&mut scorer, candidates), mode, candidates),
     }
 }
 
@@ -121,13 +165,16 @@ type Scored<'a> = (u32, Hit<'a>);
 enum Hit<'a> {
     /// A file: (path length, path), so shorter paths win a tie.
     File(usize, &'a str),
+    /// A symbol, by its place in the server's answer. On a tie, symbols go
+    /// after files.
+    Symbol(usize),
     /// An action, by its place in the menus. On a tie, actions go after
-    /// files.
+    /// files and symbols.
     Action(usize),
 }
 
 /// The best matches as results, best first.
-fn best<'a>(mut matched: Vec<Scored<'a>>) -> Vec<FinderItem> {
+fn best<'a>(mut matched: Vec<Scored<'a>>, mode: FinderMode, candidates: &Candidates) -> Vec<FinderItem> {
     let key = |(score, hit): &Scored<'a>| (Reverse(*score), *hit);
     // Sorting only the best is quicker on a long list.
     if matched.len() > MAX_RESULTS {
@@ -139,9 +186,29 @@ fn best<'a>(mut matched: Vec<Scored<'a>>) -> Vec<FinderItem> {
         .into_iter()
         .map(|(_, hit)| match hit {
             Hit::File(_, path) => file_item(Path::new(path)),
+            Hit::Symbol(i) => symbol_item(&candidates.symbols[i], mode, &candidates.positions),
             Hit::Action(i) => action_item(Action::ALL[i]),
         })
         .collect()
+}
+
+/// The symbols whose names match.
+fn symbols(scorer: &mut Scorer, candidates: &Candidates) -> Vec<Scored<'static>> {
+    let matching = candidates.symbols.iter().enumerate();
+    matching.filter_map(|(i, symbol)| Some((scorer.text(&symbol.name)?, Hit::Symbol(i)))).collect()
+}
+
+/// A symbol as a result: its name, with what it is declared in beside it,
+/// and its file too unless the finder lists the current file's.
+fn symbol_item(symbol: &Symbol, mode: FinderMode, positions: &Positions) -> FinderItem {
+    let file = symbol.path.to_string_lossy();
+    let detail = match (&symbol.container, mode) {
+        (container, FinderMode::FileSymbols) => container.clone().unwrap_or_default(),
+        (Some(container), _) => format!("{container} · {file}"),
+        (None, _) => file.into_owned(),
+    };
+    let kind = FinderItemKind::Symbol { path: symbol.path.clone(), at: positions.of(symbol) };
+    FinderItem { label: symbol.name.clone(), detail, shortcut: None, kind }
 }
 
 /// The files that match.

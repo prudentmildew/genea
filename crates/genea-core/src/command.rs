@@ -65,6 +65,10 @@ pub enum Command {
     /// toolchain store that no recently opened (or open) project uses. A
     /// notice says what was removed.
     RemoveUnusedToolchains,
+    /// New Project… (ticket #61): opens the New Project dialog, which
+    /// belongs to the workbench, not this project
+    /// ([`Workbench::new_project_dialog`](crate::Workbench::new_project_dialog)).
+    NewProject,
     /// "Reload environment": runs the login shell again and gives processes
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
@@ -204,6 +208,12 @@ pub enum Command {
     /// Installing them is up to the user; lint starts once Oxlint is in
     /// `node_modules`.
     AddOxlintAndOxfmt,
+    /// "Run project check" (ticket #48): type-checks the whole project in
+    /// the background with `tsc -b --noEmit` from its TypeScript 7.
+    /// `StatusBar::project_check` shows it running. Its results replace the
+    /// last check's in Problems (`ProblemSource::ProjectCheck`); a check
+    /// started while one runs replaces that one.
+    RunProjectCheck,
 
     // Structural editing (ticket #25).
     /// ⌘/: comments out the lines the carets and selections are on, or
@@ -250,6 +260,20 @@ pub enum Command {
     /// file changed on disk while it had unsaved edits. The path is as in
     /// `EditorView::path`.
     ResolveConflict { path: PathBuf, choice: ConflictChoice },
+
+    // Review (ticket #53). Paths are as in `ChangeItem::path`; a path that
+    // isn't listed in Changes is ignored. Both work in the background.
+    /// Keep: makes the file's content on disk its review baseline, so it
+    /// leaves Changes.
+    KeepChange(PathBuf),
+    /// Revert: writes the file's review baseline back to disk (deleting a
+    /// created file, restoring a deleted one), and open editors reload.
+    RevertChange(PathBuf),
+    /// Keep for every file in Changes.
+    KeepAllChanges,
+    /// Revert for every file in Changes that can be reverted.
+    RevertAllChanges,
+
     // The terminal pane (ticket #38).
     /// ⌥F12: shows the terminal pane and focuses it; if it is showing and
     /// focused, collapses it and gives the editor the focus back. The

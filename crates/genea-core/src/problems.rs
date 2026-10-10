@@ -14,7 +14,7 @@
 //! [`ProblemSource`] variant.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -33,6 +33,9 @@ pub enum ProblemSource {
     TypeScript,
     /// `oxlint --lsp`'s live diagnostics for open files (ticket #49).
     Oxlint,
+    /// The last project check's results (ticket #48): `tsc -b --noEmit`
+    /// over the whole project, kept until the next check.
+    ProjectCheck,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,6 +83,12 @@ pub(crate) struct Problem {
 #[derive(Default)]
 pub(crate) struct Problems {
     by_source: BTreeMap<ProblemSource, BTreeMap<PathBuf, Vec<Problem>>>,
+    /// Files open on a language server: their live diagnostics take over
+    /// from the project check's stored results, which are hidden there.
+    live: BTreeSet<PathBuf>,
+    /// Files whose project-check results are stale: they changed since the
+    /// check.
+    stale: BTreeSet<PathBuf>,
 }
 
 impl Problems {
@@ -90,6 +99,24 @@ impl Problems {
             by_file.entry(problem.path.clone()).or_default().push(problem);
         }
         self.by_source.insert(source, by_file);
+        if source == ProblemSource::ProjectCheck {
+            self.stale.clear();
+        }
+    }
+
+    /// `path` changed since the project check: its results there (if any)
+    /// are stale until the next check.
+    pub(crate) fn mark_stale(&mut self, path: &Path) {
+        if self.by_source.get(&ProblemSource::ProjectCheck).is_some_and(|by_file| by_file.contains_key(path)) {
+            self.stale.insert(path.to_owned());
+        }
+    }
+
+    /// Every file with project-check results is stale (the watcher lost
+    /// track of what changed).
+    pub(crate) fn mark_all_stale(&mut self) {
+        let paths = self.by_source.get(&ProblemSource::ProjectCheck).into_iter().flat_map(BTreeMap::keys);
+        self.stale.extend(paths.cloned());
     }
 
     /// Replaces `source`'s problems in one file, leaving its other files'.
@@ -102,13 +129,32 @@ impl Problems {
         }
     }
 
+    /// Sets the files open on a language server, whose project-check
+    /// results are hidden while they are open.
+    pub(crate) fn set_live(&mut self, paths: BTreeSet<PathBuf>) {
+        self.live = paths;
+    }
+
+    /// Whether `source`'s problems in `path` show.
+    fn shows(&self, source: ProblemSource, path: &Path) -> bool {
+        source != ProblemSource::ProjectCheck || !self.live.contains(path)
+    }
+
     fn all(&self) -> impl Iterator<Item = (ProblemSource, &Problem)> {
-        self.by_source.iter().flat_map(|(source, by_file)| by_file.values().flatten().map(|p| (*source, p)))
+        self.by_source.iter().flat_map(move |(source, by_file)| {
+            by_file.iter().filter(move |(path, _)| self.shows(*source, path)).flat_map(move |(_, problems)| {
+                problems.iter().map(move |p| (*source, p))
+            })
+        })
     }
 
     /// The problems in one file, from every source.
     pub(crate) fn in_file<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Problem> + 'a {
-        self.by_source.values().filter_map(move |by_file| by_file.get(path)).flatten()
+        self.by_source
+            .iter()
+            .filter(move |(source, _)| self.shows(**source, path))
+            .filter_map(move |(_, by_file)| by_file.get(path))
+            .flatten()
     }
 
     /// (errors, warnings) over every source.
@@ -134,6 +180,7 @@ impl Problems {
                 position: p.start,
                 location: format!("{}:{}", p.start.line + 1, p.start.column + 1),
                 message: p.message.clone(),
+                stale: source == ProblemSource::ProjectCheck && self.stale.contains(&p.path),
             })
             .collect()
     }
