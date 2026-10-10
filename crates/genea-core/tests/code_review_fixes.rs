@@ -108,3 +108,23 @@ fn root_formatter_config_counts_without_a_readable_root_package_json() {
         );
     }
 }
+
+/// Item 10: workspace packages are looked for only where the globs can
+/// match, and a folder the project's `.gitignore` ignores is no package.
+#[test]
+fn a_gitignored_folder_is_no_workspace_package() {
+    let fixture = FixtureProject::new()
+        .file("package.json", r#"{ "name": "shop", "packageManager": "pnpm@12.10.1" }"#)
+        .file("pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n  - './apps/**'\n")
+        .file(".gitignore", "packages/generated/\n")
+        .file("packages/shared/package.json", r#"{ "name": "@shop/shared" }"#)
+        .file("packages/generated/package.json", r#"{ "name": "generated" }"#)
+        .file("apps/web/client/package.json", r#"{ "name": "@shop/client" }"#)
+        .build();
+    let mut workbench = Workbench::new(TestHost::new().shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+
+    let names: Vec<String> = view(&workbench, project).scripts.into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["shop", "@shop/client", "@shop/shared"]);
+}

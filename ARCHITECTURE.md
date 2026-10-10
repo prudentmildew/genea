@@ -532,7 +532,9 @@ showing tab is `Terminal::tab() -> Option`).
   The packages are the root package plus the folders matched by
   `pnpm-workspace.yaml`'s `packages` (read with the YAML grammar) or, when
   the root pins Bun (or npm or Yarn, #51), the root `workspaces` field (`globset`, `!` excludes,
-  never inside `node_modules` or `.git`), each with its `package.json`
+  never inside `node_modules` or `.git` or what the project's `.gitignore`
+  files ignore; only folders under a glob's literal leading folders, and
+  no deeper than it reaches, are walked), each with its `package.json`
   scripts in file order; root first, then by path. They are read in a job
   at open and again when the watcher sees `pnpm-workspace.yaml`, any
   `package.json` or a package's folder change. `RunScript` runs

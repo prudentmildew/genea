@@ -223,46 +223,89 @@ fn scalar(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
 struct Patterns {
     include: GlobSet,
     exclude: GlobSet,
+    /// Where each include can match: its literal leading folders, and how
+    /// many more levels below them (`None`: any, after a `**`).
+    reach: Vec<(PathBuf, Option<usize>)>,
 }
 
 impl Patterns {
     /// `None` without any include pattern.
     fn new(patterns: &[String]) -> Option<Self> {
         let (mut include, mut exclude) = (GlobSetBuilder::new(), GlobSetBuilder::new());
-        let mut includes = 0;
+        let mut reach = Vec::new();
         for pattern in patterns {
-            let (set, pattern) = match pattern.strip_prefix('!') {
-                Some(negated) => (&mut exclude, negated),
-                None => {
-                    includes += 1;
-                    (&mut include, pattern.as_str())
-                }
+            let (negated, pattern) = match pattern.strip_prefix('!') {
+                Some(negated) => (true, negated),
+                None => (false, pattern.as_str()),
             };
             let pattern = pattern.trim().trim_start_matches("./").trim_end_matches('/');
-            if let Ok(glob) = GlobBuilder::new(pattern).literal_separator(true).build() {
-                set.add(glob);
+            let Ok(glob) = GlobBuilder::new(pattern).literal_separator(true).build() else { continue };
+            if negated {
+                exclude.add(glob);
+            } else {
+                include.add(glob);
+                reach.push(reach_of(pattern));
             }
         }
-        if includes == 0 {
+        if reach.is_empty() {
             return None;
         }
-        Some(Patterns { include: include.build().ok()?, exclude: exclude.build().ok()? })
+        Some(Patterns { include: include.build().ok()?, exclude: exclude.build().ok()?, reach })
     }
 
     fn matches(&self, relative: &Path) -> bool {
         self.include.is_match(relative) && !self.exclude.is_match(relative)
     }
+
 }
 
-/// Every folder below the root (outside `node_modules` and `.git`) that the
-/// patterns match and that has a `package.json`.
+/// Whether a folder (relative to the root) may be, or hold, a match of an
+/// include with this `reach`: it leads to the include's literal folders,
+/// or is within its reach below them.
+fn may_reach(reach: &[(PathBuf, Option<usize>)], relative: &Path) -> bool {
+    let depth = relative.components().count();
+    reach.iter().any(|(prefix, below)| {
+        prefix.starts_with(relative)
+            || (relative.starts_with(prefix) && below.is_none_or(|below| depth <= prefix.components().count() + below))
+    })
+}
+
+/// An include pattern's literal leading folders, and how many levels below
+/// them it can match (`None` after a `**`).
+fn reach_of(pattern: &str) -> (PathBuf, Option<usize>) {
+    let is_glob = |part: &str| part.contains(['*', '?', '[', '{', '\\']);
+    let parts: Vec<&str> = pattern.split('/').filter(|part| !part.is_empty() && *part != ".").collect();
+    let literal = parts.iter().take_while(|part| !is_glob(part)).count();
+    let rest = &parts[literal..];
+    let below = if rest.contains(&"**") { None } else { Some(rest.len()) };
+    (parts[..literal].iter().collect(), below)
+}
+
+/// Every folder below the root that the patterns match and that has a
+/// `package.json`. Only folders the patterns can reach are walked, never
+/// `node_modules` or `.git`, nor what the project's `.gitignore` files
+/// ignore (as in project search: nothing above the root or user-wide).
 fn find_packages(root: &Path, patterns: &Patterns) -> Vec<PackageScripts> {
+    let walk_root = root.to_owned();
+    let reach = patterns.reach.clone();
     ignore::WalkBuilder::new(root)
-        .standard_filters(false)
-        .filter_entry(|entry| entry.file_name() != "node_modules" && entry.file_name() != ".git")
+        .hidden(false)
+        .parents(false)
+        .ignore(false)
+        .git_global(false)
+        .require_git(false)
+        .filter_entry(move |entry| {
+            if !entry.file_type().is_some_and(|t| t.is_dir()) {
+                return false;
+            }
+            if entry.file_name() == "node_modules" || entry.file_name() == ".git" {
+                return false;
+            }
+            entry.path().strip_prefix(&walk_root).is_ok_and(|relative| may_reach(&reach, relative))
+        })
         .build()
         .filter_map(Result::ok)
-        .filter(|entry| entry.depth() > 0 && entry.file_type().is_some_and(|t| t.is_dir()))
+        .filter(|entry| entry.depth() > 0)
         .filter_map(|entry| {
             let relative = entry.path().strip_prefix(root).ok()?.to_path_buf();
             if !patterns.matches(&relative) {
