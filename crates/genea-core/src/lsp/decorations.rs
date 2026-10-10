@@ -109,11 +109,33 @@ pub(super) fn configuration(params: &Value) -> Value {
     Value::Array(answers.collect())
 }
 
-/// A request for a document's decorations, waiting for its answer.
+/// The kinds of decorations, each its own request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// `textDocument/semanticTokens/full`.
+    Tokens,
+    /// `textDocument/inlayHint`, while the `inlayHints` config key is on.
+    Hints,
+}
+
+impl Kind {
+    const ALL: [Kind; 2] = [Kind::Tokens, Kind::Hints];
+
+    fn method(self) -> &'static str {
+        match self {
+            Kind::Tokens => "textDocument/semanticTokens/full",
+            Kind::Hints => "textDocument/inlayHint",
+        }
+    }
+}
+
+/// A request for a document's decorations, waiting for its answer: for
+/// the editor's `version`.
 #[derive(Debug)]
-pub(crate) enum Pending {
-    /// `textDocument/semanticTokens/full`, for the editor's `version`.
-    Tokens { path: PathBuf, version: u64 },
+pub(crate) struct Pending {
+    kind: Kind,
+    path: PathBuf,
+    version: u64,
 }
 
 /// What the project applies to an open editor. Positions are in the
@@ -121,6 +143,7 @@ pub(crate) enum Pending {
 #[derive(Debug)]
 pub(crate) enum Output {
     Tokens { path: PathBuf, version: u64, encoding: Encoding, tokens: Vec<Token> },
+    Hints { path: PathBuf, version: u64, encoding: Encoding, hints: Vec<Hint> },
     /// The server is gone: drop every editor's decorations.
     ClearAll,
 }
@@ -134,6 +157,19 @@ pub(crate) struct Token {
     pub(crate) highlight: Highlight,
 }
 
+/// An inlay hint: its text (padding included) and where it goes, in
+/// server units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Hint {
+    pub(crate) line: u32,
+    pub(crate) character: u32,
+    pub(crate) label: String,
+}
+
+/// Hints longer than this are cut, as VS Code cuts them: a big object
+/// type would otherwise push the line's own text far off.
+const MAX_HINT_CHARS: usize = 43;
+
 /// One kind of request for one document.
 #[derive(Debug, Default)]
 struct Want {
@@ -146,6 +182,18 @@ struct Want {
 #[derive(Debug, Default)]
 struct Wants {
     tokens: Want,
+    hints: Want,
+    /// The document's line count, for the inlay hints' range.
+    lines: u32,
+}
+
+impl Wants {
+    fn of(&mut self, kind: Kind) -> &mut Want {
+        match kind {
+            Kind::Tokens => &mut self.tokens,
+            Kind::Hints => &mut self.hints,
+        }
+    }
 }
 
 /// A server's decorations state, on the main thread.
@@ -154,6 +202,10 @@ pub(crate) struct Decorations {
     /// The server's semantic token legend; `None` if it has no semantic
     /// tokens.
     legend: Option<Legend>,
+    /// The server has inlay hints.
+    has_hints: bool,
+    /// The `inlayHints` config key.
+    show_hints: bool,
     documents: BTreeMap<PathBuf, Wants>,
 }
 
@@ -164,41 +216,73 @@ struct Legend {
     modifiers: Vec<String>,
 }
 
+/// Whether a capability is there (`true` or an options object).
+fn provided(capability: &Value) -> bool {
+    !matches!(capability, Value::Null | Value::Bool(false))
+}
+
 impl Decorations {
     /// The server answered `initialize`: what it provides.
     pub(super) fn initialized(&mut self, result: &Value) {
-        let provider = &result["capabilities"]["semanticTokensProvider"];
+        let capabilities = &result["capabilities"];
+        let provider = &capabilities["semanticTokensProvider"];
         let strings = |v: &Value| -> Vec<String> {
             v.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect()
         };
-        self.legend = (provider["full"] != Value::Null && provider["full"] != false).then(|| Legend {
+        self.legend = provided(&provider["full"]).then(|| Legend {
             types: strings(&provider["legend"]["tokenTypes"]),
             modifiers: strings(&provider["legend"]["tokenModifiers"]),
         });
+        self.has_hints = provided(&capabilities["inlayHintProvider"]);
     }
 
-    /// A document was opened or its text changed: everything is wanted
-    /// again.
-    pub(super) fn changed(&mut self, path: &std::path::Path) {
+    /// What the config shows. Turning a kind on asks for it everywhere;
+    /// turning it off drops answers still on their way (the project hides
+    /// what the editors have).
+    pub(super) fn show(&mut self, hints: bool) {
+        if hints && !self.show_hints {
+            self.want_everywhere(Kind::Hints);
+        }
+        self.show_hints = hints;
+    }
+
+    /// Whether this kind is asked for at all.
+    fn active(&self, kind: Kind) -> bool {
+        match kind {
+            Kind::Tokens => self.legend.is_some(),
+            Kind::Hints => self.has_hints && self.show_hints,
+        }
+    }
+
+    /// A document was opened or its text changed (it has `lines` lines
+    /// now): everything is wanted again.
+    pub(super) fn changed(&mut self, path: &std::path::Path, lines: usize) {
         let wants = self.documents.entry(path.to_owned()).or_default();
-        wants.tokens.wanted = true;
+        wants.lines = u32::try_from(lines).unwrap_or(u32::MAX);
+        for kind in Kind::ALL {
+            wants.of(kind).wanted = true;
+        }
     }
 
     pub(super) fn closed(&mut self, path: &std::path::Path) {
         self.documents.remove(path);
     }
 
+    fn want_everywhere(&mut self, kind: Kind) {
+        for wants in self.documents.values_mut() {
+            wants.of(kind).wanted = true;
+        }
+    }
+
     /// The server asked for a refresh (`workspace/semanticTokens/refresh`,
     /// …): every document wants that kind again. `false` for other methods.
     pub(super) fn refresh(&mut self, method: &str) -> bool {
-        match method {
-            "workspace/semanticTokens/refresh" => {
-                for wants in self.documents.values_mut() {
-                    wants.tokens.wanted = true;
-                }
-            }
+        let kind = match method {
+            "workspace/semanticTokens/refresh" => Kind::Tokens,
+            "workspace/inlayHint/refresh" => Kind::Hints,
             _ => return false,
-        }
+        };
+        self.want_everywhere(kind);
         true
     }
 
@@ -209,14 +293,24 @@ impl Decorations {
         documents: &BTreeMap<PathBuf, Document>,
         requests: &mut std::collections::HashMap<i64, super::Pending>,
     ) {
+        let active: Vec<Kind> = Kind::ALL.into_iter().filter(|kind| self.active(*kind)).collect();
         for (path, wants) in &mut self.documents {
             let Some(document) = documents.get(path) else { continue };
-            let text_document = json!({ "textDocument": { "uri": document.uri } });
-            if self.legend.is_some() && wants.tokens.wanted && wants.tokens.in_flight.is_none() {
-                wants.tokens.wanted = false;
-                let id = connection.request("textDocument/semanticTokens/full", text_document.clone());
-                wants.tokens.in_flight = Some(id);
-                let pending = Pending::Tokens { path: path.clone(), version: document.editor_version };
+            for &kind in &active {
+                let lines = wants.lines;
+                let want = wants.of(kind);
+                if !want.wanted || want.in_flight.is_some() {
+                    continue;
+                }
+                want.wanted = false;
+                let mut params = json!({ "textDocument": { "uri": document.uri } });
+                if kind == Kind::Hints {
+                    let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": lines, "character": 0 } });
+                    params["range"] = range;
+                }
+                let id = connection.request(kind.method(), params);
+                want.in_flight = Some(id);
+                let pending = Pending { kind, path: path.clone(), version: document.editor_version };
                 requests.insert(id, super::Pending::Decorations(pending));
             }
         }
@@ -230,33 +324,70 @@ impl Decorations {
         result: Result<Value, ResponseError>,
         encoding: Encoding,
     ) -> Vec<Output> {
-        match pending {
-            Pending::Tokens { path, version } => {
-                let Some(wants) = self.documents.get_mut(&path).filter(|w| w.tokens.in_flight == Some(id)) else {
-                    return Vec::new();
-                };
-                wants.tokens.in_flight = None;
-                match result {
-                    Ok(result) => {
-                        let Some(legend) = &self.legend else { return Vec::new() };
-                        let data: Vec<u32> = result["data"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .map(|n| n.as_u64().unwrap_or(0) as u32)
-                            .collect();
-                        vec![Output::Tokens { path, version, encoding, tokens: legend.decode(&data) }]
-                    }
-                    Err(error) => {
-                        if retry(&error) {
-                            wants.tokens.wanted = true;
-                        }
-                        Vec::new()
-                    }
+        let Pending { kind, path, version } = pending;
+        let active = self.active(kind);
+        let Some(wants) = self.documents.get_mut(&path).filter(|w| w.of_ref(kind).in_flight == Some(id)) else {
+            return Vec::new();
+        };
+        wants.of(kind).in_flight = None;
+        let result = match result {
+            Ok(result) if active => result,
+            Ok(_) => return Vec::new(),
+            Err(error) => {
+                if retry(&error) {
+                    wants.of(kind).wanted = true;
                 }
+                return Vec::new();
+            }
+        };
+        match kind {
+            Kind::Tokens => {
+                let Some(legend) = &self.legend else { return Vec::new() };
+                let data: Vec<u32> =
+                    result["data"].as_array().into_iter().flatten().map(|n| n.as_u64().unwrap_or(0) as u32).collect();
+                vec![Output::Tokens { path, version, encoding, tokens: legend.decode(&data) }]
+            }
+            Kind::Hints => {
+                let hints = result.as_array().into_iter().flatten().filter_map(hint).collect();
+                vec![Output::Hints { path, version, encoding, hints }]
             }
         }
     }
+}
+
+impl Wants {
+    fn of_ref(&self, kind: Kind) -> &Want {
+        match kind {
+            Kind::Tokens => &self.tokens,
+            Kind::Hints => &self.hints,
+        }
+    }
+}
+
+/// An `InlayHint` as Genea draws it: the label's parts joined, on one
+/// line, cut at [`MAX_HINT_CHARS`], with its padding as spaces (except
+/// before a type annotation's colon, which TypeScript writes right after
+/// the name).
+fn hint(value: &Value) -> Option<Hint> {
+    let position = &value["position"];
+    let line = u32::try_from(position["line"].as_u64()?).ok()?;
+    let character = u32::try_from(position["character"].as_u64()?).ok()?;
+    let label: String = match &value["label"] {
+        Value::String(label) => label.clone(),
+        Value::Array(parts) => parts.iter().filter_map(|part| part["value"].as_str()).collect(),
+        _ => return None,
+    };
+    let mut label: String = label.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if label.chars().count() > MAX_HINT_CHARS {
+        label = label.chars().take(MAX_HINT_CHARS - 1).chain(['…']).collect();
+    }
+    if value["paddingLeft"] == true && !label.starts_with(':') {
+        label.insert(0, ' ');
+    }
+    if value["paddingRight"] == true {
+        label.push(' ');
+    }
+    (!label.is_empty()).then_some(Hint { line, character, label })
 }
 
 /// The byte offset of a server position in `text`: the line, and the

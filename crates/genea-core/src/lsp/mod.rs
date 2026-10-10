@@ -272,6 +272,11 @@ impl LanguageServer {
         self.state == State::Ready
     }
 
+    /// Which decorations the config shows (ticket #46): inlay hints.
+    pub(crate) fn show_decorations(&mut self, hints: bool) {
+        self.decorations.show(hints);
+    }
+
     /// The server's columns: positions it sends and expects are in these.
     pub(crate) fn encoding(&self) -> Encoding {
         self.encoding
@@ -322,7 +327,7 @@ impl LanguageServer {
                 None => {
                     let uri = text::uri(&self.root.join(path));
                     connection.open(uri.clone(), language, 1, editor.text().clone());
-                    self.decorations.changed(path);
+                    self.decorations.changed(path, editor.text().len_lines());
                     let document =
                         Document { uri, version: 1, editor_version: editor.version(), wanted: true, pulling: None };
                     self.documents.insert(path.to_owned(), document);
@@ -331,7 +336,7 @@ impl LanguageServer {
                     document.version += 1;
                     document.editor_version = editor.version();
                     connection.change(document.uri.clone(), document.version, editor.text().clone());
-                    self.decorations.changed(path);
+                    self.decorations.changed(path, editor.text().len_lines());
                     changed = true;
                 }
                 Some(_) => {}

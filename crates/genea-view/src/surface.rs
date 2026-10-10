@@ -401,5 +401,6 @@ fn highlight_index(highlight: Highlight) -> i32 {
         Highlight::Strong => 23,
         Highlight::Link => 24,
         Highlight::Literal => 25,
+        Highlight::Hint => 26,
     }
 }

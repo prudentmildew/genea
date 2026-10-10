@@ -77,3 +77,26 @@ fn semantic_tokens_recolour_parameters_and_types_once_they_arrive() {
     assert_eq!(session.highlight_of(0, "Size", 0), Some(Highlight::Type));
     assert_eq!(session.highlight_of(1, "Size", 0), Some(Highlight::Type));
 }
+
+#[test]
+fn typing_doesnt_wait_for_fresh_tokens_the_last_ones_move_with_the_text() {
+    let text = "function area(size: number) { return size; }\n";
+    let fake = FakeLsp::new().token("size", "parameter", &[]);
+    let mut session = open(text, &fake);
+    let asked = fake.received("textDocument/semanticTokens/full").len();
+
+    // Typed before `size`, with no settle: the server hasn't answered for
+    // this text, and the tokens it sent for the last one have moved along.
+    for _ in 0.."function area(".len() {
+        session.dispatch(Command::MoveCaret(CaretMove::Right));
+    }
+    session.dispatch(Command::InsertText("count: number, ".into()));
+    assert_eq!(session.highlight_of(0, "count", 0), None);
+    assert_eq!(session.highlight_of(0, "size", 0), Some(Highlight::Parameter));
+    assert_eq!(session.highlight_of(0, "size", 1), Some(Highlight::Parameter));
+
+    // Fresh tokens for the new text replace them.
+    session.settle();
+    assert!(fake.received("textDocument/semanticTokens/full").len() > asked, "asked again after the edit");
+    assert_eq!(session.highlight_of(0, "size", 1), Some(Highlight::Parameter));
+}

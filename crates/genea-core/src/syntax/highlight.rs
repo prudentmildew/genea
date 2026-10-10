@@ -60,10 +60,13 @@ pub enum Highlight {
     Link,
     /// Markdown code spans and code blocks.
     Literal,
+    /// Inlay hints and code lenses (ticket #46): text the editor shows
+    /// that isn't in the file.
+    Hint,
 }
 
 impl Highlight {
-    const ALL: [Highlight; 25] = [
+    const ALL: [Highlight; 26] = [
         Highlight::Comment,
         Highlight::Keyword,
         Highlight::Operator,
@@ -89,6 +92,7 @@ impl Highlight {
         Highlight::Strong,
         Highlight::Link,
         Highlight::Literal,
+        Highlight::Hint,
     ];
 
     fn from_paint(paint: Paint) -> Option<Highlight> {
