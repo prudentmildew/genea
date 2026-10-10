@@ -4,7 +4,9 @@
 //! Every in-scope file ([`scope`]) has a *review baseline*: its content as
 //! of the user's last review, kept in the project's baseline store
 //! ([`store`]). The first open snapshots every in-scope file in the
-//! background. When the watcher reports a change, the file is hashed and
+//! background; a later open loads the baseline and rescans in the background
+//! (ticket #54), reading only files whose size or mtime moved, so changes
+//! made while Genea was closed are listed too. When the watcher reports a change, the file is hashed and
 //! compared with its baseline; one that differs is listed in Changes as
 //! modified, created or deleted. Keep makes the disk content the baseline;
 //! Revert writes the baseline back (deleting a created file, restoring a
@@ -74,7 +76,7 @@ struct Change {
 
 /// Work on the disk and the store, run one at a time.
 enum Op {
-    /// Loads the index, or snapshots every file on a first open.
+    /// Loads the index and rescans, or snapshots every file on a first open.
     Open,
     /// Compares these paths (relative; files or folders) with the baseline.
     Check(BTreeSet<PathBuf>),
@@ -90,7 +92,14 @@ enum Op {
 pub(crate) struct Done(Finished);
 
 enum Finished {
-    Opened { scope: Scope, baseline: BTreeMap<PathBuf, FileState>, snapshot: bool },
+    /// `observed` and `dropped` are a later open's rescan, as in `Rescanned`.
+    Opened {
+        scope: Scope,
+        baseline: BTreeMap<PathBuf, FileState>,
+        snapshot: bool,
+        observed: Vec<(PathBuf, Option<FileState>)>,
+        dropped: Vec<PathBuf>,
+    },
     Observed { observed: Vec<(PathBuf, Option<FileState>)> },
     Rescanned { scope: Scope, observed: Vec<(PathBuf, Option<FileState>)>, dropped: Vec<PathBuf> },
     Kept { kept: Vec<(PathBuf, Option<FileState>)>, failed: Vec<String> },
@@ -226,7 +235,7 @@ impl Review {
         let scope = self.scope.clone();
         let mut budget = Budget { large_bytes: LARGE_BLOBS_CAP.saturating_sub(self.stored_bytes()) };
         let work: Box<dyn FnOnce() -> Finished + Send> = match op {
-            Op::Open => Box::new(move || open(&root, &store)),
+            Op::Open => Box::new(move || open(&root, &store, &own)),
             Op::Check(paths) => {
                 let paths: Vec<(PathBuf, Vec<PathBuf>)> =
                     paths.into_iter().map(|path| (path.clone(), self.known_under(&path))).collect();
@@ -291,12 +300,18 @@ impl Review {
         self.running = false;
         let mut outcome = Outcome::default();
         match finished {
-            Finished::Opened { scope, baseline, snapshot } => {
+            Finished::Opened { scope, baseline, snapshot, observed, dropped } => {
                 self.scope = Arc::new(scope);
                 for (path, state) in baseline {
                     self.set_baseline(path, Some(state));
                 }
                 self.dirty = snapshot;
+                for path in dropped {
+                    self.set_baseline(path, None);
+                }
+                for (path, disk) in observed {
+                    self.observe(path, disk);
+                }
             }
             Finished::Observed { observed } => {
                 for (path, disk) in observed {
@@ -347,6 +362,13 @@ impl Review {
         if baseline.map(|b| b.hash) == hash {
             self.own.seen(&path, hash);
             self.changes.remove(&path);
+            // Same content, touched (a Revert, a checkout): the baseline
+            // takes the new mtime, so the next open's rescan needn't read it.
+            if let (Some(baseline), Some(disk)) = (baseline, disk)
+                && baseline.mtime != disk.mtime
+            {
+                self.set_baseline(path, Some(FileState { mtime: disk.mtime, ..baseline }));
+            }
             return;
         }
         if self.own.is_own(&path, hash) {
@@ -428,15 +450,21 @@ impl Review {
     }
 }
 
-/// Loads the store's index, or snapshots every file in scope into the
-/// store if there is none (a first open). Background thread.
-fn open(root: &Path, store: &Store) -> Finished {
+/// Loads the store's index and compares the disk with it (a stat-based
+/// rescan: only files whose size or mtime moved are read), or snapshots
+/// every file in scope into the store if there is no index (a first open).
+/// Background thread.
+fn open(root: &Path, store: &Store, own: &OwnWrites) -> Finished {
     let _ = store.create(root);
+    if let Some(baseline) = store.read_index() {
+        let mut budget = Budget { large_bytes: LARGE_BLOBS_CAP.saturating_sub(stored_bytes(&baseline)) };
+        let known = baseline.keys().cloned().collect();
+        let (scope, observed, dropped) =
+            Checker::new(root, store, own, &mut budget).rescan_from(known, Some(&baseline));
+        return Finished::Opened { scope, baseline, snapshot: false, observed, dropped };
+    }
     let mut scope = Scope::new(root.to_owned());
     let (files, _) = scope.walk(Path::new(""));
-    if let Some(baseline) = store.read_index() {
-        return Finished::Opened { scope, baseline, snapshot: false };
-    }
     let mut budget = Budget { large_bytes: LARGE_BLOBS_CAP };
     let baseline = files
         .into_iter()
@@ -445,7 +473,14 @@ fn open(root: &Path, store: &Store) -> Finished {
             Some((path, state))
         })
         .collect();
-    Finished::Opened { scope, baseline, snapshot: true }
+    Finished::Opened { scope, baseline, snapshot: true, observed: Vec::new(), dropped: Vec::new() }
+}
+
+/// The bytes of blobs a baseline uses, each blob counted once.
+fn stored_bytes(baseline: &BTreeMap<PathBuf, FileState>) -> u64 {
+    let blobs: HashMap<Hash, u64> =
+        baseline.values().filter(|state| state.stored).map(|state| (state.hash, state.size)).collect();
+    blobs.values().sum()
 }
 
 /// Reads changed files (background thread).
@@ -510,7 +545,20 @@ impl<'a> Checker<'a> {
 
     /// Reads every file in scope, finding the scope afresh, and compares
     /// them and every `known` path with the baseline.
-    fn rescan(mut self, known: Vec<PathBuf>) -> Finished {
+    fn rescan(self, known: Vec<PathBuf>) -> Finished {
+        let (scope, observed, dropped) = self.rescan_from(known, None);
+        Finished::Rescanned { scope, observed, dropped }
+    }
+
+    /// [`rescan`](Self::rescan), returning the scope, what was read and
+    /// the known paths now out of scope. A file whose size and mtime match
+    /// its entry in `unmoved` isn't read: it is taken as unchanged.
+    #[allow(clippy::type_complexity)]
+    fn rescan_from(
+        mut self,
+        known: Vec<PathBuf>,
+        unmoved: Option<&BTreeMap<PathBuf, FileState>>,
+    ) -> (Scope, Vec<(PathBuf, Option<FileState>)>, Vec<PathBuf>) {
         let mut scope = Scope::new(self.root.to_owned());
         let (files, _) = scope.walk(Path::new(""));
         let files: BTreeSet<PathBuf> = files.into_iter().collect();
@@ -526,9 +574,13 @@ impl<'a> Checker<'a> {
             }
         }
         for file in files {
+            let state = unmoved.and_then(|states| states.get(&file));
+            if state.is_some_and(|state| store::unmoved(&self.root.join(&file), state)) {
+                continue;
+            }
             self.file(file);
         }
-        Finished::Rescanned { scope, observed: self.observed, dropped }
+        (scope, self.observed, dropped)
     }
 
     /// Reads a file that changed. Skipped if Genea wrote it meanwhile: that

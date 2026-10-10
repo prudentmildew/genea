@@ -15,7 +15,10 @@
 //! launch the harness deletes the workspace's review baseline store, so
 //! Genea snapshots every file in review in the background while it starts.
 //! The budget then shows that the snapshot doesn't delay content visible,
-//! and a run fails if Genea didn't start the snapshot.
+//! and a run fails if Genea didn't start the snapshot. It also bounds a
+//! later open's rescan (ticket #54), which runs in the same background op
+//! and does a subset of the snapshot's work (it walks and stats every file
+//! but reads only those whose size or mtime moved).
 
 use std::{
     fs,
