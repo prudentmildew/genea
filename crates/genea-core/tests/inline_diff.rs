@@ -90,6 +90,73 @@ fn revert_from_the_diff_restores_the_baseline_and_shows_the_file_plainly() {
 }
 
 #[test]
+fn the_diff_follows_edits_in_the_buffer() {
+    let (fixture, mut workbench, project) = open(&[("main.ts", "one\ntwo\n")]);
+    fixture.write("main.ts", "one\n2\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::OpenChange("main.ts".into()));
+    workbench.settle().unwrap();
+
+    workbench.dispatch(project, Command::PlaceCaret { line: 1, column: 0 });
+    workbench.dispatch(project, Command::InsertText("two\n".into()));
+    workbench.settle().unwrap();
+
+    assert_eq!(rows(&editor(&workbench, project)), [" one", " two", "+2", " "]);
+}
+
+#[test]
+fn scrolling_counts_removed_rows_and_carets_skip_them() {
+    let base: String = (1..=10).map(|n| format!("line {n}\n")).collect();
+    let (fixture, mut workbench, project) = open(&[("main.ts", &base)]);
+    fixture.write("main.ts", "line 1\nline 10\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::SetViewport { rows: 4.0 });
+    workbench.dispatch(project, Command::OpenChange("main.ts".into()));
+    workbench.settle().unwrap();
+
+    // Rows: line 1, eight removed lines, line 10, the empty last line.
+    workbench.dispatch(project, Command::MoveCaret(genea_core::CaretMove::Down));
+    let view = editor(&workbench, project);
+    assert_eq!(view.caret.line, 1);
+    assert_eq!(view.scroll_top, 6.0);
+    assert_eq!(rows(&view), ["-line 7", "-line 8", "-line 9", " line 10"]);
+
+    workbench.dispatch(project, Command::ScrollBy { rows: 100.0 });
+    assert_eq!(rows(&editor(&workbench, project)), ["-line 8", "-line 9", " line 10", " "]);
+    assert_eq!(editor(&workbench, project).scroll_top, 7.0);
+}
+
+#[test]
+fn removed_lines_inside_a_collapsed_fold_are_hidden_with_it() {
+    let (fixture, mut workbench, project) =
+        open(&[("main.ts", "function f() {\n  a();\n  b();\n}\nend();\n")]);
+    fixture.write("main.ts", "function f() {\n  b();\n}\nfinish();\n");
+    workbench.settle().unwrap();
+    workbench.dispatch(project, Command::OpenChange("main.ts".into()));
+    workbench.settle().unwrap();
+    assert_eq!(rows(&editor(&workbench, project)), [" function f() {", "-  a();", "   b();", " }", "-end();", "+finish();", " "]);
+
+    workbench.dispatch(project, Command::CollapseFold);
+    workbench.settle().unwrap();
+
+    let view = editor(&workbench, project);
+    assert_eq!(rows(&view), [" function f() {", " }", "-end();", "+finish();", " "]);
+    assert_eq!(view.lines.iter().map(|l| (l.index, l.row)).collect::<Vec<_>>(), [(0, 0), (2, 1), (3, 3), (4, 4)]);
+}
+
+#[test]
+fn a_file_not_in_changes_opens_plainly() {
+    let (_fixture, mut workbench, project) = open(&[("main.ts", "one\n")]);
+
+    workbench.dispatch(project, Command::OpenChange("main.ts".into()));
+    workbench.settle().unwrap();
+
+    let view = editor(&workbench, project);
+    assert_eq!(view.inline_diff, None);
+    assert_eq!(view.lines[0].text, "one");
+}
+
+#[test]
 fn a_created_file_shows_as_all_added() {
     let (fixture, mut workbench, project) = open(&[("main.ts", "one\n")]);
     fixture.write("src/new.ts", "alpha\nbeta\n");
