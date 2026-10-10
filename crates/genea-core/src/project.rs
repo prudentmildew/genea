@@ -160,6 +160,8 @@ pub(crate) struct Project {
     /// The saved session's tabs are back (or there were none), so saving
     /// may begin.
     session_restored: bool,
+    /// The fingerprint of the session last handed to `session_file`.
+    session_stamp: Option<u64>,
     /// Files shown with an inline diff (ticket #55).
     inline_diffs: InlineDiffs,
     /// Saves being written, so a file's saves take turns.
@@ -171,6 +173,7 @@ impl Project {
         Project {
             session_file: SessionFile::new(support_dir, &root),
             session_restored: false,
+            session_stamp: None,
             zoom: 0,
             window_layout: None,
             id,

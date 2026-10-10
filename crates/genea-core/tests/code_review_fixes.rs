@@ -128,3 +128,23 @@ fn a_gitignored_folder_is_no_workspace_package() {
     let names: Vec<String> = view(&workbench, project).scripts.into_iter().map(|p| p.name).collect();
     assert_eq!(names, ["shop", "@shop/client", "@shop/shared"]);
 }
+
+/// Item 9: the session is saved in the background only when what it
+/// keeps changed, and every such change is saved: here caret moves, one
+/// after the other, each followed by a crash-safe background save.
+#[test]
+fn each_caret_move_reaches_the_background_saved_session() {
+    let fixture = FixtureProject::new().file("a.ts", "one\ntwo\nthree\n").build();
+    let host = TestHost::new();
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    run(&mut workbench, project, [Command::OpenFile("a.ts".into())]);
+
+    for line in [1, 2] {
+        run(&mut workbench, project, [Command::PlaceCaret { line, column: 1 }]);
+        host.clock().advance(std::time::Duration::from_secs(5));
+        workbench.settle().unwrap();
+        let saved: Value = serde_json::from_str(&fs::read_to_string(session_file(&host)).unwrap()).unwrap();
+        assert_eq!(saved["panes"][0]["tabs"][0]["selections"], serde_json::json!([[[line, 1], [line, 1]]]));
+    }
+}

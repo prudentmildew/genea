@@ -105,7 +105,7 @@ pub(crate) struct Terminal {
 }
 
 /// What a tab runs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Launch {
     /// The user's login shell.
     Shell,
@@ -742,6 +742,16 @@ impl Terminal {
     }
 
     /// The tabs as the session keeps them (ticket #59).
+    /// Feeds what [`session`](Self::session) keeps into `state`, cheaply:
+    /// to tell whether it changed without building it.
+    pub(crate) fn hash_session(&self, state: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        for tab in &self.tabs {
+            (&tab.launch, &tab.name, &tab.directory).hash(state);
+        }
+        (self.tabs.len(), self.active, self.visible).hash(state);
+    }
+
     pub(crate) fn session(&self) -> TerminalSession {
         let tabs = self
             .tabs

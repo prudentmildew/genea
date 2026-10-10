@@ -1,7 +1,10 @@
 //! A project's side of session state (ticket #59): what it saves, and
 //! bringing it back when the project opens.
 
-use std::path::PathBuf;
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    path::PathBuf,
+};
 
 use genea_host::Clock;
 
@@ -11,7 +14,7 @@ use crate::{
     jobs::Jobs,
     reading::{self, Contents},
     session::{PaneSession, ProjectSession},
-    view::{DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE},
+    view::{DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, WindowLayout},
 };
 
 impl Project {
@@ -86,9 +89,36 @@ impl Project {
         })
     }
 
+    /// A cheap fingerprint of what the session keeps (no allocation, no
+    /// line lookups): the session is built only when it moves.
+    fn session_stamp(&self) -> u64 {
+        let mut state = DefaultHasher::new();
+        self.hash_tabs_session(&mut state);
+        self.terminal.hash_session(&mut state);
+        self.left_column.hash(&mut state);
+        self.zoom.hash(&mut state);
+        if let Some(layout) = self.window_layout {
+            let WindowLayout { frame, left_column_width, terminal_width, terminal_height } = layout;
+            for length in [frame.x, frame.y, frame.width, frame.height, left_column_width, terminal_width, terminal_height] {
+                length.to_bits().hash(&mut state);
+            }
+        }
+        state.finish()
+    }
+
     /// Saves the session in the background a short pause from now, if it
-    /// changed. Called after every command and background result.
+    /// changed. Called after every command and background result, so it
+    /// only looks at a fingerprint unless something the session keeps
+    /// changed.
     pub(crate) fn save_session_later(&mut self, jobs: &Jobs, clock: &dyn Clock) {
+        if !self.session_restored {
+            return;
+        }
+        let stamp = self.session_stamp();
+        if self.session_stamp == Some(stamp) {
+            return;
+        }
+        self.session_stamp = Some(stamp);
         if let Some(session) = self.session() {
             self.session_file.changed(session, jobs, clock);
         }

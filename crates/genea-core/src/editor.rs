@@ -1207,6 +1207,23 @@ impl Editor {
         cursor.carets.iter().map(|c| (position(c.anchor), position(c.caret))).collect()
     }
 
+    /// Feeds what the session keeps of a tab showing this editor into
+    /// `state`, cheaply: the text's version (positions are saved as lines
+    /// and columns) and the carets and scroll of `cursor`, or the editor's
+    /// own for the focused tab (`None`).
+    pub(crate) fn hash_session(&self, cursor: Option<&Cursor>, state: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        let (carets, scroll_top) = match cursor {
+            Some(cursor) => (&cursor.carets[..], cursor.scroll_top),
+            None => (&self.carets[..], self.scroll_top),
+        };
+        self.version.hash(state);
+        for caret in carets {
+            (caret.anchor, caret.caret).hash(state);
+        }
+        (carets.len(), scroll_top.to_bits()).hash(state);
+    }
+
     /// A cursor with these selections and scroll position, each clamped to
     /// the text (the file may have changed since they were saved). Without
     /// any selection, it has one caret at the start: a cursor always has a

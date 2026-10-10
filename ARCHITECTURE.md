@@ -256,7 +256,10 @@ use, and nothing else:
   front of any opened meanwhile, which keep the focus
   (`Project::restore_tabs`). Nothing is saved until that lands. After every
   command and Apply, `Project::save_session_later` writes the session in a
-  job 1 s (host clock) after it last changed; closing a project writes it at
+  job 1 s (host clock) after it last changed; it builds the session only
+  when a cheap fingerprint of what it keeps moved (`session_stamp`: tab
+  paths, editor versions, carets and scroll, the terminal's tabs, left
+  column, zoom, layout; a new saved field goes in it too); closing a project writes it at
   once. `open-projects.txt` lists the open projects, which
   `restore_session` reopens. `quit()` writes everything (sessions, the open
   list, the recent projects) synchronously and stops later saves, so
