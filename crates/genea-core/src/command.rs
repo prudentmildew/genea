@@ -198,6 +198,12 @@ pub enum Command {
     /// `devDependencies`. Installing it is up to the user; language
     /// intelligence starts once it is in `node_modules`.
     AddTypeScript,
+    /// "Run project check" (ticket #48): type-checks the whole project in
+    /// the background with `tsc -b --noEmit` from its TypeScript 7.
+    /// `StatusBar::project_check` shows it running. Its results replace the
+    /// last check's in Problems (`ProblemSource::ProjectCheck`); a check
+    /// started while one runs replaces that one.
+    RunProjectCheck,
 
     // Structural editing (ticket #25).
     /// ⌘/: comments out the lines the carets and selections are on, or

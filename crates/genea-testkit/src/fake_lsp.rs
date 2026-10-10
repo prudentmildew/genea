@@ -215,7 +215,7 @@ impl FakeLsp {
         host.processes().script(program, move |_spec, io| fake.run(io));
     }
 
-    fn run(&self, io: FakeProcess) -> i32 {
+    pub(crate) fn run(&self, io: FakeProcess) -> i32 {
         self.log.starts.fetch_add(1, Ordering::SeqCst);
         let FakeProcess { stdin, stdout, .. } = &io;
         let log = &self.log;

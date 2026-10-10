@@ -31,6 +31,9 @@ pub enum ProblemSource {
     Toolchain,
     /// tsgo's live diagnostics for open files (ticket #42).
     TypeScript,
+    /// The last project check's results (ticket #48): `tsc -b --noEmit`
+    /// over the whole project, kept until the next check.
+    ProjectCheck,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

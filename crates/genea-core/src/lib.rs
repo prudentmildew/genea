@@ -37,6 +37,7 @@ mod jobs;
 mod lsp;
 mod problems;
 mod project;
+mod project_check;
 mod reading;
 mod recent;
 mod search;

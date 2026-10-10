@@ -1,5 +1,6 @@
 //! One open project: its folder and what its window shows.
 
+mod check;
 mod external;
 mod language;
 mod finder;
@@ -37,6 +38,7 @@ use crate::{
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use check::Check;
 use language::Language;
 use tabs::Panes;
 
@@ -95,6 +97,8 @@ pub(crate) struct Project {
     pub(crate) environment: Option<Environment>,
     /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
     language: Language,
+    /// The project check (ticket #48).
+    check: Check,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
@@ -132,6 +136,7 @@ impl Project {
             toolchain: None,
             environment: None,
             language: Language::default(),
+            check: Check::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -473,6 +478,7 @@ impl Project {
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::RestartLanguageServer => self.restart_language_server(),
             Command::AddTypeScript => self.add_typescript(jobs),
+            Command::RunProjectCheck => self.run_project_check(),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
             | Command::MoveFinderSelection(_)
