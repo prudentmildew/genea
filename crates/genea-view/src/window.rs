@@ -444,6 +444,8 @@ impl WindowController {
         // terminal too; when it closes, the focused pane or the terminal
         // gets it back.
         let finder_closed = self.sync_finder(view.finder.as_ref());
+        // Everything is in Slint now: what the harness waits for (ticket #63).
+        crate::journal::check_view(&view);
         if view.focused_pane != self.focused_pane || view.terminal.focused != self.terminal_focused || finder_closed {
             self.focused_pane = view.focused_pane;
             self.terminal_focused = view.terminal.focused;
