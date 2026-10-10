@@ -260,7 +260,9 @@ fn an_install_clicked_during_the_toolchain_download_waits_for_it() {
 
     host.download_server().release(&node);
     workbench.settle().unwrap();
-    let install = host.ptys().wait_for_spawn(2);
+    // The shell and the install start together, in either order.
+    host.ptys().wait_for_spawn(2);
+    let install = host.ptys().spawned().into_iter().find(|pty| pty.spec().args == ["install"]).unwrap();
     assert_eq!(version_of(&install.spec().program), "12.10.1");
     assert_eq!(install.spec().args, ["install"]);
 }
@@ -279,7 +281,9 @@ fn the_command_dispatched_right_after_opening_installs_once_the_toolchain_is_rea
     workbench.dispatch(project, Command::InstallDependencies);
     workbench.settle().unwrap();
 
-    let install = host.ptys().wait_for_spawn(2);
+    // The shell and the install start together, in either order.
+    host.ptys().wait_for_spawn(2);
+    let install = host.ptys().spawned().into_iter().find(|pty| pty.spec().args == ["install"]).unwrap();
     assert_eq!(version_of(&install.spec().program), "12.10.1");
     assert_eq!(install.spec().args, ["install"]);
     let view = workbench.project(project).unwrap();
