@@ -28,6 +28,7 @@ use crate::{
     dialogs, fonts,
     keys::Modifiers,
     links,
+    navigation::Navigation,
     surface::Surface,
     terminal::{self, TerminalSurface},
 };
@@ -79,6 +80,8 @@ pub struct WindowController {
     finder_mode: Option<FinderMode>,
     finder_items: Vec<FinderItem>,
     finder_rows: Rc<VecModel<FinderRow>>,
+    /// The Usages view and the rename prompt (ticket #44).
+    pub navigation: Navigation,
 }
 
 /// How far left of the text a press still hits a git gutter marker: its
@@ -105,6 +108,7 @@ impl WindowController {
         window.set_search_rows(ModelRc::from(search.rows.clone()));
         let finder_rows = Rc::new(VecModel::default());
         window.set_finder_items(ModelRc::from(finder_rows.clone()));
+        let navigation = Navigation::new(&window);
         Ok(WindowController {
             key,
             window,
@@ -130,6 +134,7 @@ impl WindowController {
             finder_mode: None,
             finder_items: Vec::new(),
             finder_rows,
+            navigation,
         })
     }
 
@@ -305,7 +310,8 @@ impl WindowController {
             Some(editor) => format!("{} – {}", view.name, editor.path.display()),
             None => view.name.clone(),
         };
-        let notice = view.notices.last().map(|n| n.message.clone()).or_else(|| self.notice.clone());
+        // A navigation hint (ticket #44) shows until the next command.
+        let notice = view.hint.clone().or_else(|| view.notices.last().map(|n| n.message.clone())).or_else(|| self.notice.clone());
         window.set_window_title(title.into());
         window.set_has_editor(editor.is_some());
         window.set_status_caret(view.status.caret.clone().unwrap_or_default().into());
@@ -323,6 +329,7 @@ impl WindowController {
             Some(LeftColumnView::Files) => window.set_left_view(LeftView::Files),
             Some(LeftColumnView::Problems) => window.set_left_view(LeftView::Problems),
             Some(LeftColumnView::Search) => window.set_left_view(LeftView::Search),
+            Some(LeftColumnView::Usages) => window.set_left_view(LeftView::Usages),
             None => {}
         }
         self.search.sync(window, &view.search);
@@ -360,7 +367,7 @@ impl WindowController {
         window.set_status_encoding(view.status.encoding.clone().unwrap_or_default().into());
         window.set_status_line_ending(view.status.line_ending.clone().unwrap_or_default().into());
         window.set_status_indentation(view.status.indentation.clone().unwrap_or_default().into());
-        let action = view.notices.last().and_then(|n| n.action.clone());
+        let action = view.notices.last().and_then(|n| n.action.clone()).filter(|_| view.hint.is_none());
         window.set_status_notice_action(action.as_ref().map(|a| a.label.clone()).unwrap_or_default().into());
         self.notice_action = action.map(|a| a.command);
         window.set_status_toolchain(view.status.toolchain.clone().unwrap_or_default().into());
@@ -396,6 +403,10 @@ impl WindowController {
             window.invoke_refocus();
         }
         self.picker_open = picker.is_some();
+        // The editor gets the keyboard back once the rename prompt closes.
+        if self.navigation.sync(window, &view) {
+            window.invoke_refocus();
+        }
 
         window.set_split(view.panes.len() > 1);
         window.set_can_split(view.can_split);

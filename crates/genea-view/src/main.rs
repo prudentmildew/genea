@@ -14,6 +14,7 @@
 //! - `welcome`: the welcome window's sync;
 //! - `surface`: the editor surface's ring of line slots;
 //! - `terminal`: the terminal pane's rows, keys and mouse;
+//! - `navigation`: the Usages view and the rename prompt (ticket #44);
 //! - `fonts`: registers the emoji font the first time an emoji is shown;
 //! - `blink`: keeps the hidden TextInput from repainting on a timer;
 //! - `keys`: the keymap; `dialogs`: native Open panels; `pasteboard`: the
@@ -30,6 +31,7 @@ mod fonts;
 mod journal;
 mod keys;
 mod links;
+mod navigation;
 mod pasteboard;
 mod remote;
 mod surface;

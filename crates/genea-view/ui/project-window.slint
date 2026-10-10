@@ -14,6 +14,7 @@ import { ToolchainPicker, PickerRow } from "toolchain-picker.slint";
 import { FileEntry } from "files-view.slint";
 import { SearchRow } from "search-view.slint";
 import { Finder, FinderRow } from "finder.slint";
+import { NavigationAction, RenamePrompt } from "navigation.slint";
 
 // What the finder finds (the core's FinderMode).
 export enum FinderKind { files, recent-files, actions, everywhere }
@@ -50,6 +51,13 @@ export component ProjectWindow inherits Window {
     in property <[SearchRow]> search-rows;
     in property <string> search-status;
     in property <bool> search-status-error;
+    // The Usages view and the rename prompt (ticket #44).
+    in property <bool> has-usages;
+    in property <string> usages-title;
+    in property <string> usages-status;
+    in property <[SearchRow]> usages-rows;
+    in property <bool> rename-open;
+    in property <string> rename-name;
     in property <string> status-encoding;
     in property <string> status-line-ending;
     in property <string> status-indentation;
@@ -153,6 +161,11 @@ export component ProjectWindow inherits Window {
     callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
     // A Search view row: open the file, at the match for a match row.
     callback search-result-clicked(int);
+    // Code navigation and rename (ticket #44).
+    callback navigate(NavigationAction);
+    callback usage-clicked(int);
+    callback rename-accepted(string);
+    callback rename-cancelled();
     callback close-tab();
     callback split-right();
     callback move-tab();
@@ -513,6 +526,57 @@ export component ProjectWindow inherits Window {
                     root.open-finder(FinderKind.everywhere);
                 }
             }
+
+            MenuSeparator { }
+
+            // Through the language server (ticket #44).
+            MenuItem {
+                title: "Go to Definition";
+                shortcut: @keys(Control + B);
+                enabled: root.has-editor;
+                activated => {
+                    root.navigate(NavigationAction.definition);
+                }
+            }
+
+            MenuItem {
+                title: "Go to Type Definition";
+                shortcut: @keys(Control + Shift + B);
+                enabled: root.has-editor;
+                activated => {
+                    root.navigate(NavigationAction.type-definition);
+                }
+            }
+
+            MenuItem {
+                title: "Go to Implementation";
+                shortcut: @keys(Control + Alt + B);
+                enabled: root.has-editor;
+                activated => {
+                    root.navigate(NavigationAction.implementation);
+                }
+            }
+
+            MenuItem {
+                title: "Find Usages";
+                shortcut: @keys(Alt + F7);
+                enabled: root.has-editor;
+                activated => {
+                    root.navigate(NavigationAction.usages);
+                }
+            }
+        }
+
+        Menu {
+            title: "Refactor";
+            MenuItem {
+                title: "Rename…";
+                shortcut: @keys(Shift + F6);
+                enabled: root.has-editor;
+                activated => {
+                    root.navigate(NavigationAction.rename);
+                }
+            }
         }
 
         Menu {
@@ -587,6 +651,13 @@ export component ProjectWindow inherits Window {
                 search-rows: root.search-rows;
                 search-status: root.search-status;
                 search-status-error: root.search-status-error;
+                has-usages: root.has-usages;
+                usages-title: root.usages-title;
+                usages-status: root.usages-status;
+                usages-rows: root.usages-rows;
+                usage-clicked(index) => {
+                    root.usage-clicked(index);
+                }
                 show(view) => {
                     root.show-view(view);
                 }
@@ -842,6 +913,29 @@ export component ProjectWindow inherits Window {
         }
         clicked(index) => {
             root.finder-clicked(index);
+        }
+    }
+
+    // A click outside the rename prompt cancels it.
+    if root.rename-open: TouchArea {
+        clicked => {
+            root.rename-cancelled();
+        }
+    }
+
+    if root.rename-open: RenamePrompt {
+        x: (root.width - self.width) / 2;
+        y: 48px;
+        width: min(420px, root.width - 40px);
+        name: root.rename-name;
+        init => {
+            self.focus-name();
+        }
+        accepted(name) => {
+            root.rename-accepted(name);
+        }
+        cancelled => {
+            root.rename-cancelled();
         }
     }
 

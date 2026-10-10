@@ -8,8 +8,10 @@ import { Theme } from "theme.slint";
 import { ProblemsView, ProblemRow } from "problems-view.slint";
 import { FilesView, FileEntry } from "files-view.slint";
 import { SearchView, SearchRow } from "search-view.slint";
+import { UsagesView } from "navigation.slint";
 
-export enum LeftView { files, search, problems }
+// `usages` (ticket #44) has a switcher tab once there are usages to show.
+export enum LeftView { files, search, problems, usages }
 
 // A tab in the switcher.
 component SwitcherTab inherits Rectangle {
@@ -52,6 +54,10 @@ export component LeftColumn inherits Rectangle {
     in property <[SearchRow]> search-rows;
     in property <string> search-status;
     in property <bool> search-status-error;
+    in property <bool> has-usages;
+    in property <string> usages-title;
+    in property <string> usages-status;
+    in property <[SearchRow]> usages-rows;
 
     // A switcher tab was clicked: show that view.
     callback show(LeftView);
@@ -59,6 +65,7 @@ export component LeftColumn inherits Rectangle {
     callback file-clicked(int);
     callback search(text: string, regex: bool, case-sensitive: bool, whole-word: bool);
     callback search-result-clicked(int);
+    callback usage-clicked(int);
 
     background: Theme.chrome-background;
 
@@ -93,6 +100,14 @@ export component LeftColumn inherits Rectangle {
                         root.show(LeftView.problems);
                     }
                 }
+
+                if root.has-usages: SwitcherTab {
+                    label: "Usages";
+                    active: root.view == LeftView.usages;
+                    clicked => {
+                        root.show(LeftView.usages);
+                    }
+                }
             }
 
             Rectangle {
@@ -124,6 +139,16 @@ export component LeftColumn inherits Rectangle {
             }
             clicked(index) => {
                 root.search-result-clicked(index);
+            }
+        }
+
+        if root.view == LeftView.usages: UsagesView {
+            vertical-stretch: 1;
+            title: root.usages-title;
+            status: root.usages-status;
+            rows: root.usages-rows;
+            clicked(index) => {
+                root.usage-clicked(index);
             }
         }
 
