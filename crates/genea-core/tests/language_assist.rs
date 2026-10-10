@@ -204,6 +204,33 @@ fn accepting_an_auto_import_adds_its_import_in_the_same_undo_step() {
     assert_eq!(lines(&session), ["const a = 1;", "addN"]);
 }
 
+#[test]
+fn moving_the_selection_shows_the_newly_selected_items_details() {
+    let fake = FakeLsp::new()
+        .completion(json!({ "label": "toFixed", "kind": 2 }))
+        .completion(json!({ "label": "toString", "kind": 2 }))
+        .resolve("toFixed", json!({ "detail": "(method) toFixed(digits?: number): string" }))
+        .resolve("toString", json!({ "detail": "(method) toString(): string" }));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("a.");
+    session.settle();
+    assert_eq!(session.editor().completion.unwrap().detail.as_deref(), Some("(method) toFixed(digits?: number): string"));
+
+    session.dispatch(Command::MoveCompletionSelection(1));
+    session.settle();
+    let completion = session.editor().completion.unwrap();
+    assert_eq!(completion.selected, 1);
+    assert_eq!(completion.detail.as_deref(), Some("(method) toString(): string"));
+
+    session.dispatch(Command::MoveCompletionSelection(1));
+    assert_eq!(session.editor().completion.unwrap().selected, 0, "it wraps around");
+    session.dispatch(Command::SelectCompletionItem(1));
+    session.dispatch(Command::AcceptCompletion);
+    assert_eq!(session.editor().lines[1].text, "a.toString");
+    assert_eq!(fake.received("completionItem/resolve").len(), 2, "each item is resolved once");
+}
+
 /// Pumps (without settling) until the focused editor satisfies `done`;
 /// fails after 10 s.
 fn pump_until(session: &mut Session, done: impl Fn(&genea_core::EditorView) -> bool) {
