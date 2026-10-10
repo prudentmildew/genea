@@ -48,6 +48,7 @@ use, and nothing else:
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
+| New project | `dispatch_new_project(NewProjectCommand)`, `new_project_dialog() -> Option<NewProjectDialog>`; `Command::NewProject` from a project window | The dialog belongs to the workbench, not a project (`src/new_project.rs`, ticket #61). Its pickers list the newest release of each major version (`genea_toolchain::published`) plus Genea's defaults, which are chosen. Create checks the name as a new npm package's, generates into `<parent>/<name>` (`templates::create_then`), then the core opens the project and dispatches `InstallDependencies`; the app gives any open project without a window one. The parent folder is remembered in `new-project-folder.txt` in the application-support folder (default: `HOME`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
 | Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`, then the showing tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `NewTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | Shell tabs, plus a tab per package-manager command (`src/terminal/`, below). |
 | Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
@@ -57,7 +58,10 @@ use, and nothing else:
 
 - **A new user action**: add a `Command` variant, handle it in
   `Project::dispatch` (`src/project.rs`), and add what the user sees to the
-  view-state structs.
+  view-state structs. A command that only the workbench can carry out
+  (`NewProject`) is pushed to `Project::for_workbench` in
+  `Project::dispatch`, and `Core::dispatch` acts on it afterwards, so it
+  works from Find Action too.
 - **Background work**: never block the main thread. Use `Jobs::spawn` (in
   `src/jobs.rs`). The closure runs on a background thread and returns an
   `Apply`, a `FnOnce(&mut Core)` that changes state on the main thread.

@@ -123,6 +123,8 @@ export component ProjectWindow inherits Window {
 
     // Menu commands.
     callback open-folder();
+    // Opens the New Project dialog (#61).
+    callback new-project();
     callback save();
     callback undo();
     callback redo();
@@ -251,6 +253,13 @@ export component ProjectWindow inherits Window {
                 shortcut: @keys(Control + O);
                 activated => {
                     root.open-folder();
+                }
+            }
+
+            MenuItem {
+                title: "New Project…";
+                activated => {
+                    root.new-project();
                 }
             }
 

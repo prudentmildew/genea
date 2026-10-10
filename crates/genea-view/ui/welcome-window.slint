@@ -20,7 +20,7 @@ export component WelcomeWindow inherits Window {
     in property <string> update;
 
     callback open-folder();
-    // The new-project ticket (#61) wires this and enables New Project….
+    // Opens the New Project dialog (#61).
     callback new-project();
     callback open-recent(int);
     callback show-about();
@@ -48,7 +48,6 @@ export component WelcomeWindow inherits Window {
 
             MenuItem {
                 title: "New Project…";
-                enabled: false;
                 activated => {
                     root.new-project();
                 }
@@ -115,7 +114,6 @@ export component WelcomeWindow inherits Window {
 
             Button {
                 text: "New Project…";
-                enabled: false;
                 clicked => {
                     root.new-project();
                 }

@@ -65,6 +65,10 @@ pub enum Command {
     /// toolchain store that no recently opened (or open) project uses. A
     /// notice says what was removed.
     RemoveUnusedToolchains,
+    /// New Project… (ticket #61): opens the New Project dialog, which
+    /// belongs to the workbench, not this project
+    /// ([`Workbench::new_project_dialog`](crate::Workbench::new_project_dialog)).
+    NewProject,
     /// "Reload environment": runs the login shell again and gives processes
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
