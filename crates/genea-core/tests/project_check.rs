@@ -112,3 +112,52 @@ fn a_project_check_fills_problems_with_errors_from_unopened_files() {
     assert_eq!(checks[0].cwd.as_deref(), Some(root.as_path()));
     assert!(checks[0].clear_env, "it gets the project environment");
 }
+
+#[test]
+fn a_second_check_replaces_the_first_ones_results() {
+    let fixture = typescript_project().file("src/main.ts", "let a: number = \"oops\";\n").file("src/b.ts", "x;\n").build();
+    let tsc = FakeTsc::new().reports(&format!("src/main.ts(1,17): error TS2322: {TYPE_ERROR}\n"), 1);
+    let mut session = open(fixture, &tsc);
+    session.check();
+
+    tsc.set_report(
+        "src/b.ts(1,1): error TS2304: Cannot find name 'x'.\n\
+         src/b.ts(1,1): error TS2322: Type '{ n: string; }[]' is not assignable to type '{ n: number; }[]'.\n  \
+         Type '{ n: string; }' is not assignable to type '{ n: number; }'.\n    \
+         Types of property 'n' are incompatible.\n",
+        2,
+    );
+    session.check();
+
+    assert_eq!(
+        session.checked(),
+        [
+            error("src/b.ts", "1:1", "Cannot find name 'x'."),
+            error(
+                "src/b.ts",
+                "1:1",
+                "Type '{ n: string; }[]' is not assignable to type '{ n: number; }[]'.\n\
+                 Type '{ n: string; }' is not assignable to type '{ n: number; }'.\n  \
+                 Types of property 'n' are incompatible."
+            ),
+        ]
+    );
+    assert_eq!(session.view().status.errors, 2);
+
+    tsc.set_report("", 0);
+    session.check();
+    assert_eq!(session.checked(), [], "a clean check clears them");
+}
+
+#[test]
+fn the_status_bar_shows_a_check_while_it_runs() {
+    let tsc = FakeTsc::new();
+    let mut session = open(typescript_project().build(), &tsc);
+    assert_eq!(session.view().status.project_check, None);
+
+    session.dispatch(Command::RunProjectCheck);
+    assert_eq!(session.view().status.project_check.as_deref(), Some("Checking project…"));
+
+    session.settle();
+    assert_eq!(session.view().status.project_check, None);
+}

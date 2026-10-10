@@ -440,6 +440,8 @@ pub struct StatusBar {
     /// The project's language servers (tsgo now; Oxlint and Oxfmt later),
     /// one item each. Empty for a folder without a root `package.json`.
     pub language_servers: Vec<LanguageServerStatus>,
+    /// `Checking project…` while a project check (ticket #48) runs.
+    pub project_check: Option<String>,
 }
 
 /// A language server's status-bar item.
