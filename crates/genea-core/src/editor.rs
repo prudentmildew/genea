@@ -10,6 +10,7 @@
 //! selection. They are kept in the order they were added; the last one is
 //! the primary, which the view scrolls to and the status bar reports.
 
+mod assist;
 mod indent;
 mod structural;
 
@@ -954,6 +955,9 @@ impl Editor {
             brackets: self.matched_brackets(),
             gutter: Vec::new(),
             hunk: None,
+            completion: None,
+            hover: None,
+            signature_help: None,
         }
     }
 

@@ -1,5 +1,6 @@
 //! One open project: its folder and what its window shows.
 
+mod assist;
 mod external;
 mod language;
 mod finder;
@@ -37,6 +38,7 @@ use crate::{
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use assist::Assist;
 use language::Language;
 use tabs::Panes;
 
@@ -95,6 +97,8 @@ pub(crate) struct Project {
     pub(crate) environment: Option<Environment>,
     /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
     language: Language,
+    /// Completion, hover and signature help (ticket #43).
+    assist: Assist,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
@@ -132,6 +136,7 @@ impl Project {
             toolchain: None,
             environment: None,
             language: Language::default(),
+            assist: Assist::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -422,6 +427,7 @@ impl Project {
         // A shown change closes on anything but scrolling.
         let scrolling = matches!(command, Command::SetViewport { .. } | Command::ScrollBy { .. } | Command::ScrollPane { .. });
         let shown = if scrolling { None } else { self.shown_hunk.take() };
+        let assist = assist::Trigger::of(&command);
         match command {
             Command::ShowHunk { line } => {
                 self.shown_hunk = self.editor.as_ref().map(|e| (e.path().to_owned(), line));
@@ -472,6 +478,16 @@ impl Project {
             | Command::TerminalPaste => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::RestartLanguageServer => self.restart_language_server(),
+            Command::ShowCompletion
+            | Command::MoveCompletionSelection(_)
+            | Command::SelectCompletionItem(_)
+            | Command::AcceptCompletion
+            | Command::CloseCompletion
+            | Command::HoverAt { .. }
+            | Command::ShowHover
+            | Command::HideHover
+            | Command::ShowSignatureHelp
+            | Command::HideSignatureHelp => self.assist_command(command, now),
             Command::AddTypeScript => self.add_typescript(jobs),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
@@ -700,6 +716,7 @@ impl Project {
         }
         self.refresh_views();
         self.sync_language();
+        self.assist_after(assist);
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
@@ -749,6 +766,7 @@ impl Project {
                 .as_ref()
                 .filter(|(path, _)| path == e.path())
                 .and_then(|(path, line)| self.git.hunk_view(path, e.version(), *line));
+            self.assist_view(e, &mut view);
             view
         });
         let mut tabs = self.tabs_view(editor.as_ref());

@@ -76,4 +76,7 @@ pub use view::{
     TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
+pub use view::{
+    CompletionItem, CompletionKind, CompletionView, HoverView, MAX_COMPLETION_ITEMS, MarkupBlock, SignatureHelpView,
+};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

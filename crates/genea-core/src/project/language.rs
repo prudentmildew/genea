@@ -44,6 +44,17 @@ pub(crate) struct Language {
     start_overdue: bool,
 }
 
+impl Language {
+    /// tsgo, while it runs.
+    pub(super) fn server(&self) -> Option<&LanguageServer> {
+        self.typescript.as_ref()
+    }
+
+    pub(super) fn server_mut(&mut self) -> Option<&mut LanguageServer> {
+        self.typescript.as_mut()
+    }
+}
+
 impl Project {
     /// Starts language intelligence when the project opens: looks for
     /// TypeScript 7 in the background, and starts tsgo if it is there.
@@ -222,6 +233,11 @@ impl Project {
                 }
                 Output::Clear(path) => self.problems.replace_file(source, &path, Vec::new()),
                 Output::ClearAll => self.problems.replace(source, Vec::new()),
+                Output::Assist { tag, result } => {
+                    let Some((host, _)) = &self.language.context else { continue };
+                    let now = host.clock().now();
+                    self.assist_answered(tag, result, now);
+                }
             }
         }
     }

@@ -29,6 +29,7 @@
 //! the last [`LanguageServer::sync`], which runs after every command and
 //! every background result.
 
+pub(crate) mod assist;
 mod connection;
 pub(crate) mod text;
 pub(crate) mod typescript;
@@ -106,6 +107,9 @@ pub(crate) enum Output {
     Clear(PathBuf),
     /// Drop every file's diagnostics: the server is gone.
     ClearAll,
+    /// The answer to a completion, hover or signature help request
+    /// (ticket #43), by the tag it was sent with.
+    Assist { tag: u64, result: Result<Value, String> },
 }
 
 /// A request waiting for its answer.
@@ -114,6 +118,8 @@ pub(crate) enum Pending {
     Initialize,
     /// `textDocument/diagnostic` for an open file.
     Diagnostics(PathBuf),
+    /// Completion, hover or signature help (ticket #43): the project's tag.
+    Assist(u64),
 }
 
 /// A timer of a server's, on the host clock.
@@ -176,6 +182,8 @@ pub(crate) struct LanguageServer {
     documents: BTreeMap<PathBuf, Document>,
     requests: HashMap<i64, Pending>,
     watchers: Watchers,
+    /// What the server offers for completion, hover and signature help.
+    assist: assist::AssistCapabilities,
 }
 
 impl LanguageServer {
@@ -196,6 +204,7 @@ impl LanguageServer {
             documents: BTreeMap::new(),
             requests: HashMap::new(),
             watchers: Watchers::default(),
+            assist: assist::AssistCapabilities::default(),
         }
     }
 
@@ -261,6 +270,16 @@ impl LanguageServer {
     /// The server's columns: positions it sends and expects are in these.
     pub(crate) fn encoding(&self) -> Encoding {
         self.encoding
+    }
+
+    /// What it offers for completion, hover and signature help.
+    pub(crate) fn assist_capabilities(&self) -> &assist::AssistCapabilities {
+        &self.assist
+    }
+
+    /// The URI a file of the project's has on the server.
+    pub(crate) fn uri(&self, path: &std::path::Path) -> String {
+        text::uri(&self.root.join(path))
     }
 
     /// The status-bar item.
@@ -384,6 +403,7 @@ impl LanguageServer {
             Event::Response { id, result } => match self.requests.remove(&id) {
                 Some(Pending::Initialize) => self.initialized(result),
                 Some(Pending::Diagnostics(path)) => self.diagnostics_answered(path, id, result),
+                Some(Pending::Assist(tag)) => vec![Output::Assist { tag, result: result.map_err(|e| e.message) }],
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
@@ -471,7 +491,9 @@ impl LanguageServer {
             },
             ..Default::default()
         };
-        serde_json::to_value(params).expect("initialize params are JSON")
+        let mut params = serde_json::to_value(params).expect("initialize params are JSON");
+        assist::client_capabilities(&mut params["capabilities"]["textDocument"]);
+        params
     }
 
     fn initialized(&mut self, result: Result<Value, ResponseError>) -> Vec<Output> {
@@ -481,6 +503,7 @@ impl LanguageServer {
         match result {
             Ok(result) => {
                 self.encoding = Encoding::from_lsp(result.capabilities.position_encoding.as_ref().map(|k| k.as_str()));
+                self.assist = assist::AssistCapabilities::new(&result.capabilities);
                 if let Some(version) = result.server_info.and_then(|info| info.version) {
                     self.label = format!("{} {version}", self.spec.name);
                 }
