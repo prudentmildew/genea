@@ -57,3 +57,32 @@ fn a_restored_tab_without_usable_carets_gets_one_at_the_start() {
         assert_eq!(editor.lines[0].text, "xlet a = 1;", "selections {selections:?}");
     }
 }
+
+/// Item 2: saves of one file are written one at a time, the newest last,
+/// so a quick second save (⌘S twice) never leaves an older text on disk or
+/// marks an older text as saved.
+#[test]
+fn quick_successive_saves_leave_the_newest_text_saved() {
+    let big = "x".repeat(2_000_000);
+    for round in 0..8 {
+        let fixture = FixtureProject::new().file("a.ts", &format!("{big}\n")).build();
+        let mut workbench = Workbench::new(TestHost::new().shared());
+        let project = workbench.open_project(fixture.root()).unwrap();
+        run(&mut workbench, project, [Command::OpenFile("a.ts".into())]);
+
+        for text in ["1", "2", "3"] {
+            workbench.dispatch(project, Command::InsertText(text.into()));
+            workbench.dispatch(project, Command::Save);
+        }
+        workbench.settle().unwrap();
+
+        let disk = fixture.read("a.ts");
+        assert!(
+            disk == format!("123{big}\n"),
+            "round {round}: disk has {} bytes starting {:?}",
+            disk.len(),
+            &disk[..disk.len().min(8)]
+        );
+        assert!(!view(&workbench, project).editor.unwrap().modified, "round {round}: the newest text is saved");
+    }
+}

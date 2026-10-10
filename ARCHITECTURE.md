@@ -706,7 +706,10 @@ message types. `project/language.rs` is a project's side of it.
   through `Project::save`: `textDocument/formatting` to Oxfmt (unless
   `formatOnSave` is off), then `source.fixAll.oxc` to Oxlint (unless
   `fixOnSave` is off; its `Output::CodeActions` are told apart from quick
-  fixes by ticket), then `write_file`. Each answer applies as one undo step
+  fixes by ticket), then `write_file`, which writes a file's saves one at
+  a time (`project/saves.rs`): a save overtaken by a newer save of the
+  same file writes nothing, and only the newest marks the buffer saved.
+  Each answer applies as one undo step
   if the editor is still at the version it was asked at. A save that
   hasn't finished within `FORMAT_TIMEOUT` (1 s, host clock) forgets the
   request (releasing `settle`), writes the buffer as it is, and adds a
