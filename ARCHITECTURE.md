@@ -483,7 +483,7 @@ language servers, the project check) gets the project environment
 user's login shell, captured once per open by running `$SHELL -l -i -c` in
 the project root, with each `Installed::bin_dir` of the toolchain first on
 PATH (worked out at spawn time, so a download that finishes later counts).
-If the shell fails or takes longer than `LOGIN_SHELL_TIMEOUT` (5 s, host
+If the shell fails or takes longer than `LOGIN_SHELL_TIMEOUT` (10 s, host
 clock), processes get the launch environment and a notice offers
 `Command::ReloadEnvironment`, which also sits in the File menu. A process
 started before the capture lands gets the launch environment.

@@ -37,7 +37,7 @@ use crate::{
 
 /// How long the login shell may take before Genea gives up on it and falls
 /// back to the launch environment, on the host clock.
-pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
+pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Environment variables, in order.
 pub(crate) type Vars = Vec<(OsString, OsString)>;
