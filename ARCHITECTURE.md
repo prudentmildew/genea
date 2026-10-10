@@ -461,6 +461,22 @@ message types. `project/language.rs` is a project's side of it.
   with `LanguageServer::request` while ready, answered in
   `LanguageServer::event`. Oxlint and Oxfmt are more `LanguageServer`s with
   their own `ServerSpec`.
+- **Navigation and rename** (ticket #44; `lsp/navigation.rs` on the wire,
+  `project/language/navigation.rs` for the project): `GoToDefinition`,
+  `GoToTypeDefinition`, `GoToImplementation`, `FindUsages`, `StartRename`
+  → `Rename(name)`, at the focused file's primary caret after a sync. A
+  generation counter keeps only the newest request's answer. Answers name
+  absolute paths and server-encoded positions; a background job turns them
+  into text positions and line previews (open files from their buffers,
+  others from disk). One place opens with `open_file`; several, and every
+  Find Usages, go to `ProjectView::usages` (the left column's Usages view);
+  none sets `ProjectView::hint` until the next command. Rename asks
+  `prepareRename` first (falling back to the word at the caret on
+  -32601), shows `ProjectView::rename`, and applies the `WorkspaceEdit`
+  only if no open file changed since the request: open files as one undo
+  step each (`Editor::apply_edits`), others read in the background and
+  opened in tabs behind the focused one (`open_tab_behind`), unsaved. Genea
+  writes them only when the user saves, so the writes are its own.
 
 Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
 the test host as `tsc`: scripted per test to report markers, crash, stay
@@ -468,7 +484,10 @@ silent, delay or flood, and asked afterwards what reached it. As a binary
 (`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
 tsgo in the harness's `typing-silent-lsp`. The slow lane
 `tests/language_server_slow.rs` (`-- --ignored`) installs TypeScript 7 with
-pnpm and checks real diagnostics.
+pnpm and checks real diagnostics; `tests/navigation_slow.rs` checks
+definitions, usages and rename. The fake answers navigation and rename by
+words (`fake_lsp/navigation.rs`): references are whole-word occurrences in
+the project's script files, definitions those after a declaration keyword.
 
 ## Tests
 
