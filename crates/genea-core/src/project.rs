@@ -551,7 +551,7 @@ impl Project {
             Command::RevertChange(path) => self.review.revert(Some(path), jobs),
             Command::KeepAllChanges => self.review.keep(None, jobs),
             Command::RevertAllChanges => self.review.revert(None, jobs),
-            Command::OpenChange(_) => {
+            Command::OpenChange(_) | Command::ShowDiffAgainstHead => {
                 self.terminal.unfocus();
                 self.inline_diff_command(command, jobs)
             }
