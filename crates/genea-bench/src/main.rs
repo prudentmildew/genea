@@ -26,7 +26,8 @@ or a scenario couldn't run.
 options:
   --only NAME[,NAME…]   run only these scenarios (start, typing,
                         typing-silent-lsp, scroll, dead-keys, idle,
-                        open-1mb, open-100mb)
+                        open-1mb, open-100mb, finder, search, tree,
+                        external-change, memory, language-server)
   --quick               fewer runs: a smoke test, not a release gate
   --no-cold             skip the cold start runs (they need `sudo -v`)
   --runs N              warm start pairs (default 30)
@@ -37,6 +38,11 @@ options:
   --fake-lsp PATH       the fake LSP server (default: next to genea-bench)
   --workspace DIR       the Typical workspace (default:
                         bench/workspaces/out/typical)
+  --large DIR           the Large workspace (default:
+                        bench/workspaces/out/large; its budgets are
+                        skipped when it isn't there)
+  --reference-machine   this is the reference machine (spec #19); the
+                        results say so (default: a dev machine)
   --out DIR             results directory (default: bench/results)
 ";
 
@@ -48,12 +54,24 @@ struct Args {
     floor: Option<PathBuf>,
     fake_lsp: Option<PathBuf>,
     workspace: Option<PathBuf>,
+    large: Option<PathBuf>,
+    reference_machine: bool,
     out: Option<PathBuf>,
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
-    let mut parsed =
-        Args { only: None, options: Options::full(), label: None, genea: None, floor: None, fake_lsp: None, workspace: None, out: None };
+    let mut parsed = Args {
+        only: None,
+        options: Options::full(),
+        label: None,
+        genea: None,
+        floor: None,
+        fake_lsp: None,
+        workspace: None,
+        large: None,
+        reference_machine: false,
+        out: None,
+    };
     let (mut runs, mut cold_runs, mut no_cold) = (None, None, false);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -69,6 +87,8 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--floor" => parsed.floor = Some(value()?.into()),
             "--fake-lsp" => parsed.fake_lsp = Some(value()?.into()),
             "--workspace" => parsed.workspace = Some(value()?.into()),
+            "--large" => parsed.large = Some(value()?.into()),
+            "--reference-machine" => parsed.reference_machine = true,
             "--out" => parsed.out = Some(value()?.into()),
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown option: {other}")),
@@ -115,6 +135,8 @@ fn run(args: Args) -> Result<u8, String> {
     let floor = args.floor.unwrap_or_else(|| bin_dir.join("genea-floor"));
     let fake_lsp = args.fake_lsp.unwrap_or_else(|| bin_dir.join("genea-fake-lsp"));
     let workspace = args.workspace.unwrap_or_else(|| repo.join("bench/workspaces/out/typical"));
+    let large = args.large.unwrap_or_else(|| repo.join("bench/workspaces/out/large"));
+    let large = large.join("package.json").exists().then_some(large);
     for (what, path, fix) in [
         ("Genea", &genea, "cargo build --release"),
         ("the start floor", &floor, "cargo build --release"),
@@ -139,18 +161,22 @@ fn run(args: Args) -> Result<u8, String> {
     let label = args.label.unwrap_or_else(|| report::utc_label(now));
     let out_dir = args.out.unwrap_or_else(|| repo.join("bench/results"));
     let out = Output::create(&out_dir.join(format!("{label}.jsonl")))?;
-    let mut cx = Context { genea, floor, fake_lsp, workspace, options: args.options, out, scenario: "session" };
+    let mut cx = Context { genea, floor, fake_lsp, workspace, large, options: args.options, out, scenario: "session" };
 
     let fingerprint = report::git_commit(&cx.workspace);
+    let large_fingerprint = cx.large.as_deref().and_then(report::git_commit);
+    let machine = report::machine(args.reference_machine);
     let session = json!({
         "label": label,
         "started_unix": now,
-        "machine": report::machine(),
+        "machine": machine,
         "genea_commit": report::git_commit(&repo),
         "genea_dirty": report::git_dirty(&repo),
         "genea_binary": cx.genea,
         "workspace": cx.workspace,
         "workspace_fingerprint": fingerprint,
+        "large_workspace": cx.large,
+        "large_workspace_fingerprint": large_fingerprint,
         "file": scenarios::FILE,
         "options": format!("{:?}", cx.options),
     });
@@ -185,9 +211,10 @@ fn run(args: Args) -> Result<u8, String> {
     let verdict = verdicts(&checks);
     let code = if errors.is_empty() { verdict.exit_code() } else { 1 };
     let mut summary = format!(
-        "Genea benchmark {label}\nmachine: {}\nTypical workspace: {}\n\n",
-        machine_line(),
-        fingerprint.as_deref().unwrap_or("?")
+        "Genea benchmark {label}\nmachine: {}\nTypical workspace: {}\nLarge workspace: {}\n\n",
+        report::machine_line(&machine),
+        fingerprint.as_deref().unwrap_or("?"),
+        large_fingerprint.as_deref().unwrap_or("not set up (bench/workspaces/large/fetch.sh)")
     );
     for error in &errors {
         summary.push_str(error);
@@ -204,10 +231,4 @@ fn run(args: Args) -> Result<u8, String> {
     print!("\n{summary}");
     println!("\nresults: {}\nsummary: {}", cx.out.path().display(), summary_path.display());
     Ok(code as u8)
-}
-
-fn machine_line() -> String {
-    let m = report::machine();
-    let s = |k: &str| m[k].as_str().unwrap_or("?").to_string();
-    format!("{} ({}), macOS {}", s("model"), s("chip"), s("macos"))
 }

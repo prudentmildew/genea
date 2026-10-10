@@ -178,6 +178,8 @@ pub struct FinderView {
     /// Best first. While a new query is being matched, these are the last
     /// query's results.
     pub items: Vec<FinderItem>,
+    /// `query` is still being matched: `items` are the last query's.
+    pub matching: bool,
     /// Index into `items` of the result Return opens or runs; `None`
     /// without results.
     pub selected: Option<usize>,

@@ -17,7 +17,10 @@
 //! - each sync of view state into Slint, and the first one with file content;
 //! - when AppKit first reports a window visible;
 //! - each file the harness asks to open (`open` on the control channel), and
-//!   the first sync that shows it (ticket #27).
+//!   the first sync that shows it (ticket #27);
+//! - when what the harness waits for (`expect` on the control channel) first
+//!   shows in a synced view: finder results, search results, a folder
+//!   expanded, an outside change, diagnostics (ticket #63).
 //!
 //! Timestamps are `mach_absolute_time` in nanoseconds since boot, a clock the
 //! harness shares, and the harness does all the analysis. The journal is
@@ -32,12 +35,14 @@
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     ffi::c_void,
     fmt::Write as _,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use genea_core::ProjectView;
 use slint::{
     RenderingState,
     winit_030::{
@@ -92,6 +97,18 @@ struct Log {
     /// Called after every frame until it returns false (the harness's
     /// scrolling).
     after_frame: Option<Box<dyn FnMut() -> bool>>,
+    /// What the harness waits to see, by name (`expect`).
+    expected: HashMap<String, Expected>,
+}
+
+/// A condition on the first window's view state the harness waits for.
+struct Expected {
+    condition: Box<dyn Fn(&ProjectView) -> bool>,
+    /// The end of the first sync whose view met it.
+    met: Option<u64>,
+    /// Called with `met` (in ns) once a frame drawn after it has presented
+    /// (`await`).
+    on_presented: Option<Box<dyn FnOnce(u64)>>,
 }
 
 thread_local! {
@@ -205,6 +222,61 @@ pub fn mark_shown(path: &Path) {
     });
 }
 
+/// Starts watching for `condition` under `name`, replacing a watch of that
+/// name. Only views synced from now on count.
+pub fn expect(name: String, condition: Box<dyn Fn(&ProjectView) -> bool>) {
+    LOG.with_borrow_mut(|log| {
+        log.expected.insert(name, Expected { condition, met: None, on_presented: None });
+    });
+}
+
+/// Calls `f` with when the view first met the condition watched as `name`
+/// (ns since boot), once a frame drawn after that has presented, or with
+/// `None` if nothing watches `name`.
+pub fn when_presented(name: &str, f: impl FnOnce(Option<u64>) + 'static) {
+    let unknown = LOG.with_borrow_mut(|log| match log.expected.get_mut(name) {
+        Some(expected) => {
+            expected.on_presented = Some(Box::new(move |met| f(Some(met))));
+            None
+        }
+        None => Some(f),
+    });
+    match unknown {
+        Some(f) => f(None),
+        None => check_expected(),
+    }
+}
+
+/// When the view first met the condition watched as `name` (ns since
+/// boot), if it has.
+pub fn met(name: &str) -> Option<u64> {
+    LOG.with_borrow(|log| log.expected.get(name)?.met.map(ns))
+}
+
+/// Stops calling back for `name` (the harness gave up waiting).
+pub fn forget_presented(name: &str) {
+    LOG.with_borrow_mut(|log| {
+        if let Some(expected) = log.expected.get_mut(name) {
+            expected.on_presented = None;
+        }
+    });
+}
+
+/// The first window's view state was just pushed into Slint: marks the
+/// watched conditions it meets for the first time.
+pub fn check_view(view: &ProjectView) {
+    if !on() {
+        return;
+    }
+    record(|log, t| {
+        for expected in log.expected.values_mut() {
+            if expected.met.is_none() && (expected.condition)(view) {
+                expected.met = Some(t);
+            }
+        }
+    });
+}
+
 /// Calls `f` once the first frame with file content has been presented and
 /// a window is visible (right away if that has happened).
 pub fn when_content_visible(f: impl FnOnce() + 'static) {
@@ -263,6 +335,7 @@ extern "C" fn observe(_: *mut c_void, activity: usize, _: *mut c_void) {
     if activity == BEFORE_WAITING {
         check_content_visible();
         check_opened();
+        check_expected();
     }
 }
 
@@ -306,6 +379,31 @@ fn check_opened() {
     }
 }
 
+/// Calls back for the watched conditions that were met and have had a
+/// frame drawn after that presented.
+fn check_expected() {
+    let ready: Vec<(Box<dyn FnOnce(u64)>, u64)> = LOG.with_borrow_mut(|log| {
+        let presented = log.activities.last().map_or(0, |&(t, _)| t);
+        let (before, after) = (&log.before, &log.after);
+        let shown = |met: u64| {
+            let before = before.iter().find(|&&b| b >= met)?;
+            after.iter().find(|&&a| a >= *before).filter(|&&a| presented >= a)
+        };
+        log.expected
+            .values_mut()
+            .filter_map(|expected| {
+                let met = expected.met?;
+                expected.on_presented.as_ref()?;
+                shown(met)?;
+                Some((expected.on_presented.take()?, ns(met)))
+            })
+            .collect()
+    });
+    for (f, met) in ready {
+        f(met);
+    }
+}
+
 #[repr(C)]
 struct Timebase {
     numer: u32,
@@ -320,6 +418,11 @@ unsafe extern "C" {
 fn now() -> u64 {
     // SAFETY: no preconditions.
     unsafe { mach_absolute_time() }
+}
+
+/// Now, in ns since boot: the clock of the dump and the control channel.
+pub fn now_ns() -> u64 {
+    ns(now())
 }
 
 /// Mach ticks to nanoseconds.
