@@ -21,9 +21,10 @@ use slint::ComponentHandle;
 
 use crate::ProjectWindow;
 
-/// Asks for a project folder. `done` gets the folder, or nothing is called
-/// on cancel. (Files open from the Files view, ticket #30.)
-pub fn pick_folder(done: impl FnOnce(PathBuf) + Send + 'static) {
+/// Asks for a folder: a project to open, or where to create one (`prompt`
+/// is the panel's button). `done` gets the folder, or nothing is called on
+/// cancel. (Files open from the Files view, ticket #30.)
+pub fn pick_folder(prompt: &str, done: impl FnOnce(PathBuf) + Send + 'static) {
     let Some(mtm) = MainThreadMarker::new() else {
         eprintln!("genea: Open panels must be shown from the main thread");
         return;
@@ -33,7 +34,7 @@ pub fn pick_folder(done: impl FnOnce(PathBuf) + Send + 'static) {
     panel.setCanChooseFiles(false);
     panel.setAllowsMultipleSelection(false);
     panel.setCanCreateDirectories(true);
-    panel.setPrompt(Some(&NSString::from_str("Open")));
+    panel.setPrompt(Some(&NSString::from_str(prompt)));
 
     // The block type is `Fn`; the callback runs once.
     let done = RefCell::new(Some(done));

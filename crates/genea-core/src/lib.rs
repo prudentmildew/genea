@@ -35,6 +35,7 @@ mod history;
 mod indentation;
 mod jobs;
 mod lsp;
+mod new_project;
 mod problems;
 mod project;
 mod reading;
@@ -63,6 +64,7 @@ pub use lsp::{MAX_RESTARTS, RESTART_DELAY, RESTART_WINDOW, START_TIMEOUT};
 /// What `Workbench::spawn` takes and returns, from the host boundary.
 pub use genea_host::{Child, ProcessSpec};
 pub use grid::{GridPiece, grid_pieces};
+pub use new_project::{NewProjectCommand, NewProjectDialog, NewProjectOption};
 pub use templates::{NewProject, PackageManagerPin, ProjectCreation, RuntimePin, Template};
 pub use update::{RELEASES_URL, UpdateNotice};
 pub use view::{
@@ -73,7 +75,8 @@ pub use view::{
 };
 pub use view::{ClosePrompt, EditorTab, FileRow, FileRowKind, PaneView, SearchFile, SearchMatch, SearchView};
 pub use view::{
-    TerminalColor, TerminalCursor, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle, TerminalTab, TerminalView,
+    TerminalColor, TerminalCursor, TerminalFileLink, TerminalLine, TerminalRun, TerminalStatus, TerminalStyle,
+    TerminalTab, TerminalView,
 };
 pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

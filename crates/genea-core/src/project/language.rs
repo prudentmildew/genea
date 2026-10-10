@@ -17,7 +17,7 @@ use crate::{
     command::Command,
     jobs::Jobs,
     lsp::{
-        Event, LanguageServer, Output, START_TIMEOUT, ServerSpec, Timer,
+        Event, LanguageServer, Output, Pending, START_TIMEOUT, ServerSpec, Timer,
         text::{self, Encoding},
         typescript::{self, Detection},
     },
@@ -145,6 +145,18 @@ impl Project {
         let editors = self.editor.iter().chain(self.panes.parked());
         let outputs = server.sync(editors);
         self.language_outputs(outputs);
+        // Requests go out after the sync, so the server has the current text.
+        self.request_symbols();
+    }
+
+    /// Sends a request to tsgo while it is ready; `None` otherwise.
+    pub(super) fn language_request(&mut self, method: &str, params: serde_json::Value, pending: Pending) -> Option<i64> {
+        self.language.typescript.as_mut()?.request(method, params, pending)
+    }
+
+    /// The columns tsgo counts in.
+    pub(super) fn language_encoding(&self) -> Encoding {
+        self.language.typescript.as_ref().map(LanguageServer::encoding).unwrap_or_default()
     }
 
     /// The watcher's changes: watched files go to the server, and changes
@@ -222,6 +234,7 @@ impl Project {
                 }
                 Output::Clear(path) => self.problems.replace_file(source, &path, Vec::new()),
                 Output::ClearAll => self.problems.replace(source, Vec::new()),
+                Output::Symbols { id, symbols } => self.symbols_answered(id, symbols),
             }
         }
     }

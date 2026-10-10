@@ -88,6 +88,17 @@ impl Creations {
 
 /// Starts generating `request` in the background.
 pub(crate) fn create(core: &mut Core, request: NewProject) {
+    create_then(core, request, |_, _| {});
+}
+
+/// Like [`create`], then calls `done` on the main thread with the outcome,
+/// even if a newer request has replaced this one's state (the new-project
+/// flow opens what it created).
+pub(crate) fn create_then(
+    core: &mut Core,
+    request: NewProject,
+    done: impl FnOnce(&mut Core, &ProjectCreation) + Send + 'static,
+) {
     let creations = &mut core.creations;
     creations.generation += 1;
     let generation = creations.generation;
@@ -100,6 +111,7 @@ pub(crate) fn create(core: &mut Core, request: NewProject) {
             Err(message) => ProjectCreation::Failed { folder, message },
         };
         Box::new(move |core: &mut Core| {
+            done(core, &outcome);
             if core.creations.generation == generation {
                 core.creations.current = Some(outcome);
             }

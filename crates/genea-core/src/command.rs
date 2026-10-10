@@ -65,6 +65,10 @@ pub enum Command {
     /// toolchain store that no recently opened (or open) project uses. A
     /// notice says what was removed.
     RemoveUnusedToolchains,
+    /// New Project… (ticket #61): opens the New Project dialog, which
+    /// belongs to the workbench, not this project
+    /// ([`Workbench::new_project_dialog`](crate::Workbench::new_project_dialog)).
+    NewProject,
     /// "Reload environment": runs the login shell again and gives processes
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
@@ -282,6 +286,21 @@ pub enum Command {
     /// program that asked for the mouse, in the encoding it chose;
     /// otherwise nothing happens.
     TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
+    // Terminal tabs and links (ticket #39). The commands above act on the
+    // showing tab.
+    /// ⌘T in the terminal, or the pane's +: opens a tab with a new shell,
+    /// shows it and focuses the pane.
+    NewTerminalTab,
+    /// Closes a terminal tab (by index), hanging up its shell. The pane
+    /// shows the tab to its right, else the one to its left; closing the
+    /// last tab collapses the pane, and showing it again opens a new one.
+    CloseTerminalTab(usize),
+    /// ⌘-click on the active tab's cell at `line` and `column` (0-based
+    /// visible row and grid column): if a `path:line:col` reference
+    /// (`TerminalLine::links`) covers it, opens that file at that place,
+    /// like `OpenFileAt`, resolving a relative path against the tab's
+    /// directory. The editor takes the focus.
+    OpenTerminalLink { line: usize, column: usize },
 
     /// The Search view's query changed (⌘⇧F, ticket #34): cancels the
     /// search in flight and searches the project in the background, results

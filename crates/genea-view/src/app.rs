@@ -24,8 +24,8 @@ use std::{
 const FRAME: Duration = Duration::from_millis(8);
 
 use genea_core::{
-    CloseChoice, Command, ConflictChoice, FinderMode, LeftColumnView, ProjectId, SearchQuery, ToolchainPickerKind,
-    Workbench,
+    CloseChoice, Command, ConflictChoice, FinderMode, LeftColumnView, NewProjectCommand, ProjectId, SearchQuery,
+    ToolchainPickerKind, Workbench,
 };
 use genea_host::RealHost;
 use slint::{CloseRequestResponse, ComponentHandle};
@@ -33,6 +33,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::{
     AboutWindow, FinderKind, LeftView, StructuralAction, about, dialogs, links,
     keys::{self, Modifiers},
+    new_project::{NewProjectController, TEMPLATES},
     pasteboard::Pasteboard,
     welcome::WelcomeController,
     window::{WindowController, WindowKey},
@@ -49,6 +50,8 @@ pub struct App {
     next_key: WindowKey,
     welcome: WelcomeController,
     about: Option<AboutWindow>,
+    /// The New Project dialog's window, made the first time it opens.
+    new_project: Option<NewProjectController>,
 }
 
 thread_local! {
@@ -95,6 +98,7 @@ pub fn start(folder: Option<PathBuf>, file: Option<PathBuf>) -> Result<(), slint
             next_key: 0,
             welcome,
             about: None,
+            new_project: None,
         })
     });
 
@@ -137,10 +141,53 @@ impl App {
     }
 
     fn sync_all(&mut self) {
+        self.open_new_windows();
         for controller in &mut self.windows {
             controller.sync(&mut self.workbench);
         }
         self.sync_welcome();
+        self.sync_new_project();
+    }
+
+    /// Gives every open project without a window one: the core opens a
+    /// project it has just created (ticket #61).
+    fn open_new_windows(&mut self) {
+        for project in self.workbench.projects() {
+            if self.windows.iter().any(|c| c.project == project) {
+                continue;
+            }
+            if let Err(error) = self.new_window(project) {
+                eprintln!("genea: couldn't create a window: {error}");
+                self.workbench.close_project(project);
+            }
+        }
+    }
+
+    /// Shows the New Project window while the core's dialog is open, and
+    /// hides it otherwise.
+    fn sync_new_project(&mut self) {
+        if self.new_project.is_none() && self.workbench.new_project_dialog().is_some() {
+            match NewProjectController::new() {
+                Ok(controller) => {
+                    wire_new_project(&controller);
+                    self.new_project = Some(controller);
+                }
+                Err(error) => {
+                    eprintln!("genea: couldn't create the New Project window: {error}");
+                    self.workbench.dispatch_new_project(NewProjectCommand::Cancel);
+                    return;
+                }
+            }
+        }
+        if let Some(controller) = &mut self.new_project {
+            controller.sync(&self.workbench);
+        }
+    }
+
+    /// A New Project dialog control was used.
+    fn new_project_command(&mut self, command: NewProjectCommand) {
+        self.workbench.dispatch_new_project(command);
+        self.sync_new_project();
     }
 
     /// Shows the welcome window while no project is open, and hides it
@@ -163,6 +210,8 @@ impl App {
     fn dispatch(&mut self, key: WindowKey, command: Command) {
         let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
         controller.dispatch(&mut self.workbench, command);
+        // New Project… from Find Action opens the dialog.
+        self.sync_new_project();
     }
 
     fn sync(&mut self, key: WindowKey) {
@@ -279,6 +328,26 @@ impl App {
         controller.dispatch(&mut self.workbench, command(pane, active, view.tabs.len()));
     }
 
+    /// A tab menu item (Close Tab, Select Next Tab, …): on the terminal's
+    /// tabs while it has the focus (`terminal` gets the active tab and the
+    /// count), else on the focused editor pane's.
+    fn dispatch_for_focused_tab(
+        &mut self,
+        key: WindowKey,
+        editor: impl FnOnce(usize, usize, usize) -> Command,
+        terminal: impl FnOnce(usize, usize) -> Command,
+    ) {
+        let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
+        if !controller.terminal_focused() {
+            return self.dispatch_for_active_tab(key, editor);
+        }
+        let Some(view) = self.workbench.project(controller.project) else { return };
+        let count = view.terminal.tabs.len();
+        if count > 0 {
+            controller.dispatch(&mut self.workbench, terminal(view.terminal.active_tab, count));
+        }
+    }
+
     /// Opens the update notice's release page in the browser.
     fn open_update(&mut self) {
         if let Some(notice) = self.workbench.update_notice() {
@@ -293,12 +362,13 @@ fn wire(controller: &WindowController) {
     let window = &controller.window;
 
     window.on_open_folder(move || {
-        dialogs::pick_folder(move |folder| {
+        dialogs::pick_folder("Open", move |folder| {
             with_app(move |app| {
                 app.open_project(Some(key), &folder);
             })
         });
     });
+    window.on_new_project(|| with_app(|app| app.new_project_command(NewProjectCommand::Open)));
     window.on_show_about(|| with_app(App::show_about));
     window.on_notice_action(move || {
         with_app(move |app| {
@@ -345,17 +415,27 @@ fn wire(controller: &WindowController) {
         with_app(move |app| app.dispatch(key, Command::MoveTabToOtherSide { pane: index(pane), tab: index(tab) }));
     });
     window.on_close_tab(move || {
-        with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::CloseTab { pane, tab }));
+        with_app(move |app| {
+            app.dispatch_for_focused_tab(
+                key,
+                |pane, tab, _| Command::CloseTab { pane, tab },
+                |tab, _| Command::CloseTerminalTab(tab),
+            )
+        });
     });
     window.on_move_tab(move || {
         with_app(move |app| app.dispatch_for_active_tab(key, |pane, tab, _| Command::MoveTabToOtherSide { pane, tab }));
     });
     window.on_next_tab(move |forward| {
         with_app(move |app| {
-            app.dispatch_for_active_tab(key, |pane, tab, count| {
-                let tab = if forward { (tab + 1) % count } else { (tab + count - 1) % count };
-                Command::SelectTab { pane, tab }
-            })
+            let next = move |tab: usize, count: usize| {
+                if forward { (tab + 1) % count } else { (tab + count - 1) % count }
+            };
+            app.dispatch_for_focused_tab(
+                key,
+                |pane, tab, count| Command::SelectTab { pane, tab: next(tab, count) },
+                |tab, count| Command::SelectTerminalTab(next(tab, count)),
+            )
         });
     });
     // Edits apply synchronously, in order: with_app only defers a key if
@@ -379,6 +459,8 @@ fn wire(controller: &WindowController) {
             FinderKind::RecentFiles => FinderMode::RecentFiles,
             FinderKind::Actions => FinderMode::Actions,
             FinderKind::Everywhere => FinderMode::Everywhere,
+            FinderKind::FileSymbols => FinderMode::FileSymbols,
+            FinderKind::ProjectSymbols => FinderMode::ProjectSymbols,
         };
         with_app(move |app| app.dispatch(key, Command::OpenFinder(mode)));
     });
@@ -479,6 +561,11 @@ fn wire(controller: &WindowController) {
         });
     });
     window.on_terminal_size_changed(move || with_app(move |app| app.sync(key)));
+    // Terminal tabs (ticket #39).
+    window.on_new_terminal_tab(menu(Command::NewTerminalTab));
+    window.on_terminal_tab_closed(move |tab| {
+        with_app(move |app| app.dispatch(key, Command::CloseTerminalTab(index(tab))));
+    });
     window.on_open_config(menu(Command::OpenConfig));
     window.on_toggle_view(move |view| {
         let view = left_column_view(view);
@@ -591,12 +678,13 @@ fn left_column_view(view: LeftView) -> LeftColumnView {
 fn wire_welcome(welcome: &WelcomeController) {
     let window = &welcome.window;
     window.on_open_folder(|| {
-        dialogs::pick_folder(|folder| {
+        dialogs::pick_folder("Open", |folder| {
             with_app(move |app| {
                 app.open_project(None, &folder);
             })
         });
     });
+    window.on_new_project(|| with_app(|app| app.new_project_command(NewProjectCommand::Open)));
     window.on_open_recent(|index| {
         let Ok(index) = usize::try_from(index) else { return };
         with_app(move |app| app.open_recent(index));
@@ -605,6 +693,43 @@ fn wire_welcome(welcome: &WelcomeController) {
     window.on_open_update(|| with_app(App::open_update));
     window.window().on_close_requested(|| {
         with_app(App::welcome_closed);
+        CloseRequestResponse::HideWindow
+    });
+}
+
+/// Connects the New Project window's controls to the core's dialog.
+fn wire_new_project(controller: &NewProjectController) {
+    let window = &controller.window;
+    let command = |command: NewProjectCommand| with_app(move |app| app.new_project_command(command));
+    window.on_template_chosen(move |index| {
+        let Some((template, _, _)) = usize::try_from(index).ok().and_then(|i| TEMPLATES.get(i)) else { return };
+        command(NewProjectCommand::SetTemplate(*template));
+    });
+    window.on_name_edited(move |name| command(NewProjectCommand::SetName(name.into())));
+    window.on_choose_parent(move || {
+        dialogs::pick_folder("Choose", move |folder| command(NewProjectCommand::SetParent(folder)));
+    });
+    // A picked row is the option at that index in the dialog last shown.
+    window.on_runtime_chosen(move |index| {
+        with_app(move |app| {
+            let shown = app.new_project.as_ref().and_then(|c| c.shown());
+            let Some(option) = shown.and_then(|d| d.runtimes.get(usize::try_from(index).ok()?)) else { return };
+            app.new_project_command(NewProjectCommand::SetRuntime(option.pin.clone()));
+        })
+    });
+    window.on_package_manager_chosen(move |index| {
+        with_app(move |app| {
+            let shown = app.new_project.as_ref().and_then(|c| c.shown());
+            let Some(option) = shown.and_then(|d| d.package_managers.get(usize::try_from(index).ok()?)) else {
+                return;
+            };
+            app.new_project_command(NewProjectCommand::SetPackageManager(option.pin.clone()));
+        })
+    });
+    window.on_create(move || command(NewProjectCommand::Create));
+    window.on_cancel(move || command(NewProjectCommand::Cancel));
+    window.window().on_close_requested(move || {
+        command(NewProjectCommand::Cancel);
         CloseRequestResponse::HideWindow
     });
 }

@@ -48,8 +48,9 @@ use, and nothing else:
 | Change notification | `set_notifier(Fn() + Send + Sync)` | Called from any thread when background work has finished. The app then calls `pump()` on the main thread and re-reads view state. |
 | Waiting | `pump() -> bool`, `settle()` | `pump` applies finished work without waiting. `settle` waits until nothing is pending, including the watchers' events for changes already on disk (tests). |
 | Templates | `create_project(NewProject)`, `project_creation() -> Option<ProjectCreation>` | Generates in the background (`src/templates/`, files in `crates/genea-core/templates/`). Not tied to an open project. The slow lane is `tests/templates_slow.rs` (`-- --ignored`). |
+| New project | `dispatch_new_project(NewProjectCommand)`, `new_project_dialog() -> Option<NewProjectDialog>`; `Command::NewProject` from a project window | The dialog belongs to the workbench, not a project (`src/new_project.rs`, ticket #61). Its pickers list the newest release of each major version (`genea_toolchain::published`) plus Genea's defaults, which are chosen. Create checks the name as a new npm package's, generates into `<parent>/<name>` (`templates::create_then`), then the core opens the project and dispatches `InstallDependencies`; the app gives any open project without a window one. The parent folder is remembered in `new-project-folder.txt` in the application-support folder (default: `HOME`). |
 | Processes | `spawn(id, ProcessSpec) -> io::Result<Child>` | Starts a process in the project environment (below), in the project root unless the spec names a folder. Tests use it to see what the project's processes get. |
-| Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | The shell tab, plus a tab per package-manager command (`src/terminal/`, below). |
+| Terminal | `ProjectView::terminal` (`TerminalView`, with `tabs` and `active_tab`, then the showing tab's grid; `TerminalLine::links`); `Command::ToggleTerminal`, `FocusTerminal`, `SelectTerminalTab`, `NewTerminalTab`, `CloseTerminalTab`, `OpenTerminalLink`, `SetTerminalSize`, `TerminalText`, `TerminalPreedit`, `TerminalKey`, `TerminalPaste`, `TerminalMouse`, `ScrollTerminal` | Shell tabs, plus a tab per package-manager command (`src/terminal/`, below). |
 | Install | `Command::InstallDependencies` | The pinned package manager's `install` in a terminal tab (below). The new-project flow dispatches it right after opening; otherwise only a click does. |
 | Update check | `start_update_checks(version)`, `update_notice() -> Option<UpdateNotice>` | At most daily, 10 s after start, on a background job: GitHub's latest release (`RELEASES_URL`) through `downloads()`. Its last time (on the clock's `system_time()`) and result are kept in `update-check.json` in the application-support folder. The notice is app-wide; every window shows it. |
 
@@ -57,7 +58,10 @@ use, and nothing else:
 
 - **A new user action**: add a `Command` variant, handle it in
   `Project::dispatch` (`src/project.rs`), and add what the user sees to the
-  view-state structs.
+  view-state structs. A command that only the workbench can carry out
+  (`NewProject`) is pushed to `Project::for_workbench` in
+  `Project::dispatch`, and `Core::dispatch` acts on it afterwards, so it
+  works from Find Action too.
 - **Background work**: never block the main thread. Use `Jobs::spawn` (in
   `src/jobs.rs`). The closure runs on a background thread and returns an
   `Apply`, a `FnOnce(&mut Core)` that changes state on the main thread.
@@ -141,7 +145,20 @@ use, and nothing else:
   step with `genea-view`'s menus and `src/keys.rs`). A file chosen takes
   the focus from the terminal, as `OpenFile` does; editing actions
   (`Action::edits`) do what the Edit menu does while the terminal has it.
-  Symbols (#47) add a `FinderItemKind` and a mode.
+  **Symbols** (ticket #47, `src/project/symbols.rs`, `src/lsp/symbols.rs`):
+  File Structure (⌘F12, `FinderMode::FileSymbols`) asks tsgo for the
+  current file's `textDocument/documentSymbol`; Go to Symbol (⌥⌘O,
+  `ProjectSymbols`) and Search Everywhere ask `workspace/symbol` for each
+  non-empty query. A request is *wanted* when the finder opens or its
+  query changes and goes out after the next `sync_language` (so the server
+  has the current text, and a server that isn't ready yet is asked once it
+  is); only the latest request's answer is kept, in the `Finder`, and
+  `refresh_finder` matches it like files and actions (nucleo on the name,
+  so everything ranks together). The project's symbols leave out what the
+  finder hides (`FileIndex::lists`). Server columns become char columns in
+  the match job, for the shown results only (`Positions`, reading files
+  that aren't open). Choosing one is `OpenFileAt`
+  (`FinderItemKind::Symbol`).
 - **Problems** (`src/problems.rs`): every source puts its errors and
   warnings into the project's `Problems` store and owns them. A source that
   reports for the whole project calls `replace(source, problems)`; one that
@@ -363,9 +380,10 @@ opening, after every command and after every background result.
 
 ## The terminal
 
-`genea-core/src/terminal/` (ticket #38): a pane of tabs. The first is
-the shell, the user's `$SHELL -l` in the project root; the others run a
-command (`Launch::PackageManager`, ticket #41). Every tab's program gets
+`genea-core/src/terminal/` (tickets #38, #39, #41): a pane of tabs. The
+first is a shell, the user's `$SHELL -l` in the project root;
+`NewTerminalTab` opens more shells, and others run a command
+(`Launch::PackageManager`, ticket #41). Every tab's program gets
 the project environment, `TERM=xterm-256color` and `COLORTERM=truecolor`,
 on a PTY from `host.ptys()`, emulated by `alacritty_terminal` (only its
 `Term` and the `vte` parser; Genea runs the PTY itself). Scrollback is
@@ -374,7 +392,10 @@ the size and focus are the pane's. A tab's programs start when
 `Project::start_terminal_when_ready` sees the environment ready, and each
 start takes a pane-wide generation, by which its session's Applies find
 their tab. Return restarts an ended shell; a command's tab stays as it
-ended until it is run again.
+ended until it is run again. `CloseTerminalTab` drops the tab's session,
+which hangs up its program; closing the last tab collapses the pane, and
+showing it again opens a new shell (so the pane may have no tabs: the
+showing tab is `Terminal::tab() -> Option`).
 
 - **Install dependencies** (ticket #41, ADR 0005): `src/dependencies.rs`
   stats the root `node_modules` at open and whenever the watcher reports a
@@ -388,11 +409,19 @@ ended until it is run again.
   read (the new-project flow), it waits for it. #40's scripts can run the
   same way, with their own arguments and folder.
 
-- Threads: a reader thread reads the PTY and parses into the `Term` under a
-  mutex, at most 16 KB per lock hold; a writer thread writes input and
-  resizes. Answers the emulator writes back (`Event::PtyWrite`) go to the
+- Links (`links.rs`): `path:line[:col]` references (the last path part
+  has an extension; `file://` paths too; not after another `:`, so URLs
+  and addresses aren't) are found when a grid is copied, across rows that
+  were wrapped, into `TerminalLine::links` (grid columns, the path as
+  printed, a 0-based `TextPosition`). `OpenTerminalLink { line, column }`
+  resolves the one under the cell against the tab's `directory` (lexically,
+  no disk access) and opens it like `OpenFileAt`, relative to the root if
+  it is inside it.
+- Threads (per tab): a reader thread reads the PTY and parses into the
+  `Term` under a mutex, at most 16 KB per lock hold; a writer thread
+  writes input and resizes. Answers the emulator writes back (`Event::PtyWrite`) go to the
   writer; requests (title, OSC 52 copy) wait for an Apply.
-- The grid is copied into view state lazily (`Terminal::screen`, a
+- The grid is copied into view state lazily (`Tab::screen`, a
   `RefCell`): only when view state is read after the emulator changed. The
   reader wakes the main thread only once the last copy has been taken, so a
   flood is copied at most once per read. The app reads at most once a frame
@@ -403,11 +432,17 @@ ended until it is run again.
   `input.rs` encodes keys, mouse reports (SGR, xterm, UTF-8), the wheel and
   pastes for the modes the program set.
 - Synchronized updates (mode 2026) are applied as they arrive.
-- The view: `ui/terminal-pane.slint` and `src/terminal.rs` (a slot per
-  visible row, pushed only when it changed; the palette is
-  `Theme.terminal-palette`). The pane sits right of the editor; its width is
-  view-only state, dragged at the splitter. `terminalPosition: "bottom"`
-  isn't laid out yet.
+- The view: `ui/terminal-pane.slint` and `src/terminal.rs` (a tab strip
+  with close buttons and +, pushed when the tabs change; a slot per visible
+  row, pushed only when it changed, with references underlined; the palette
+  is `Theme.terminal-palette`). The pane sits right of the editor area, or
+  below it (and the left column) with `terminalPosition: "bottom"`: in
+  `project-window.slint` it is placed by hand, and a placeholder of its
+  size in the editor area's layout keeps that clear. Its width and height
+  are view-only state, dragged at the splitter (clamped while dragging:
+  bound to the area's size, the placeholder would be a binding loop). ⌘T is View › New Terminal Tab; with the
+  terminal focused, ⌘W and ⌘⇧[ / ⌘⇧] act on its tabs. ⌘-click opens an
+  OSC 8 hyperlink in the browser, else dispatches `OpenTerminalLink`.
 
 ## Language servers
 
@@ -466,7 +501,7 @@ Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
 the test host as `tsc`: scripted per test to report markers, crash, stay
 silent, delay or flood, and asked afterwards what reached it. As a binary
 (`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
-tsgo in the harness's `typing-silent-lsp`. The slow lane
+tsgo in the harness's `typing-silent-lsp`. It answers `documentSymbol` and `workspace/symbol` from a rough reading of the declarations in the files (`genea-testkit/src/fake_symbols.rs`). The slow lane
 `tests/language_server_slow.rs` (`-- --ignored`) installs TypeScript 7 with
 pnpm and checks real diagnostics.
 

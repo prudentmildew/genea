@@ -143,6 +143,12 @@ impl FileIndex {
         self.folders.get(folder).is_some_and(|entries| entries.get(name) == Some(&false))
     }
 
+    /// Whether the finder lists this file (a relative path): the index has
+    /// it, and neither it nor a folder above it is excluded.
+    pub(crate) fn lists(&self, path: &Path) -> bool {
+        self.contains(path) && !self.exclude.matched_path_or_any_parents(path, false).is_ignore()
+    }
+
     fn push_files(&self, folder: &Path, list: &mut Vec<String>) {
         let Some(entries) = self.folders.get(folder) else { return };
         for (name, &is_dir) in entries {

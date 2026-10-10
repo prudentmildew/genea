@@ -92,18 +92,29 @@ pub enum FinderMode {
     RecentFiles,
     /// ⌘⇧A: every action, with its shortcut. Choosing one runs it.
     Actions,
-    /// ⇧⇧: files and actions together, best match first. With an empty
-    /// query, the recent files.
+    /// ⇧⇧: files, symbols and actions together, best match first. With an
+    /// empty query, the recent files.
     Everywhere,
+    /// ⌘F12: the current file's symbols (`textDocument/documentSymbol`),
+    /// in the file's order, each member right after what contains it. A
+    /// query narrows them, best match first. Choosing one moves the caret
+    /// there.
+    FileSymbols,
+    /// ⌥⌘O: the project's symbols matching the query (`workspace/symbol`),
+    /// without `node_modules` and the config's `exclude`. Nothing with an
+    /// empty query. Choosing one opens its file there.
+    ProjectSymbols,
 }
 
 /// A result in the finder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinderItem {
-    /// A file's name, or an action's.
+    /// A file's name, an action's, or a symbol's.
     pub label: String,
     /// A file's folder, relative to the project root (empty at the root,
-    /// and for actions).
+    /// and for actions). For a symbol in the current file, what it is
+    /// declared in (a class, …; or empty); for a symbol in the project,
+    /// that and its file: `Circle · src/shapes.ts`.
     pub detail: String,
     /// The keyboard shortcut of an action that has one, e.g. `⌘S`.
     pub shortcut: Option<String>,
@@ -117,6 +128,9 @@ pub enum FinderItemKind {
     File(PathBuf),
     /// Runs the action's command.
     Action(Action),
+    /// Opens the file (relative to the project root) with the caret at the
+    /// symbol's name.
+    Symbol { path: PathBuf, at: TextPosition },
 }
 
 /// The Search view: a query and its results, grouped by file.
@@ -585,8 +599,10 @@ pub struct RecentProject {
     pub name: String,
 }
 
-/// The terminal pane next to the editor (ticket #38): tabs, the showing
-/// one drawn on a grid like the editor. The first tab is the shell.
+/// The terminal pane next to the editor (tickets #38, #39, #41): tabs, the
+/// showing one drawn on a grid like the editor. The first tab is a shell.
+/// With no tabs (the user closed the last), the showing tab's fields are
+/// blank and the pane is collapsed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalView {
     /// The pane is showing; ⌥F12 collapses it.
@@ -656,6 +672,22 @@ pub struct TerminalLine {
     /// The row in stretches of one style, left to right, covering `text`
     /// and any blank cells after it that have a background colour.
     pub runs: Vec<TerminalRun>,
+    /// The `path:line:col` references in the row (ticket #39), left to
+    /// right; `Command::OpenTerminalLink` on one opens the file there.
+    pub links: Vec<TerminalFileLink>,
+}
+
+/// A `path:line:col` reference in terminal output, such as
+/// `src/app.ts:12:5` in a compiler error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalFileLink {
+    /// The grid columns it covers, path to the last number.
+    pub columns: Range<usize>,
+    /// The path as printed: relative ones are relative to the tab's
+    /// directory.
+    pub path: PathBuf,
+    /// The printed line and column (column 1 if none), 0-based.
+    pub at: TextPosition,
 }
 
 /// A stretch of a terminal row in one style.

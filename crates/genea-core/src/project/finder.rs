@@ -23,11 +23,13 @@ impl Project {
         match command {
             Command::OpenFinder(mode) => {
                 self.finder = Some(Finder::new(mode));
+                self.want_symbols();
                 self.match_finder(jobs);
             }
             Command::SetFinderQuery(query) => {
                 if let Some(finder) = &mut self.finder {
                     finder.set_query(query);
+                    self.want_symbols();
                     self.match_finder(jobs);
                 }
             }
@@ -52,6 +54,7 @@ impl Project {
                             self.dispatch(command, jobs, host);
                         }
                     }
+                    Some(FinderItemKind::Symbol { path, at }) => self.dispatch(Command::OpenFileAt { path, at }, jobs, host),
                     None => {}
                 }
             }
@@ -82,10 +85,12 @@ impl Project {
     }
 
     /// Matches the finder's query again if the files changed since its
-    /// last match, so its results follow files being created and deleted.
-    /// Called after every background result.
+    /// last match, so its results follow files being created and deleted,
+    /// or if the language server's symbols came in (ticket #47). Called
+    /// after every background result.
     pub(crate) fn refresh_finder(&mut self, jobs: &Jobs) {
-        if self.finder.is_some() && self.files.version() != self.finder_files {
+        let Some(finder) = &self.finder else { return };
+        if self.files.version() != self.finder_files || finder.symbols.changed {
             self.match_finder(jobs);
         }
     }
@@ -93,7 +98,8 @@ impl Project {
     /// Starts a match job for the finder's query. A newer one drops its
     /// result.
     fn match_finder(&mut self, jobs: &Jobs) {
-        let Some(finder) = &self.finder else { return };
+        let Some(finder) = &mut self.finder else { return };
+        finder.symbols.changed = false;
         let (mode, query) = (finder.mode, finder.query.clone());
         self.finder_generation += 1;
         let generation = self.finder_generation;
@@ -101,7 +107,8 @@ impl Project {
         // Files that are gone leave the recent files.
         let recent = self.recent_files.iter().filter(|path| self.files.contains(path));
         let recent = recent.map(|path| path.to_string_lossy().into_owned()).collect();
-        let candidates = Candidates { files: self.files.file_list(), recent };
+        let (symbols, positions) = self.symbol_candidates();
+        let candidates = Candidates { files: self.files.file_list(), recent, symbols, positions };
         let id = self.id;
         jobs.spawn("match finder", move || {
             let items = finder::run_match(mode, &query, &candidates);
