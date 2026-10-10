@@ -133,8 +133,10 @@ use, and nothing else:
   (`src/diff.rs`: `BaseDiff` holds a base and its hunks, `DiffJob` runs
   `imara-diff` off the main thread, one per file at a time, again whenever
   the buffer's version moves on; `Project::diff_file` drives both), and
-  each result goes to the editor with `Editor::set_inline_diff`. The editor
-  lays the hunks out: a hunk's removed lines take rows of their own just
+  each result goes to the editor with `Editor::set_inline_diff`. A new
+  base (different text) has no hunks until a diff against it lands
+  (`BaseDiff::latest`): the gutter shows none meanwhile, and the inline
+  diff keeps its last layout. The editor lays the hunks out: a hunk's removed lines take rows of their own just
   above `hunk.lines.start` (hidden with it under a fold), so scrolling,
   `reveal_caret` and `VisibleLine::row` count them (`display_row_of`,
   `display_row_count`, `display_rows`), while carets, Up/Down and
@@ -170,7 +172,8 @@ use, and nothing else:
   from the root, so a project inside a bigger repository works too). HEAD
   is read at open and again when the watcher sees `.git/HEAD`, `refs/` or
   `packed-refs` change (or `.git` appear), with every open file's text at
-  HEAD (its *base*); a newly opened file reads its own. Gutter markers
+  HEAD (its *base*); a newly opened file reads its own, which a HEAD read
+  already running when it opened keeps. Gutter markers
   (`EditorView::gutter`) come from a line diff (`src/diff.rs`, `imara-diff`)
   of the base and a rope snapshot, one job per file at a time, restarted
   when it lands if the buffer's version moved on, like the syntax parse.
