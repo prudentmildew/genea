@@ -22,6 +22,11 @@
 //! declarations in the files (`fake_symbols`), answers `shutdown`,
 //! and exits on `exit` or when its input closes. It also answers code
 //! navigation and rename, knowing identifiers by their text (`navigation`).
+//! Semantic tokens, inlay
+//! hints and code lenses (ticket #46) are scripted the same way
+//! ([`token`](FakeLsp::token), [`type_hint`](FakeLsp::type_hint),
+//! [`parameter_hint`](FakeLsp::parameter_hint), [`lens`](FakeLsp::lens));
+//! see `fake_lsp/decorations.rs`.
 
 use std::{
     collections::HashMap,
@@ -42,6 +47,9 @@ pub use code_actions::ScriptedAction;
 
 mod navigation;
 pub(crate) use navigation::uri;
+
+mod decorations;
+pub use decorations::{Decorations, HintMarker, LensMarker, TokenMarker};
 
 /// How long [`FakeLsp::wait_for`] waits before failing the test. Real
 /// time: it only guards against hangs.
@@ -67,6 +75,8 @@ pub struct LspScript {
     pub watch: Vec<String>,
     /// What `textDocument/codeAction` offers (ticket #45).
     pub code_actions: Vec<ScriptedAction>,
+    /// Semantic tokens, inlay hints and code lenses (ticket #46).
+    pub decorations: Decorations,
 }
 
 /// Text the fake reports wherever it occurs.
@@ -95,6 +105,7 @@ impl LspScript {
             "flood": self.flood,
             "watch": self.watch,
             "codeActions": self.code_actions.iter().map(ScriptedAction::to_json).collect::<Vec<_>>(),
+            "decorations": self.decorations.to_json(),
         })
         .to_string()
     }
@@ -127,6 +138,7 @@ impl LspScript {
                 .flatten()
                 .map(ScriptedAction::from_json)
                 .collect(),
+            decorations: Decorations::from_json(&value["decorations"]),
         })
     }
 }
@@ -242,6 +254,40 @@ impl FakeLsp {
         self
     }
 
+    /// Reports every occurrence of `text` as a semantic token of this type
+    /// (a name from tsgo's legend: `parameter`, `interface`, …) and
+    /// modifiers (`declaration`, `defaultLibrary`, …).
+    pub fn token(self, text: &str, token_type: &str, modifiers: &[&str]) -> Self {
+        let modifiers = modifiers.iter().map(|m| (*m).to_owned()).collect();
+        let marker = TokenMarker { text: text.into(), token_type: token_type.into(), modifiers };
+        self.script.lock().unwrap().decorations.tokens.push(marker);
+        self
+    }
+
+    /// Shows a type hint (like `: number`) after every occurrence of
+    /// `text`, while the client's settings turn inlay hints on.
+    pub fn type_hint(self, text: &str, label: &str) -> Self {
+        let marker = HintMarker { text: text.into(), label: label.into(), parameter: false };
+        self.script.lock().unwrap().decorations.hints.push(marker);
+        self
+    }
+
+    /// Shows a parameter hint (like `name:`) before every occurrence of
+    /// `text`, while the client's settings turn inlay hints on.
+    pub fn parameter_hint(self, text: &str, label: &str) -> Self {
+        let marker = HintMarker { text: text.into(), label: label.into(), parameter: true };
+        self.script.lock().unwrap().decorations.hints.push(marker);
+        self
+    }
+
+    /// Puts a code lens resolving to `title` on every occurrence of `text`,
+    /// while the client's settings turn code lenses on.
+    pub fn lens(self, text: &str, title: &str) -> Self {
+        let marker = LensMarker { text: text.into(), title: title.into() };
+        self.script.lock().unwrap().decorations.lenses.push(marker);
+        self
+    }
+
     /// The script, e.g. to write it beside the binary.
     pub fn script(&self) -> LspScript {
         self.script.lock().unwrap().clone()
@@ -319,6 +365,8 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
     // whether the client takes `DocumentSymbol` hierarchies.
     let mut root = None;
     let mut hierarchical = false;
+    // What the client's settings turn on: (inlay hints, code lenses).
+    let mut shown = (false, false);
     loop {
         let message = match read_message(&mut input) {
             Ok(Some(message)) => message,
@@ -331,6 +379,10 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
             // The client's answer to one of the fake's requests.
             let request = message["id"].as_str().and_then(|id| out.requests.remove(id));
             let method = request.unwrap_or_else(|| "(unknown response)".into());
+            if method == "workspace/configuration" {
+                shown = decorations::settings(&message["result"]);
+                decorations::configured(shown, &mut out);
+            }
             record(Received { method, params: message["result"].clone() });
             continue;
         };
@@ -354,6 +406,9 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
             answer(&mut out, result);
             continue;
         }
+        if method == "initialized" {
+            decorations::initialized(&script.decorations, &mut out);
+        }
         match method.as_str() {
             "initialize" => {
                 let offered = params["capabilities"]["general"]["positionEncodings"].as_array();
@@ -363,7 +418,7 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 hierarchical = params["capabilities"]["textDocument"]["documentSymbol"]["hierarchicalDocumentSymbolSupport"]
                     .as_bool()
                     .unwrap_or(false);
-                let capabilities = json!({
+                let mut capabilities = json!({
                     "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
                     "textDocumentSync": { "openClose": true, "change": 1 },
                     "diagnosticProvider": { "identifier": "fake", "interFileDependencies": true, "workspaceDiagnostics": false },
@@ -375,6 +430,7 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                     "referencesProvider": true,
                     "renameProvider": { "prepareProvider": true },
                 });
+                decorations::capabilities(&mut capabilities);
                 answer(&mut out, json!({ "capabilities": capabilities, "serverInfo": { "name": "fake-lsp", "version": "7.0.0-fake" } }));
                 for i in 0..script.flood {
                     out.send(&json!({ "jsonrpc": "2.0", "method": "window/logMessage", "params": { "type": 4, "message": format!("flood {i}") } }));
@@ -421,6 +477,22 @@ pub fn serve(script: &Mutex<LspScript>, input: impl Read, output: impl Write, mu
                 let text = documents.get(uri).map(String::as_str).unwrap_or_default();
                 answer(&mut out, code_actions::code_actions(&script.code_actions, &params, text, utf8));
             }
+            "textDocument/semanticTokens/full" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let text = documents.get(uri).map(String::as_str).unwrap_or_default();
+                answer(&mut out, decorations::semantic_tokens(&script.decorations, text, utf8));
+            }
+            "textDocument/inlayHint" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let text = documents.get(uri).map(String::as_str).unwrap_or_default();
+                answer(&mut out, decorations::inlay_hints(&script.decorations, text, utf8, shown.0));
+            }
+            "textDocument/codeLens" => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let text = documents.get(uri).map(String::as_str).unwrap_or_default();
+                answer(&mut out, decorations::code_lenses(&script.decorations, text, utf8, shown.1));
+            }
+            "codeLens/resolve" => answer(&mut out, decorations::resolve_code_lens(&script.decorations, params.clone())),
             "shutdown" => answer(&mut out, Value::Null),
             "exit" => return 0,
             _ if id.is_some() => {
@@ -612,6 +684,7 @@ mod tests {
                 at: "x".into(),
                 edits: vec![("x".into(), "y".into())],
             }],
+            decorations: Decorations::default(),
         };
         assert_eq!(LspScript::from_json(&script.to_json()).unwrap(), script);
     }

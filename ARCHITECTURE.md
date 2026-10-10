@@ -233,7 +233,8 @@ and the next parse starts if the text moved on. Large files get no syntax
   (HTML `<script>`/`<style>`, Markdown inline and fenced code) come from the
   grammars' injection queries. `.env` has no grammar: `syntax/dotenv.rs`.
 - Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
-  tokens over `Syntax::spans()` in `Editor::grid_line`.
+  tokens over `Syntax::spans()` in `Editor::grid_line` (see Language servers
+  → Decorations).
 
 ### Structural editing
 
@@ -553,6 +554,25 @@ message types. `project/language.rs` is a project's side of it.
   `StatusBar::language_servers` shows it; `Command::RestartLanguageServer`
   starts afresh from any state. A generation counter drops events and
   timers of an earlier process.
+- **Decorations** (ticket #46; `lsp/decorations.rs`,
+  `project/decorations.rs`, `editor/decorations.rs`): semantic tokens
+  always, inlay hints while `inlayHints` is on, code lenses while
+  `codeLens` is on (then `codeLens/resolve` for their titles). Each open
+  document asks again when its text changes or the server sends a refresh,
+  one request of a kind in flight. An answer applies only if the editor is
+  still at the version it was asked for; meanwhile the last ones stay,
+  moved with every edit in `Editor::splice`, so typing never waits. tsgo
+  reads its hint and lens settings through `workspace/configuration`;
+  Genea always answers "all on" and gates by asking or not, so a config
+  change needs no `didChangeConfiguration` (turning a key off hides what
+  is shown at the next sync). Semantic tokens map to `Highlight`s and win
+  over tree-sitter's (variables, keywords, strings … are left to
+  tree-sitter). Hints are drawn in the line as `Highlight::Hint` text, so
+  view state is in *grid* columns that count them: `Editor::to_grid` /
+  `from_grid` convert carets, selections, problems and clicks; the
+  editor's own columns (Up/Down, tab stops, the status bar) don't count
+  them. Code lenses are drawn after the end of their line, not on a row
+  of their own.
 - **Adding a request** (completion, hover, …): a `Pending` variant, sent
   with `LanguageServer::request` while ready, answered in
   `LanguageServer::event`. Oxlint and Oxfmt are more `LanguageServer`s with

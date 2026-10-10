@@ -174,7 +174,9 @@ impl Project {
     /// editors. Runs after every command and every background result.
     pub(crate) fn sync_language(&mut self) {
         self.sync_oxlint();
+        self.hide_decorations();
         let Some(server) = &mut self.language.typescript else { return };
+        server.show_decorations(self.config.inlay_hints, self.config.code_lens);
         let editors = self.editor.iter().chain(self.panes.parked());
         let outputs = server.sync(editors);
         self.language_outputs(outputs);
@@ -279,6 +281,7 @@ impl Project {
                 Output::Symbols { id, symbols } => self.symbols_answered(id, symbols),
                 Output::CodeActions { ticket, fixes } => self.code_actions_answered(ticket, fixes),
                 Output::Navigation(answer) => self.navigation_answered(answer),
+                Output::Decorations(output) => self.apply_decorations(output),
             }
         }
     }

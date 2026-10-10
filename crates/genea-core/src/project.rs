@@ -2,6 +2,7 @@
 
 mod changes;
 mod check;
+mod decorations;
 mod external;
 mod language;
 mod oxlint;
@@ -852,7 +853,7 @@ impl Project {
         }
         let (errors, warnings) = self.problems.counts();
         let status = StatusBar {
-            caret: editor.as_ref().map(|e| format!("{}:{}", e.caret.line + 1, e.caret.column + 1)),
+            caret: self.editor.as_ref().map(Editor::caret_label),
             errors,
             warnings,
             config_notice: self.config_notice(),
