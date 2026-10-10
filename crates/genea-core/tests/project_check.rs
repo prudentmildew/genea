@@ -382,3 +382,20 @@ fn a_check_started_while_one_runs_replaces_it() {
     assert_eq!(session.checked(), [error("src/b.ts", "1:1", "Cannot find name 'x'.")]);
     assert_eq!(session.view().status.project_check, None);
 }
+
+#[test]
+fn find_action_runs_a_project_check() {
+    let fixture = typescript_project().file("src/b.ts", "x;\n").build();
+    let tsc = FakeTsc::new().reports("src/b.ts(1,1): error TS2304: Cannot find name 'x'.\n", 1);
+    let mut session = open(fixture, &tsc);
+
+    session.dispatch(Command::OpenFinder(genea_core::FinderMode::Actions));
+    session.dispatch(Command::SetFinderQuery("run project check".into()));
+    session.settle();
+    let finder = session.view().finder.unwrap();
+    assert_eq!(finder.items[0].label, "Run Project Check");
+    session.dispatch(Command::AcceptFinder);
+    session.settle();
+
+    assert_eq!(session.checked(), [error("src/b.ts", "1:1", "Cannot find name 'x'.")]);
+}
