@@ -16,7 +16,8 @@ use std::{
 use genea_core::{
     CloseChoice, Command, ConflictChoice, FileRow, FileRowKind, FinderItem, FinderMode, FinderView,
     LanguageServerState, LanguageServerStatus, LeftColumnView, MAX_SEARCH_MATCHES, PaneView, ProblemItem, ProjectId,
-    SearchFile, SearchView, Severity, TextPosition, Theme as ConfigTheme, ToolchainOption, Workbench,
+    SearchFile, SearchView, Severity, TerminalPosition, TextPosition, Theme as ConfigTheme, ToolchainOption,
+    Workbench,
 };
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSView};
@@ -251,14 +252,16 @@ impl WindowController {
         }
     }
 
-    /// The mouse over the terminal's grid. A ⌘-click opens a link.
+    /// The mouse over the terminal's grid. A ⌘-click opens a link: a
+    /// hyperlink in the browser, a `path:line:col` reference in the editor.
     pub fn terminal_mouse(&mut self, workbench: &mut Workbench, kind: i32, button: i32, x: f32, y: f32, modifiers: Modifiers) {
         let (line, column) = self.terminal.cell_at(&self.window, x, y);
         if modifiers.cmd {
-            if kind == 0
-                && let Some(link) = self.terminal.link_at(line, column)
-            {
-                links::open_url(&link);
+            if kind == 0 {
+                match self.terminal.link_at(line, column) {
+                    Some(link) => links::open_url(&link),
+                    None => self.dispatch(workbench, Command::OpenTerminalLink { line, column }),
+                }
             }
             return;
         }
@@ -446,6 +449,7 @@ impl WindowController {
             }
             self.surfaces[pane].sync(window, editor);
         }
+        window.set_terminal_bottom(view.config.terminal_position == TerminalPosition::Bottom);
         self.terminal.sync(window, &view.terminal);
         crate::journal::mark_synced(editor.is_some_and(|e| !e.lines.is_empty()));
         if let Some(editor) = editor.filter(|e| !e.lines.is_empty()) {
