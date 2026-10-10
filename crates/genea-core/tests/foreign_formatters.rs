@@ -110,3 +110,78 @@ fn prettier_config_at_the_root_turns_off_format_and_fix_on_save() {
     );
     assert_eq!(session.view().status.foreign_tools.as_deref(), Some("Reduced mode: Prettier"));
 }
+
+#[test]
+fn eslint_prettier_biome_and_dprint_config_each_turn_off_format_and_fix_on_save() {
+    for (tool, file) in [
+        ("ESLint", "eslint.config.js"),
+        ("ESLint", ".eslintrc.json"),
+        ("Prettier", "prettier.config.mjs"),
+        ("Biome", "biome.json"),
+        ("Biome", "biome.jsonc"),
+        ("dprint", "dprint.json"),
+        ("dprint", ".dprint.jsonc"),
+    ] {
+        let mut session = open(oxc_project().file(file, "{}\n").build());
+
+        assert_eq!(session.save_main(), MAIN_TS, "{file}");
+        let message = format!("{tool} is configured in {file}. Genea doesn't run {tool}, so format and fix on save are off.");
+        assert_eq!(session.foreign_problems(), [warning(file, &message)]);
+        assert_eq!(session.view().status.foreign_tools, Some(format!("Reduced mode: {tool}")), "{file}");
+    }
+}
+
+#[test]
+fn config_at_a_package_root_counts_and_config_elsewhere_does_not() {
+    let fixture = oxc_project().file("src/.prettierrc", "{}\n").file("node_modules/x/eslint.config.js", "").build();
+    let mut session = open(fixture);
+    assert_eq!(session.save_main(), CLEAN_TS, "src/ isn't a package");
+    assert_eq!(session.foreign_problems(), []);
+
+    let fixture = oxc_project().file("apps/web/biome.json", "{}\n").build();
+    let mut session = open(fixture);
+    assert_eq!(session.save_main(), MAIN_TS);
+    assert_eq!(
+        session.foreign_problems(),
+        [warning(
+            "apps/web/biome.json",
+            "Biome is configured in apps/web/biome.json. Genea doesn't run Biome, so format and fix on save are off."
+        )]
+    );
+}
+
+#[test]
+fn a_prettier_key_in_package_json_counts_and_several_tools_share_one_warning() {
+    let package_json = PACKAGE_JSON.replace("\"devEngines\"", "\"prettier\": {},\n  \"devEngines\"");
+    let fixture = oxc_project().file("package.json", &package_json).file("eslint.config.js", "").build();
+    let mut session = open(fixture);
+
+    assert_eq!(session.save_main(), MAIN_TS);
+    assert_eq!(
+        session.foreign_problems(),
+        [warning(
+            "eslint.config.js",
+            "ESLint and Prettier are configured in eslint.config.js and package.json. \
+             Genea doesn't run them, so format and fix on save are off."
+        )]
+    );
+    assert_eq!(session.view().status.foreign_tools.as_deref(), Some("Reduced mode: ESLint, Prettier"));
+}
+
+#[test]
+fn adding_or_removing_config_while_open_turns_format_and_fix_on_save_off_or_on() {
+    let mut session = open(oxc_project().build());
+
+    session.fixture.write("apps/web/.prettierrc", "{}\n");
+    session.workbench.settle().unwrap();
+
+    assert_eq!(session.view().status.foreign_tools.as_deref(), Some("Reduced mode: Prettier"));
+    assert_eq!(session.save_main(), MAIN_TS);
+
+    session.fixture.remove("apps/web/.prettierrc");
+    session.workbench.settle().unwrap();
+
+    assert_eq!(session.foreign_problems(), []);
+    assert_eq!(session.view().status.foreign_tools, None);
+    assert_eq!(session.save_main(), CLEAN_TS);
+}

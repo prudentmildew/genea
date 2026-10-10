@@ -132,6 +132,28 @@ fn a_pinned_package_manager_decides_over_an_npm_or_yarn_lockfile_which_goes_stal
     }
 }
 
+#[test]
+fn npm_and_yarn_workspaces_package_roots_count_for_formatter_config() {
+    let workspaces = "{\n  \"name\": \"app\",\n  \"workspaces\": [\"packages/*\"]\n}\n";
+    for lockfile in ["package-lock.json", "yarn.lock"] {
+        let host = TestHost::new();
+        let fixture = project(workspaces)
+            .file(lockfile, "")
+            .file("packages/ui/package.json", r#"{ "name": "ui" }"#)
+            .file("packages/ui/.eslintrc.json", "{}\n")
+            .build();
+
+        let (workbench, project) = open(&host, &fixture);
+
+        let problems = foreign_problems(&workbench, project);
+        assert_eq!(problems.len(), 2, "{lockfile}: {problems:?}");
+        let eslint = std::path::Path::new("packages/ui/.eslintrc.json");
+        assert!(problems.iter().any(|p| p.path == eslint), "{lockfile}: {problems:?}");
+        let status = view(&workbench, project).status.foreign_tools.unwrap();
+        assert!(status.ends_with(", ESLint"), "{lockfile}: {status}");
+    }
+}
+
 /// npm by its lockfile, and Yarn by `packageManager`.
 fn npm_and_yarn() -> [(&'static str, FixtureProject); 2] {
     [

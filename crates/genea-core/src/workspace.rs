@@ -3,7 +3,8 @@
 //!
 //! The packages are the root package plus the folders matched by
 //! `pnpm-workspace.yaml`'s `packages` (pnpm) or the root `package.json`'s
-//! `workspaces` (Bun), never inside `node_modules`. They are read in the
+//! `workspaces` (Bun, and npm or Yarn, whose package roots count for
+//! foreign config, ticket #51), never inside `node_modules`. They are read in the
 //! background when the project opens, and again whenever the watcher sees
 //! `pnpm-workspace.yaml` or any `package.json` change (or a package's
 //! folder go).
@@ -19,6 +20,7 @@ use serde_json::Value;
 use crate::{
     foreign::{self, ForeignConfig},
     jobs::Jobs,
+    toolchain::FOREIGN_LOCKFILES,
     view::{PackageScripts, Script},
     watcher::FileChanges,
     workbench::ProjectId,
@@ -72,6 +74,7 @@ impl Workspace {
                 return false;
             }
             relative == Path::new(PNPM_WORKSPACE)
+                || FOREIGN_LOCKFILES.iter().any(|(lockfile, _)| relative == Path::new(lockfile))
                 || path.file_name().is_some_and(|name| name == PACKAGE_JSON)
                 || path.file_name().and_then(|name| name.to_str()).is_some_and(foreign::is_config_file)
                 || self.packages.iter().any(|package| !relative.as_os_str().is_empty() && package.path.starts_with(relative))
@@ -101,7 +104,7 @@ impl Workspace {
 fn discover(root: &Path) -> Vec<PackageScripts> {
     let Some(manifest) = read_manifest(&root.join(PACKAGE_JSON)) else { return Vec::new() };
     let root_name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let patterns = if is_bun(&manifest) { bun_patterns(&manifest) } else { pnpm_patterns(root) };
+    let patterns = if uses_workspaces_field(root, &manifest) { workspaces_patterns(&manifest) } else { pnpm_patterns(root) };
     let mut packages = vec![package(PathBuf::new(), &root_name, &manifest)];
     let mut others: Vec<PackageScripts> = match Patterns::new(&patterns) {
         Some(patterns) => find_packages(root, &patterns),
@@ -129,14 +132,18 @@ fn package(path: PathBuf, fallback_name: &str, manifest: &Value) -> PackageScrip
     PackageScripts { name: name.to_owned(), path, scripts }
 }
 
-/// Whether the root package pins Bun as its package manager; anything else
-/// is a pnpm workspace (pnpm is the default).
-fn is_bun(manifest: &Value) -> bool {
-    manifest.get("packageManager").and_then(Value::as_str).is_some_and(|pin| pin.starts_with("bun@"))
+/// Whether the root package's workspace is its `workspaces` field: it pins
+/// Bun, npm or Yarn as its package manager, or pins none and has an npm or
+/// Yarn lockfile. Anything else is a pnpm workspace (pnpm is the default).
+fn uses_workspaces_field(root: &Path, manifest: &Value) -> bool {
+    match manifest.get("packageManager").and_then(Value::as_str) {
+        Some(pin) => ["bun@", "npm@", "yarn@"].iter().any(|tool| pin.starts_with(tool)),
+        None => FOREIGN_LOCKFILES.iter().any(|(lockfile, _)| root.join(lockfile).is_file()),
+    }
 }
 
 /// The root `workspaces` field: a list of globs, or `{ "packages": [..] }`.
-fn bun_patterns(manifest: &Value) -> Vec<String> {
+fn workspaces_patterns(manifest: &Value) -> Vec<String> {
     let list = match manifest.get("workspaces") {
         Some(Value::Array(list)) => list,
         Some(Value::Object(object)) => match object.get("packages") {
