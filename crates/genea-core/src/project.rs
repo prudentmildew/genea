@@ -3,6 +3,7 @@
 mod external;
 mod language;
 mod finder;
+mod symbols;
 mod tabs;
 
 use std::{
