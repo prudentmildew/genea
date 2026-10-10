@@ -40,6 +40,9 @@ use crate::{
 pub(crate) struct FileChanges {
     /// Absolute paths of files and folders created, changed or removed.
     pub(crate) paths: BTreeSet<PathBuf>,
+    /// Those among `paths` that the watcher saw appear: created, or renamed
+    /// into place (language servers tell creations from changes).
+    pub(crate) created: BTreeSet<PathBuf>,
     /// Events were lost or coalesced (e.g. FSEvents' "must scan subdirs"):
     /// anything may have changed, so rescan.
     pub(crate) rescan: bool,
@@ -90,6 +93,10 @@ impl Watcher {
                 match event {
                     Ok(event) => {
                         state.pending.rescan |= event.need_rescan();
+                        let appeared = matches!(
+                            event.kind,
+                            notify::EventKind::Create(_) | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
+                        );
                         for path in event.paths {
                             if path.starts_with(&sync_dir) {
                                 if let Some(busy) = state.cookies.remove(&path) {
@@ -97,6 +104,9 @@ impl Watcher {
                                     busy.finish(Box::new(|_| {}));
                                 }
                             } else if path.starts_with(&root) {
+                                if appeared {
+                                    state.pending.created.insert(path.clone());
+                                }
                                 state.pending.paths.insert(path);
                             }
                         }

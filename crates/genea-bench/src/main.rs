@@ -24,8 +24,9 @@ bench/results/<label>.summary.txt. Exits non-zero if a budget is missed
 or a scenario couldn't run.
 
 options:
-  --only NAME[,NAME…]   run only these scenarios (start, typing, scroll,
-                        dead-keys, idle, open-1mb, open-100mb)
+  --only NAME[,NAME…]   run only these scenarios (start, typing,
+                        typing-silent-lsp, scroll, dead-keys, idle,
+                        open-1mb, open-100mb)
   --quick               fewer runs: a smoke test, not a release gate
   --no-cold             skip the cold start runs (they need `sudo -v`)
   --runs N              warm start pairs (default 30)
@@ -33,6 +34,7 @@ options:
   --label LABEL         results file name (default: the UTC start time)
   --genea PATH          the Genea binary (default: next to genea-bench)
   --floor PATH          the start-floor binary (default: next to genea-bench)
+  --fake-lsp PATH       the fake LSP server (default: next to genea-bench)
   --workspace DIR       the Typical workspace (default:
                         bench/workspaces/out/typical)
   --out DIR             results directory (default: bench/results)
@@ -44,13 +46,14 @@ struct Args {
     label: Option<String>,
     genea: Option<PathBuf>,
     floor: Option<PathBuf>,
+    fake_lsp: Option<PathBuf>,
     workspace: Option<PathBuf>,
     out: Option<PathBuf>,
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut parsed =
-        Args { only: None, options: Options::full(), label: None, genea: None, floor: None, workspace: None, out: None };
+        Args { only: None, options: Options::full(), label: None, genea: None, floor: None, fake_lsp: None, workspace: None, out: None };
     let (mut runs, mut cold_runs, mut no_cold) = (None, None, false);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -64,6 +67,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--label" => parsed.label = Some(value()?),
             "--genea" => parsed.genea = Some(value()?.into()),
             "--floor" => parsed.floor = Some(value()?.into()),
+            "--fake-lsp" => parsed.fake_lsp = Some(value()?.into()),
             "--workspace" => parsed.workspace = Some(value()?.into()),
             "--out" => parsed.out = Some(value()?.into()),
             "-h" | "--help" => return Err(String::new()),
@@ -109,10 +113,12 @@ fn run(args: Args) -> Result<u8, String> {
     let bin_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
     let genea = args.genea.unwrap_or_else(|| bin_dir.join("genea"));
     let floor = args.floor.unwrap_or_else(|| bin_dir.join("genea-floor"));
+    let fake_lsp = args.fake_lsp.unwrap_or_else(|| bin_dir.join("genea-fake-lsp"));
     let workspace = args.workspace.unwrap_or_else(|| repo.join("bench/workspaces/out/typical"));
     for (what, path, fix) in [
         ("Genea", &genea, "cargo build --release"),
         ("the start floor", &floor, "cargo build --release"),
+        ("the fake LSP server", &fake_lsp, "cargo build --release"),
         ("the Typical workspace", &workspace, "bench/workspaces/typical/setup.sh"),
     ] {
         if !path.exists() {
@@ -133,7 +139,7 @@ fn run(args: Args) -> Result<u8, String> {
     let label = args.label.unwrap_or_else(|| report::utc_label(now));
     let out_dir = args.out.unwrap_or_else(|| repo.join("bench/results"));
     let out = Output::create(&out_dir.join(format!("{label}.jsonl")))?;
-    let mut cx = Context { genea, floor, workspace, options: args.options, out, scenario: "session" };
+    let mut cx = Context { genea, floor, fake_lsp, workspace, options: args.options, out, scenario: "session" };
 
     let fingerprint = report::git_commit(&cx.workspace);
     let session = json!({

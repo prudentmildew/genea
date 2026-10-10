@@ -29,6 +29,8 @@ pub enum ProblemSource {
     /// The toolchain checks: a root lockfile that doesn't match
     /// `packageManager`, or both a pnpm and a Bun lockfile.
     Toolchain,
+    /// tsgo's live diagnostics for open files (ticket #42).
+    TypeScript,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -90,7 +92,6 @@ impl Problems {
 
     /// Replaces `source`'s problems in one file, leaving its other files'.
     /// Problems whose path isn't `path` are put under their own path anyway.
-    #[allow(dead_code)] // For the per-file sources: tsgo (#42) and Oxlint (#49).
     pub(crate) fn replace_file(&mut self, source: ProblemSource, path: &Path, problems: Vec<Problem>) {
         let by_file = self.by_source.entry(source).or_default();
         by_file.remove(path);

@@ -2,6 +2,7 @@
 
 mod changes;
 mod external;
+mod language;
 mod finder;
 mod tabs;
 
@@ -18,6 +19,7 @@ use genea_host::{Host, SharedHost};
 use crate::{
     command::Command,
     config::{self, CONFIG_FILE, Config},
+    dependencies::Dependencies,
     editor::Editor,
     environment::{Environment, ProcessEnv},
     files::FileIndex,
@@ -36,14 +38,22 @@ use crate::{
     syntax::ParseJob,
     terminal::Terminal,
     toolchain::{LOCKFILES, Toolchain, ToolchainContext},
-    view::{InlineProblem, LeftColumnView, Notice, ProjectView, StatusBar},
+    view::{InlineProblem, LeftColumnView, Notice, NoticeAction, ProjectView, StatusBar},
     watcher::{FileChanges, Watcher},
     workbench::ProjectId,
 };
+use language::Language;
 use tabs::Panes;
 
 /// The status-bar item for a large file.
 const LARGE_FILE_NOTICE: &str = "Over 5 MB: no highlighting or language features";
+
+/// The package manager's arguments for "Install dependencies".
+const INSTALL: [&str; 1] = ["install"];
+
+/// Why a folder without a root `package.json` has no toolchain.
+const NO_PACKAGE_JSON: &str =
+    "Genea manages the runtime and package manager of a project with a package.json at its root, and this folder has none.";
 
 /// Rows assumed until the view reports its viewport.
 const DEFAULT_VIEWPORT_ROWS: f64 = 50.0;
@@ -90,10 +100,17 @@ pub(crate) struct Project {
     pub(crate) environment: Option<Environment>,
     /// External changes against the review baseline (ticket #53).
     pub(crate) review: Review,
+    /// TypeScript 7 and tsgo (ticket #42); set up by `start_language`.
+    language: Language,
     /// The branch and the open files at HEAD (ticket #56).
     pub(crate) git: Git,
     /// The terminal pane's shell (ticket #38).
     pub(crate) terminal: Terminal,
+    /// Whether `node_modules` is there (ticket #41).
+    pub(crate) dependencies: Dependencies,
+    /// "Install dependencies" came while `package.json` was being read: it
+    /// runs once it is read.
+    install_requested: bool,
     /// The fuzzy finder, while it is open (ticket #33).
     finder: Option<Finder>,
     /// Bumped by every finder match, so an older match can't replace a
@@ -112,6 +129,8 @@ impl Project {
             review: Review::new(id, root.clone(), jobs),
             files: FileIndex::new(id, root.clone()),
             git: Git::new(id, root.clone()),
+            terminal: Terminal::new(id, root.clone()),
+            dependencies: Dependencies::new(id, &root),
             search: Search::new(id, root.clone()),
             root,
             editor: None,
@@ -121,6 +140,7 @@ impl Project {
             open_generation: 0,
             toolchain: None,
             environment: None,
+            language: Language::default(),
             watcher: None,
             config: Config::default(),
             config_problems: Vec::new(),
@@ -131,7 +151,7 @@ impl Project {
             problems: Problems::default(),
             left_column: Some(LeftColumnView::Files),
             shown_hunk: None,
-            terminal: Terminal::new(id),
+            install_requested: false,
             finder: None,
             finder_generation: 0,
             finder_files: 0,
@@ -155,6 +175,7 @@ impl Project {
         self.files.start(jobs);
         self.review.start(host.support_dir(), jobs);
         self.git.reload(Vec::new(), jobs);
+        self.dependencies.check(jobs);
     }
 
     /// Writes a watcher cookie (see `Watcher::sync`). Returns whether one
@@ -167,6 +188,8 @@ impl Project {
     /// files on disk hooks in here.
     pub(crate) fn files_changed(&mut self, changes: FileChanges, jobs: &Jobs) {
         self.files.files_changed(&changes, jobs);
+        self.dependencies.files_changed(&changes, jobs);
+        self.language_files_changed(&changes);
         if self.git.head_may_have_moved(&changes) {
             let open = self.open_editors().map(|e| e.path().to_owned()).collect();
             self.git.reload(open, jobs);
@@ -351,9 +374,31 @@ impl Project {
     /// Starts the terminal's shell once the environment is ready. Called
     /// after opening and after every background result.
     pub(crate) fn start_terminal_when_ready(&mut self, host: &SharedHost, jobs: &Jobs) {
+        if self.install_requested && !self.toolchain.as_ref().is_some_and(Toolchain::is_loading) {
+            self.install_requested = false;
+            self.install_dependencies();
+        }
         if self.terminal.is_waiting() && self.environment_ready() {
             let env = self.process_env();
-            self.terminal.start(env, host.clone(), jobs);
+            let package_manager = match &self.toolchain {
+                Some(toolchain) => toolchain.package_manager_program(),
+                None => Err(NO_PACKAGE_JSON.into()),
+            };
+            self.terminal.start(env, package_manager, host.clone(), jobs);
+        }
+    }
+
+    /// "Install dependencies": the pinned package manager's `install` in a
+    /// terminal tab, which starts once the environment is ready.
+    fn install_dependencies(&mut self) {
+        if self.toolchain.as_ref().is_some_and(Toolchain::is_loading) {
+            self.install_requested = true;
+            return;
+        }
+        match self.toolchain.as_ref().map(Toolchain::package_manager_name) {
+            Some(Ok(name)) => self.terminal.run_package_manager(name, &INSTALL),
+            Some(Err(reason)) => self.notify(reason),
+            None => self.notify(NO_PACKAGE_JSON.into()),
         }
     }
 
@@ -420,6 +465,12 @@ impl Project {
                 self.terminal.unfocus();
                 self.open_file(path, Some(at), jobs)
             }
+            Command::OpenTerminalLink { line, column } => {
+                if let Some((path, at)) = self.terminal.file_link_at(line, column) {
+                    self.terminal.unfocus();
+                    self.open_file(path, Some(at), jobs)
+                }
+            }
             Command::CloseTab { .. }
             | Command::ResolveClose(_)
             | Command::SplitRight
@@ -428,18 +479,23 @@ impl Project {
             | Command::ScrollPane { .. } => self.tab_command(command, jobs),
             Command::ToggleTerminal
             | Command::FocusTerminal
+            | Command::SelectTerminalTab(_)
             | Command::SetTerminalSize { .. }
             | Command::TerminalText(_)
             | Command::TerminalPreedit(_)
             | Command::TerminalKey(..)
             | Command::ScrollTerminal { .. }
             | Command::TerminalMouse { .. }
-            | Command::TerminalPaste => self.terminal.command(command, host),
+            | Command::TerminalPaste
+            | Command::NewTerminalTab
+            | Command::CloseTerminalTab(_) => self.terminal.command(command, host),
             Command::ResolveConflict { path, choice } => self.resolve_conflict(&path, choice, now, jobs),
             Command::KeepChange(path) => self.review.keep(Some(path), jobs),
             Command::RevertChange(path) => self.review.revert(Some(path), jobs),
             Command::KeepAllChanges => self.review.keep(None, jobs),
             Command::RevertAllChanges => self.review.revert(None, jobs),
+            Command::RestartLanguageServer => self.restart_language_server(),
+            Command::AddTypeScript => self.add_typescript(jobs),
             Command::OpenFinder(_)
             | Command::SetFinderQuery(_)
             | Command::MoveFinderSelection(_)
@@ -489,12 +545,7 @@ impl Project {
             }
             Command::OpenToolchainPicker(kind) => match &mut self.toolchain {
                 Some(toolchain) => toolchain.open_picker(kind, jobs),
-                None => self.notices.push(Notice {
-                    message: "Genea manages the runtime and package manager of a project with a package.json at its \
-                              root, and this folder has none."
-                        .into(),
-                    action: None,
-                }),
+                None => self.notify(NO_PACKAGE_JSON.into()),
             },
             Command::FilterToolchainPicker(query) => {
                 if let Some(toolchain) = &mut self.toolchain {
@@ -523,6 +574,7 @@ impl Project {
                     environment.capture(jobs);
                 }
             }
+            Command::InstallDependencies => self.install_dependencies(),
             Command::ExtendSelection { line, column } => {
                 if let Some(editor) = &mut self.editor {
                     editor.place_caret(line, column, true, self.viewport_rows);
@@ -670,6 +722,7 @@ impl Project {
             self.diff_file(&path, jobs);
         }
         self.refresh_views();
+        self.sync_language();
     }
 
     /// Starts a background diff of an open file with its text at HEAD, if
@@ -743,10 +796,13 @@ impl Project {
             toolchain: self.toolchain.as_ref().and_then(Toolchain::status),
             branch: self.git.branch().map(str::to_owned),
             large_file: self.editor.as_ref().filter(|e| e.is_large()).map(|_| LARGE_FILE_NOTICE.to_owned()),
+            language_servers: self.language_status(),
         };
         let mut notices = self.notices.clone();
         notices.extend(self.toolchain.iter().flat_map(Toolchain::notices));
+        notices.extend(self.install_notice());
         notices.extend(self.environment.iter().flat_map(Environment::notices));
+        notices.extend(self.language_notices());
         ProjectView {
             root: self.root.clone(),
             name: self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -769,6 +825,19 @@ impl Project {
             search: self.search.view(),
             finder: self.finder.as_ref().map(Finder::view),
         }
+    }
+
+    /// "Install dependencies", while `node_modules` is missing in a project
+    /// whose package manager Genea runs, and no install is under way.
+    fn install_notice(&self) -> Option<Notice> {
+        let offer = self.dependencies.are_missing()
+            && self.toolchain.as_ref().is_some_and(Toolchain::can_install)
+            && !self.install_requested
+            && !self.terminal.is_running_package_manager(&INSTALL);
+        offer.then(|| Notice {
+            message: "This project's dependencies aren't installed.".into(),
+            action: Some(NoticeAction { label: "Install dependencies".into(), command: Command::InstallDependencies }),
+        })
     }
 
     /// How a file (relative to the root, or absolute) is indented.

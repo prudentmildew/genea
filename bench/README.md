@@ -12,18 +12,18 @@ bench/workspaces/typical/setup.sh   # once: the Typical reference workspace (wor
 scripts/bench.sh                    # the whole harness: builds release binaries, runs everything
 ```
 
-`scripts/bench.sh` builds `genea`, `genea-bench` and `genea-floor` in release
+`scripts/bench.sh` builds `genea`, `genea-bench`, `genea-floor` and `genea-fake-lsp` in release
 mode, asks for your password once so cold starts can run `sudo purge`, and
 runs the harness under `caffeinate`. Options go through to `genea-bench`:
 
 | Option | Effect |
 | --- | --- |
 | `--quick` | a smoke test with few runs; not a release gate |
-| `--only start,typing,…` | only these scenarios: `start`, `typing`, `scroll`, `dead-keys`, `idle`, `open-1mb`, `open-100mb` |
+| `--only start,typing,…` | only these scenarios: `start`, `typing`, `typing-silent-lsp`, `scroll`, `dead-keys`, `idle`, `open-1mb`, `open-100mb` |
 | `--no-cold` | skip cold starts (no `sudo`) |
 | `--runs N`, `--cold-runs N` | start pairs, warm (default 30) and cold (default 10) |
 | `--label L`, `--out DIR` | where results go (default `bench/results/<UTC time>`) |
-| `--genea`, `--floor`, `--workspace` | other binaries or workspace |
+| `--genea`, `--floor`, `--fake-lsp`, `--workspace` | other binaries or workspace |
 
 A full run takes about five minutes. Leave the machine alone and keep Genea's
 window in front and unobstructed: occluded windows are throttled, and input
@@ -46,6 +46,7 @@ then ask it to open the file under test, in a fresh Genea per run.
 | --- | --- |
 | `start` | warm start ≤ start floor + 50 ms; cold start after `purge` ≤ start floor + 100 ms (content visible, p95 minus the floor's p95, every Genea run paired with a floor run). Every Genea run is a first open: the harness deletes the workspace's review store first, so the review snapshot runs during the start |
 | `typing` | keystroke to frame ≤ 8 ms (Genea's work, p95, 400 keys at 25/s); no main-thread stall > 16 ms |
+| `typing-silent-lsp` | the same, in a copy of the file whose project's tsgo is `genea-fake-lsp` scripted never to answer (ticket #42: typing never waits on a language server) |
 | `scroll` | ≤ 1 % dropped frames at the display's rate; frame work ≤ 8.3 ms (a 120 Hz frame, p95); no stall > 16 ms |
 | `dead-keys` | dead-key compositions on the Norwegian layout come out right (the IME bridge end to end); no stall > 16 ms |
 | `idle` | memory ≤ 100 MB (phys_footprint ≥ 2 s after the last frame, 1200×800 pt at 2×, p95); CPU ≈ 0 % (≤ 0.1 %) |

@@ -15,7 +15,7 @@ impl Project {
         if !outcome.reverted.is_empty() {
             // Open editors follow without waiting for the watcher.
             let paths = outcome.reverted.iter().map(|path| self.root.join(path)).collect();
-            self.check_open_files(&FileChanges { paths, rescan: false }, jobs);
+            self.check_open_files(&FileChanges { paths, ..FileChanges::default() }, jobs);
         }
     }
 }

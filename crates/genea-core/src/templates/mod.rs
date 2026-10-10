@@ -12,6 +12,9 @@
 
 mod generate;
 
+/// The TypeScript range templates use; "Add TypeScript 7" writes it too (#42).
+pub(crate) use generate::versions::TYPESCRIPT as TYPESCRIPT_VERSION;
+
 use std::path::PathBuf;
 
 use crate::workbench::Core;

@@ -69,6 +69,13 @@ pub enum Command {
     /// started from then on its variables. Until it answers, they get the
     /// environment from before.
     ReloadEnvironment,
+    /// "Install dependencies" (ticket #41): runs the pinned package
+    /// manager's `install` in the project root, in a terminal tab of its
+    /// own, once the toolchain has settled. Install scripts run project
+    /// code (ADR 0005), so Genea dispatches this only on the user's click,
+    /// and the new-project flow dispatches it once for a project it just
+    /// created. While an install runs, it shows that tab instead.
+    InstallDependencies,
     /// Moves the caret to a grid cell like [`PlaceCaret`](Self::PlaceCaret)
     /// but keeps the selection's anchor: a drag, or a ⇧-click.
     ExtendSelection { line: usize, column: usize },
@@ -181,6 +188,17 @@ pub enum Command {
     /// Scrolls a pane that may not have the focus (the trackpad over it).
     ScrollPane { pane: usize, rows: f64 },
 
+    /// "Restart language server": stops the project's language server and
+    /// starts it again, also after it failed (crashed too often) and while
+    /// it isn't responding. Its crash count starts over.
+    RestartLanguageServer,
+    /// "Add TypeScript 7" (the notice of a project without it): sets
+    /// `typescript` to Genea's TypeScript 7 range in the root
+    /// `package.json`, where the project lists it, else in
+    /// `devDependencies`. Installing it is up to the user; language
+    /// intelligence starts once it is in `node_modules`.
+    AddTypeScript,
+
     // Structural editing (ticket #25).
     /// ⌘/: comments out the lines the carets and selections are on, or
     /// uncomments them if every one that isn't blank is commented. Uses the
@@ -248,6 +266,8 @@ pub enum Command {
     /// Gives the terminal the keyboard focus (a click in it). The editor
     /// gets it back with `FocusPane` or `SelectTab`.
     FocusTerminal,
+    /// Shows a terminal tab: an index into `TerminalView::tabs`.
+    SelectTerminalTab(usize),
     /// Tells the core how many rows and columns of cells fit in the
     /// terminal pane. The shell is told too (SIGWINCH), and the grid
     /// reflows.
@@ -276,6 +296,21 @@ pub enum Command {
     /// program that asked for the mouse, in the encoding it chose;
     /// otherwise nothing happens.
     TerminalMouse { action: MouseAction, line: usize, column: usize, modifiers: Modifiers },
+    // Terminal tabs and links (ticket #39). The commands above act on the
+    // showing tab.
+    /// ⌘T in the terminal, or the pane's +: opens a tab with a new shell,
+    /// shows it and focuses the pane.
+    NewTerminalTab,
+    /// Closes a terminal tab (by index), hanging up its shell. The pane
+    /// shows the tab to its right, else the one to its left; closing the
+    /// last tab collapses the pane, and showing it again opens a new one.
+    CloseTerminalTab(usize),
+    /// ⌘-click on the active tab's cell at `line` and `column` (0-based
+    /// visible row and grid column): if a `path:line:col` reference
+    /// (`TerminalLine::links`) covers it, opens that file at that place,
+    /// like `OpenFileAt`, resolving a relative path against the tab's
+    /// directory. The editor takes the focus.
+    OpenTerminalLink { line: usize, column: usize },
 
     /// The Search view's query changed (⌘⇧F, ticket #34): cancels the
     /// search in flight and searches the project in the background, results

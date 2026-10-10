@@ -439,6 +439,17 @@ fn the_baseline_is_kept_in_the_support_folder_not_the_project() {
 }
 
 #[test]
+fn adding_typescript_7_from_genea_is_not_listed() {
+    let (fixture, mut workbench, project) = open(&[("package.json", "{\n  \"name\": \"app\"\n}\n")]);
+
+    workbench.dispatch(project, Command::AddTypeScript);
+    workbench.settle().unwrap();
+
+    assert!(fixture.read("package.json").contains("typescript"));
+    assert_eq!(changes(&workbench, project), []);
+}
+
+#[test]
 fn find_action_shows_the_changes_view() {
     let (_fixture, mut workbench, project) = open(&[("a.ts", "a\n")]);
 
