@@ -1,0 +1,112 @@
+//! Foreign formatters and linters (ticket #51, ADR 0001): ESLint, Prettier,
+//! Biome or dprint config at the project root or a package root turns off
+//! format and fix on save, with one warning in Problems and the status-bar
+//! item. Oxfmt and Oxlint are played as in `format_on_save.rs`: two fake LSP
+//! servers on `node`, told apart by launcher script.
+
+use genea_core::{Command, ProblemItem, ProblemSource, ProjectId, ProjectView, Severity, TextPosition, Workbench};
+use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
+
+const PACKAGE_JSON: &str = r#"{
+  "name": "app",
+  "packageManager": "pnpm@12.10.1",
+  "devEngines": { "runtime": { "name": "node", "version": "24.21.0" } },
+  "devDependencies": { "oxfmt": "^0.72.0", "oxlint": "^1.87.0" }
+}
+"#;
+
+/// A pnpm workspace with a package in `apps/web`, pinning Node, with Oxlint
+/// and Oxfmt installed.
+fn oxc_project() -> FixtureBuilder {
+    FixtureProject::new()
+        .file("package.json", PACKAGE_JSON)
+        .file("pnpm-workspace.yaml", "packages:\n  - apps/*\n")
+        .file("apps/web/package.json", r#"{ "name": "web" }"#)
+        .file("node_modules/oxlint/package.json", r#"{ "name": "oxlint", "version": "1.87.0" }"#)
+        .file("node_modules/oxlint/bin/oxlint", "#!/usr/bin/env node\n")
+        .file("node_modules/oxfmt/package.json", r#"{ "name": "oxfmt", "version": "0.72.0" }"#)
+        .file("node_modules/oxfmt/bin/oxfmt", "#!/usr/bin/env node\n")
+        .file("src/main.ts", MAIN_TS)
+}
+
+const MAIN_TS: &str = "const  a=1\nvar c = a;\n";
+/// `MAIN_TS` formatted and fixed.
+const CLEAN_TS: &str = "const a = 1;\nconst c = a;\n";
+
+struct Session {
+    fixture: FixtureProject,
+    workbench: Workbench,
+    project: ProjectId,
+}
+
+/// Opens `fixture` with Oxfmt and Oxlint played by fakes that format and
+/// fix `MAIN_TS`.
+fn open(fixture: FixtureProject) -> Session {
+    let host = TestHost::new();
+    host.tools().node("24.21.0");
+    host.tools().pnpm("12.10.1");
+    let oxfmt = FakeLsp::new().formats(&[("const  a=1", "const a = 1;")]);
+    let oxlint =
+        FakeLsp::new().code_action("source.fixAll.oxc", "fix all safe fixable oxlint issues", "", &[("var c", "const c")]);
+    host.processes().script("node", move |spec, io| {
+        let script = spec.args.first().map(|arg| arg.to_string_lossy().into_owned()).unwrap_or_default();
+        if script.ends_with("oxfmt/bin/oxfmt") { oxfmt.run(io) } else { oxlint.run(io) }
+    });
+    let mut workbench = Workbench::new(host.shared());
+    let project = workbench.open_project(fixture.root()).unwrap();
+    workbench.settle().unwrap();
+    Session { fixture, workbench, project }
+}
+
+impl Session {
+    fn view(&self) -> ProjectView {
+        self.workbench.project(self.project).unwrap()
+    }
+
+    /// Opens `src/main.ts`, saves it, and returns what was written.
+    fn save_main(&mut self) -> String {
+        self.workbench.dispatch(self.project, Command::OpenFile("src/main.ts".into()));
+        self.workbench.settle().unwrap();
+        self.workbench.dispatch(self.project, Command::Save);
+        self.workbench.settle().unwrap();
+        self.fixture.read("src/main.ts")
+    }
+
+    fn foreign_problems(&self) -> Vec<ProblemItem> {
+        self.view().problems.into_iter().filter(|p| p.source == ProblemSource::ForeignTools).collect()
+    }
+}
+
+fn warning(path: &str, message: &str) -> ProblemItem {
+    ProblemItem {
+        source: ProblemSource::ForeignTools,
+        severity: Severity::Warning,
+        path: path.into(),
+        position: TextPosition::default(),
+        location: "1:1".into(),
+        message: message.into(),
+        stale: false,
+    }
+}
+
+#[test]
+fn without_foreign_config_saving_formats_and_fixes() {
+    let mut session = open(oxc_project().build());
+
+    assert_eq!(session.save_main(), CLEAN_TS);
+    assert_eq!(session.foreign_problems(), []);
+    assert_eq!(session.view().status.foreign_tools, None);
+}
+
+#[test]
+fn prettier_config_at_the_root_turns_off_format_and_fix_on_save() {
+    let fixture = oxc_project().file(".prettierrc", "{}\n").build();
+    let mut session = open(fixture);
+
+    assert_eq!(session.save_main(), MAIN_TS);
+    assert_eq!(
+        session.foreign_problems(),
+        [warning(".prettierrc", "Prettier is configured in .prettierrc. Genea doesn't run Prettier, so format and fix on save are off.")]
+    );
+    assert_eq!(session.view().status.foreign_tools.as_deref(), Some("Reduced mode: Prettier"));
+}

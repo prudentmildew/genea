@@ -152,12 +152,12 @@ impl Project {
 
     /// Whether `formatOnSave` applies to the project.
     pub(super) fn format_on_save(&self) -> bool {
-        self.config.format_on_save
+        self.config.format_on_save && !self.has_foreign_formatter()
     }
 
     /// Whether `fixOnSave` applies to the project.
     pub(super) fn fix_on_save(&self) -> bool {
-        self.config.fix_on_save
+        self.config.fix_on_save && !self.has_foreign_formatter()
     }
 
     /// Asks for `step` of save `id`, or else the steps after it. Returns

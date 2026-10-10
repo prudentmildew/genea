@@ -5,25 +5,45 @@
 //! - **npm or Yarn** (the toolchain's package-manager role, from
 //!   `packageManager` or a root lockfile): no installs and no script
 //!   runner.
+//! - **ESLint, Prettier, Biome or dprint** config at the root or a package
+//!   root (`crate::foreign`, found with the workspace's packages): no
+//!   format or fix on save.
 //!
 //! What the user sees: one warning per role in Problems
 //! (`ProblemSource::ForeignTools`) and one status-bar item naming every
 //! foreign tool (`StatusBar::foreign_tools`).
 
 use super::Project;
-use crate::{problems::ProblemSource, toolchain::Toolchain};
+use crate::{
+    foreign,
+    problems::{Problem, ProblemSource},
+    toolchain::Toolchain,
+};
 
 impl Project {
     /// Puts the foreign tools' warnings into Problems. Called whenever what
-    /// they depend on (the toolchain) changes.
+    /// they depend on (the toolchain, the workspace) changes.
     pub(crate) fn update_foreign_tools(&mut self) {
         let problems = self.foreign_tools().into_iter().map(|(_, problem)| problem).collect();
         self.replace_problems(ProblemSource::ForeignTools, problems);
     }
 
     /// Every foreign tool by name, with its role's warning.
-    fn foreign_tools(&self) -> Vec<(String, crate::problems::Problem)> {
-        self.toolchain.iter().filter_map(Toolchain::foreign_package_manager).collect()
+    fn foreign_tools(&self) -> Vec<(String, Problem)> {
+        let mut tools: Vec<(String, Problem)> =
+            self.toolchain.iter().filter_map(Toolchain::foreign_package_manager).collect();
+        let configs = self.workspace.foreign_configs();
+        if let Some(warning) = foreign::warning(configs) {
+            let names = foreign::tools(configs).join(", ");
+            tools.push((names, warning));
+        }
+        tools
+    }
+
+    /// Whether a foreign formatter or linter is configured, which turns
+    /// format and fix on save off.
+    pub(super) fn has_foreign_formatter(&self) -> bool {
+        !self.workspace.foreign_configs().is_empty()
     }
 
     /// Why the script runner is off: the package manager is a foreign one.

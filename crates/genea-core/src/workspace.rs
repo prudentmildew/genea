@@ -17,6 +17,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_json::Value;
 
 use crate::{
+    foreign::{self, ForeignConfig},
     jobs::Jobs,
     view::{PackageScripts, Script},
     watcher::FileChanges,
@@ -31,13 +32,16 @@ pub(crate) struct Workspace {
     root: PathBuf,
     /// Root first, then the others in path order.
     packages: Vec<PackageScripts>,
+    /// Foreign formatter and linter config in the packages' folders
+    /// (ticket #51).
+    foreign_configs: Vec<ForeignConfig>,
     /// Bumped by every read, so a slow one can't replace a newer one.
     generation: u64,
 }
 
 impl Workspace {
     pub(crate) fn new(project: ProjectId, root: PathBuf) -> Self {
-        Workspace { project, root, packages: Vec::new(), generation: 0 }
+        Workspace { project, root, packages: Vec::new(), foreign_configs: Vec::new(), generation: 0 }
     }
 
     /// Finds the packages and reads their scripts in the background.
@@ -46,18 +50,21 @@ impl Workspace {
         let (id, generation, root) = (self.project, self.generation, self.root.clone());
         jobs.spawn("discover packages", move || {
             let packages = discover(&root);
+            let foreign_configs = foreign::find(&root, packages.iter().map(|p| p.path.as_path()));
             Box::new(move |core| {
                 let Some(project) = core.project_mut(id) else { return };
                 if project.workspace.generation == generation {
                     project.workspace.packages = packages;
+                    project.workspace.foreign_configs = foreign_configs;
+                    project.update_foreign_tools();
                 }
             })
         });
     }
 
-    /// Files changed on disk: reads the packages again if a `package.json`
-    /// or `pnpm-workspace.yaml` changed, or a package's folder may have
-    /// gone.
+    /// Files changed on disk: reads the packages again if a `package.json`,
+    /// `pnpm-workspace.yaml` or a foreign tool's config changed, or a
+    /// package's folder may have gone.
     pub(crate) fn files_changed(&mut self, changes: &FileChanges, jobs: &Jobs) {
         let relevant = |path: &PathBuf| {
             let Ok(relative) = path.strip_prefix(&self.root) else { return false };
@@ -66,6 +73,7 @@ impl Workspace {
             }
             relative == Path::new(PNPM_WORKSPACE)
                 || path.file_name().is_some_and(|name| name == PACKAGE_JSON)
+                || path.file_name().and_then(|name| name.to_str()).is_some_and(foreign::is_config_file)
                 || self.packages.iter().any(|package| !relative.as_os_str().is_empty() && package.path.starts_with(relative))
         };
         if changes.rescan || changes.paths.iter().any(relevant) {
@@ -76,6 +84,11 @@ impl Workspace {
     /// The packages, root first.
     pub(crate) fn packages(&self) -> &[PackageScripts] {
         &self.packages
+    }
+
+    /// Foreign formatter and linter config at the root or a package root.
+    pub(crate) fn foreign_configs(&self) -> &[ForeignConfig] {
+        &self.foreign_configs
     }
 
     /// The package in folder `path` (relative to the root), if it is one.
