@@ -3,7 +3,7 @@
 //! `workspace/symbol`), and symbols in Search Everywhere (⇧⇧), against the
 //! fake LSP server, which reads the declarations in the files.
 
-use genea_core::{Caret, Command, FinderMode, ProjectId, Workbench};
+use genea_core::{Caret, Command, FinderMode, ProjectId, RESTART_DELAY, Workbench};
 use genea_testkit::{FakeLsp, FixtureBuilder, FixtureProject, TestHost};
 
 /// The tsgo binary in a project with TypeScript 7 installed by pnpm.
@@ -39,7 +39,7 @@ export function circle(radius: number): Circle {
 
 struct Session {
     _fixture: FixtureProject,
-    _host: TestHost,
+    host: TestHost,
     workbench: Workbench,
     project: ProjectId,
 }
@@ -47,15 +47,20 @@ struct Session {
 /// Opens `fixture` with tsgo played by the fake server, and waits until it
 /// is ready.
 fn open(fixture: FixtureBuilder) -> Session {
+    open_with(fixture, &FakeLsp::new())
+}
+
+/// Opens `fixture` with tsgo played by `fake`, and settles.
+fn open_with(fixture: FixtureBuilder, fake: &FakeLsp) -> Session {
     let fixture = fixture.build();
     std::os::unix::fs::symlink(fixture.path(format!("{STORE}/typescript")), fixture.path("node_modules/typescript"))
         .unwrap();
     let host = TestHost::new();
-    FakeLsp::new().install(&host, "tsc");
+    fake.install(&host, "tsc");
     let mut workbench = Workbench::new(host.shared());
     let project = workbench.open_project(fixture.root()).unwrap();
     workbench.settle().unwrap();
-    Session { _fixture: fixture, _host: host, workbench, project }
+    Session { _fixture: fixture, host, workbench, project }
 }
 
 impl Session {
@@ -154,4 +159,18 @@ fn search_everywhere_includes_symbols_and_choosing_one_opens_it() {
     session.dispatch(Command::MoveFinderSelection(1));
     session.dispatch(Command::AcceptFinder);
     assert_eq!(session.caret(), ("src/shapes.ts".into(), Caret { line: 11, column: 16 }));
+}
+
+#[test]
+fn file_symbols_asked_for_while_the_server_restarts_come_once_it_is_ready() {
+    let fake = FakeLsp::new().crash_on("initialize");
+    let mut session = open_with(typescript_project().file("src/shapes.ts", SHAPES), &fake);
+    session.dispatch(Command::OpenFile("src/shapes.ts".into()));
+    session.dispatch(Command::OpenFinder(FinderMode::FileSymbols));
+    assert!(session.results().is_empty());
+
+    fake.set_crash_on(None);
+    session.host.clock().advance(RESTART_DELAY);
+    session.workbench.settle().unwrap();
+    assert_eq!(session.results(), ["Shape", "area  Shape", "Circle", "radius  Circle", "area  Circle", "circle"]);
 }
