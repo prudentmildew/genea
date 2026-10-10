@@ -233,7 +233,8 @@ and the next parse starts if the text moved on. Large files get no syntax
   (HTML `<script>`/`<style>`, Markdown inline and fenced code) come from the
   grammars' injection queries. `.env` has no grammar: `syntax/dotenv.rs`.
 - Structural editing reads `Syntax::tree()`. Semantic highlighting layers its
-  tokens over `Syntax::spans()` in `Editor::grid_line`.
+  tokens over `Syntax::spans()` in `Editor::grid_line` (see Language servers
+  → Decorations).
 
 ### Structural editing
 
@@ -553,6 +554,25 @@ message types. `project/language.rs` is a project's side of it.
   `StatusBar::language_servers` shows it; `Command::RestartLanguageServer`
   starts afresh from any state. A generation counter drops events and
   timers of an earlier process.
+- **Decorations** (ticket #46; `lsp/decorations.rs`,
+  `project/decorations.rs`, `editor/decorations.rs`): semantic tokens
+  always, inlay hints while `inlayHints` is on, code lenses while
+  `codeLens` is on (then `codeLens/resolve` for their titles). Each open
+  document asks again when its text changes or the server sends a refresh,
+  one request of a kind in flight. An answer applies only if the editor is
+  still at the version it was asked for; meanwhile the last ones stay,
+  moved with every edit in `Editor::splice`, so typing never waits. tsgo
+  reads its hint and lens settings through `workspace/configuration`;
+  Genea always answers "all on" and gates by asking or not, so a config
+  change needs no `didChangeConfiguration` (turning a key off hides what
+  is shown at the next sync). Semantic tokens map to `Highlight`s and win
+  over tree-sitter's (variables, keywords, strings … are left to
+  tree-sitter). Hints are drawn in the line as `Highlight::Hint` text, so
+  view state is in *grid* columns that count them: `Editor::to_grid` /
+  `from_grid` convert carets, selections, problems and clicks; the
+  editor's own columns (Up/Down, tab stops, the status bar) don't count
+  them. Code lenses are drawn after the end of their line, not on a row
+  of their own.
 - **Adding a request** (completion, hover, …): a `Pending` variant, sent
   with `LanguageServer::request` while ready, answered in
   `LanguageServer::event`. Oxlint and Oxfmt are more `LanguageServer`s with
@@ -587,6 +607,22 @@ message types. `project/language.rs` is a project's side of it.
   Server generations are unique across servers, so `language_event` and
   `language_timer` route Oxlint's by generation; "Restart language server"
   restarts both.
+
+- **Completion, hover and signature help** (ticket #43;
+  `project/assist.rs`, protocol in `lsp/assist.rs`, popups in
+  `EditorView::{completion, hover, signature_help}`): requested after a
+  command, once `sync` has sent the text, each remembering the focused
+  file, version and primary caret. An answer is used only if the editor is
+  still exactly there and it is the newest request of its kind; a popup for
+  another state closes, is narrowed (the completion list, filtered here as
+  you type unless the server said `isIncomplete`) or asked again (signature
+  help). The selected completion is resolved in the background for its
+  documentation and auto-import edit (`additionalTextEdits`); accepting
+  inserts both as one undo step, or adds the import as a second step when
+  the item was accepted before its resolve answered (edits move with the
+  text typed meanwhile: `map_edits`). Completion is offered with one caret
+  only. The view's popups are `ui/assist-popups.slint` and
+  `genea-view/src/assist.rs` (keys while open, the 500 ms hover rest).
 
 Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
 the test host as `tsc` (and as `node` or `bun` for Oxlint in

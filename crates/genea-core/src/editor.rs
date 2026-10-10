@@ -10,6 +10,8 @@
 //! selection. They are kept in the order they were added; the last one is
 //! the primary, which the view scrolls to and the status bar reports.
 
+mod decorations;
+mod assist;
 mod indent;
 mod navigation;
 mod structural;
@@ -30,7 +32,7 @@ use crate::{
     command::{CaretMove, ConflictChoice},
     disk::{self, Checked, DiskCheck, DiskText, Splice},
     history::{Change, Edit, EditKind, History, Selection},
-    syntax::{Highlight, ParseJob, Parsed, Syntax},
+    syntax::{Highlight, ParseJob, Parsed, Span, Syntax},
     text::{self, LineEnding},
     view::{Caret, EditorView, HighlightSpan, Preedit, VisibleLine},
 };
@@ -127,6 +129,9 @@ pub(crate) struct Editor {
     /// The tree and highlights, for files in a highlighted language that
     /// aren't large.
     syntax: Option<Syntax>,
+    /// What the language server draws on the text: semantic highlights
+    /// (ticket #46).
+    decorations: decorations::Decorations,
     /// Over [`LARGE_FILE_BYTES`] when opened: no syntax, no language
     /// intelligence.
     large: bool,
@@ -175,6 +180,7 @@ impl Editor {
             expansions: None,
             folds: Vec::new(),
             syntax,
+            decorations: decorations::Decorations::default(),
             large,
             loading: None,
             disk,
@@ -480,7 +486,7 @@ impl Editor {
     /// The text position at or before a grid cell, clamped to the text.
     fn position_at(&self, line: usize, column: usize) -> usize {
         let line = line.min(self.text.len_lines() - 1);
-        self.text.line_to_char(line) + self.char_column_at(line, column)
+        self.text.line_to_char(line) + self.char_column_at(line, self.from_grid(line, column))
     }
 
     /// Selects the run of one character class at a grid cell, with the
@@ -488,7 +494,7 @@ impl Editor {
     pub(crate) fn select_word(&mut self, line: usize, column: usize, viewport_rows: f64) {
         let line = line.min(self.text.len_lines() - 1);
         let chars = self.line_chars(line);
-        let at = self.char_column_at(line, column).min(chars.len().saturating_sub(1));
+        let at = self.char_column_at(line, self.from_grid(line, column)).min(chars.len().saturating_sub(1));
         let (start, end) = match chars.get(at) {
             Some(&c) => {
                 let class = text::CharClass::of(c);
@@ -775,9 +781,9 @@ impl Editor {
         self.text.insert(chars.start, text);
         let new_end_byte = start_byte + text.len();
         let new_end_position = self.point(new_end_byte);
+        let edit = InputEdit { start_byte, old_end_byte, new_end_byte, start_position, old_end_position, new_end_position };
+        self.decorations.edit(&edit);
         if let Some(syntax) = &mut self.syntax {
-            let edit =
-                InputEdit { start_byte, old_end_byte, new_end_byte, start_position, old_end_position, new_end_position };
             syntax.edit(edit);
         }
         self.shift_folds(chars, text.chars().count());
@@ -864,8 +870,10 @@ impl Editor {
         display_columns(self.text.line(line).chars().take(column))
     }
 
+    /// A position's grid cell, for view state.
     fn caret_at(&self, position: usize) -> Caret {
-        Caret { line: self.text.char_to_line(position), column: self.display_column(position) }
+        let line = self.text.char_to_line(position);
+        Caret { line, column: self.to_grid(line, self.display_column(position)) }
     }
 
     /// A line's chars, without its line ending.
@@ -899,7 +907,7 @@ impl Editor {
     /// text (problems and other positions from outside the editor).
     pub(crate) fn grid_column(&self, line: usize, char_column: usize) -> usize {
         let line = line.min(self.text.len_lines() - 1);
-        display_columns(self.text.line(line).chars().take(char_column.min(self.line_len(line))))
+        self.to_grid(line, display_columns(self.text.line(line).chars().take(char_column.min(self.line_len(line)))))
     }
 
     pub(crate) fn view(&self, viewport_rows: f64) -> EditorView {
@@ -956,6 +964,9 @@ impl Editor {
             brackets: self.matched_brackets(),
             gutter: Vec::new(),
             hunk: None,
+            completion: None,
+            hover: None,
+            signature_help: None,
         }
     }
 
@@ -966,7 +977,7 @@ impl Editor {
         let text_end = line_start + self.line_len(line);
         let next_line = line_start + self.text.line(line).len_chars();
         let first = ranges.partition_point(|r| r.end <= line_start);
-        let columns = |to: usize| display_columns(self.text.slice(line_start..to).chars());
+        let columns = |to: usize| self.to_grid(line, display_columns(self.text.slice(line_start..to).chars()));
         ranges[first..]
             .iter()
             .take_while(|r| r.start < next_line)
@@ -984,7 +995,9 @@ impl Editor {
     fn grid_line(&self, line: usize) -> (String, Vec<HighlightSpan>) {
         let line_start = self.text.line_to_byte(line);
         let slice = self.text.line(line);
-        let spans = self.syntax.as_ref().map_or(&[][..], |s| s.spans(line_start..line_start + slice.len_bytes()));
+        let line_bytes = line_start..line_start + slice.len_bytes();
+        let spans = self.syntax.as_ref().map_or(&[][..], |s| s.spans(line_bytes.clone()));
+        let semantic = self.decorations.semantic(line_bytes);
         // Each char with its byte offset in the file; the preedit has none.
         let chars = slice.chars().scan(line_start, |byte, c| {
             let at = *byte;
@@ -999,28 +1012,64 @@ impl Editor {
             Box::new(chars)
         };
 
+        // Inlay hints (ticket #46) go in before the char at their byte; they
+        // take grid columns but not the text's columns, which tabs expand by.
+        let line_end = self.line_bytes(line).end;
+        let mut inlays = self.decorations.inlays(line_start, line_end).iter().peekable();
         let mut text = String::new();
         let mut highlights: Vec<HighlightSpan> = Vec::new();
         let mut spans = spans.iter().peekable();
-        let mut column = 0;
+        let mut semantic = semantic.iter().peekable();
+        let (mut column, mut text_column) = (0, 0);
+        let mut cut = false;
+        let push_inlay = |text: &mut String, highlights: &mut Vec<HighlightSpan>, column: &mut usize, hint: &str| {
+            let start = *column;
+            text.push_str(hint);
+            *column += hint.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>();
+            push_highlight(highlights, Some(Highlight::Hint), start..*column);
+        };
         for (byte, c) in chars {
+            if let Some(byte) = byte {
+                while let Some(inlay) = inlays.next_if(|i| i.byte <= byte) {
+                    push_inlay(&mut text, &mut highlights, &mut column, &inlay.text);
+                }
+            }
             if matches!(c, '\n' | '\r') || column >= MAX_VISIBLE_COLUMNS {
+                cut = column >= MAX_VISIBLE_COLUMNS;
                 break;
             }
             let start = column;
             if c == '\t' {
-                let next = (column / TAB_WIDTH + 1) * TAB_WIDTH;
-                text.extend(std::iter::repeat_n(' ', next - column));
-                column = next;
+                let next = (text_column / TAB_WIDTH + 1) * TAB_WIDTH;
+                text.extend(std::iter::repeat_n(' ', next - text_column));
+                column += next - text_column;
+                text_column = next;
             } else {
                 text.push(c);
                 column += c.width().unwrap_or(0);
+                text_column += c.width().unwrap_or(0);
             }
+            // Semantic highlights win over the tree-sitter ones.
             let highlight = byte.and_then(|byte| {
-                while spans.next_if(|s| (s.end as usize) <= byte).is_some() {}
-                spans.peek().filter(|s| (s.start as usize) <= byte).map(|s| s.highlight)
+                let at = |spans: &mut std::iter::Peekable<std::slice::Iter<'_, Span>>| {
+                    while spans.next_if(|s| (s.end as usize) <= byte).is_some() {}
+                    spans.peek().filter(|s| (s.start as usize) <= byte).map(|s| s.highlight)
+                };
+                at(&mut semantic).or_else(|| at(&mut spans))
             });
             push_highlight(&mut highlights, highlight, start..column);
+        }
+        // Hints at the end of the last line, which has no line break, and
+        // then the line's code lenses.
+        if !cut {
+            for inlay in inlays {
+                push_inlay(&mut text, &mut highlights, &mut column, &inlay.text);
+            }
+            if let Some(lenses) = self.decorations.lenses(line_start, line_end) {
+                text.push_str(decorations::LENS_GAP);
+                column += decorations::LENS_GAP.len();
+                push_inlay(&mut text, &mut highlights, &mut column, &lenses);
+            }
         }
         (text, highlights)
     }

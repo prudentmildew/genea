@@ -49,6 +49,9 @@ pub enum Action {
     CollapseFold,
     ExpandAllFolds,
     CollapseAllFolds,
+    CodeCompletion,
+    QuickDocumentation,
+    ParameterInfo,
     GoToFile,
     RecentFiles,
     FindAction,
@@ -77,7 +80,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Find Action lists them with an empty
     /// query: by menu.
-    pub const ALL: [Action; 56] = [
+    pub const ALL: [Action; 59] = [
         Action::NewProject,
         Action::Save,
         Action::CloseTab,
@@ -111,6 +114,9 @@ impl Action {
         Action::CollapseFold,
         Action::ExpandAllFolds,
         Action::CollapseAllFolds,
+        Action::CodeCompletion,
+        Action::QuickDocumentation,
+        Action::ParameterInfo,
         Action::GoToFile,
         Action::RecentFiles,
         Action::FindAction,
@@ -172,6 +178,9 @@ impl Action {
             Action::CollapseFold => "Collapse Fold",
             Action::ExpandAllFolds => "Expand All Folds",
             Action::CollapseAllFolds => "Collapse All Folds",
+            Action::CodeCompletion => "Code Completion",
+            Action::QuickDocumentation => "Quick Documentation",
+            Action::ParameterInfo => "Parameter Info",
             Action::GoToFile => "Go to File…",
             Action::RecentFiles => "Recent Files",
             Action::FindAction => "Find Action…",
@@ -224,6 +233,9 @@ impl Action {
             Action::ShrinkSelection => "⌥↓",
             Action::ExpandFold => "⌥⌘=",
             Action::CollapseFold => "⌥⌘-",
+            Action::CodeCompletion => "⌃Space",
+            Action::QuickDocumentation => "F1",
+            Action::ParameterInfo => "⌘P",
             Action::GoToFile => "⇧⌘O",
             Action::RecentFiles => "⌘E",
             Action::FindAction => "⇧⌘A",
@@ -294,6 +306,9 @@ impl Action {
                 | Action::GoToImplementation
                 | Action::FindUsages
                 | Action::Rename
+                | Action::CodeCompletion
+                | Action::QuickDocumentation
+                | Action::ParameterInfo
         )
     }
 
@@ -333,6 +348,9 @@ impl Action {
             Action::CollapseFold => Command::CollapseFold,
             Action::ExpandAllFolds => Command::ExpandAllFolds,
             Action::CollapseAllFolds => Command::CollapseAllFolds,
+            Action::CodeCompletion => Command::ShowCompletion,
+            Action::QuickDocumentation => Command::ShowHover,
+            Action::ParameterInfo => Command::ShowSignatureHelp,
             Action::GoToFile => Command::OpenFinder(FinderMode::Files),
             Action::RecentFiles => Command::OpenFinder(FinderMode::RecentFiles),
             Action::FindAction => Command::OpenFinder(FinderMode::Actions),

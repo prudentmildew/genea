@@ -60,6 +60,15 @@ impl Language {
     pub(super) fn context(&self) -> Option<(SharedHost, Jobs)> {
         self.context.clone()
     }
+
+    /// tsgo, while it runs.
+    pub(super) fn server(&self) -> Option<&LanguageServer> {
+        self.typescript.as_ref()
+    }
+
+    pub(super) fn server_mut(&mut self) -> Option<&mut LanguageServer> {
+        self.typescript.as_mut()
+    }
 }
 
 impl Project {
@@ -186,7 +195,9 @@ impl Project {
     pub(crate) fn sync_language(&mut self) {
         self.sync_oxlint();
         self.sync_oxfmt();
+        self.hide_decorations();
         let Some(server) = &mut self.language.typescript else { return };
+        server.show_decorations(self.config.inlay_hints, self.config.code_lens);
         let editors = self.editor.iter().chain(self.panes.parked());
         let outputs = server.sync(editors);
         self.language_outputs(outputs);
@@ -297,6 +308,12 @@ impl Project {
                 Output::Navigation(answer) => self.navigation_answered(answer),
                 // tsgo's formatter is never asked (ticket #50).
                 Output::Formatted { .. } => {}
+                Output::Decorations(output) => self.apply_decorations(output),
+                Output::Assist { tag, result } => {
+                    let Some((host, _)) = &self.language.context else { continue };
+                    let now = host.clock().now();
+                    self.assist_answered(tag, result, now);
+                }
             }
         }
     }

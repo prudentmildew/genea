@@ -159,6 +159,51 @@ impl Genea {
         Ok((text, column, composing))
     }
 
+    /// Opens the finder in a mode (`files`, `recent`, `actions`,
+    /// `everywhere`), or closes it (`close`).
+    pub fn finder(&mut self, mode: &str) -> Result<(), String> {
+        self.send(&format!("finder {mode}")).map(drop)
+    }
+
+    /// Shows the Search view and searches the project for `text`; returns
+    /// when Genea dispatched the search (ns since boot).
+    pub fn search(&mut self, text: &str) -> Result<u64, String> {
+        at(&self.send(&format!("search {text}"))?)
+    }
+
+    /// Expands or collapses a folder in the Files view; returns when Genea
+    /// dispatched it (ns since boot).
+    pub fn toggle_folder(&mut self, folder: &str) -> Result<u64, String> {
+        at(&self.send(&format!("toggle-folder {folder}"))?)
+    }
+
+    /// Starts watching for a condition on the view state under `name`
+    /// (`crates/genea-view/src/remote.rs` lists them). Only views synced
+    /// from now on count.
+    pub fn expect(&mut self, name: &str, condition: &str) -> Result<(), String> {
+        self.send(&format!("expect {name} {condition}")).map(drop)
+    }
+
+    /// Waits until a frame drawn after the view met `name`'s condition is
+    /// presented. After `timeout`, a condition met without a frame (nothing
+    /// on screen changed) is [`Met::unchanged`]; one never met is an error.
+    pub fn await_met(&mut self, name: &str, timeout: Duration) -> Result<Met, String> {
+        let v = self.send_with_timeout(&format!("await {name} {}", timeout.as_millis()), timeout + REPLY_TIMEOUT)?;
+        let at = v.get("met").and_then(Value::as_u64).ok_or_else(|| format!("await {name}: no time in {v}"))?;
+        Ok(Met { at, unchanged: v.get("presented") == Some(&Value::Bool(false)) })
+    }
+
+    /// Whether the view meets a condition now.
+    pub fn check(&mut self, condition: &str) -> Result<bool, String> {
+        Ok(self.send(&format!("check {condition}"))?.get("holds").and_then(Value::as_bool).unwrap_or(false))
+    }
+
+    /// Genea's child processes and theirs: language servers, shells.
+    pub fn processes(&mut self) -> Result<Vec<u32>, String> {
+        let v = self.send("processes")?;
+        Ok(v["pids"].as_array().into_iter().flatten().filter_map(Value::as_u64).map(|p| p as u32).collect())
+    }
+
     /// Asks Genea to quit, or kills it without the journal, and waits.
     pub fn quit(mut self) {
         if self.stdin.is_some() {
@@ -173,6 +218,21 @@ impl Genea {
         }
         let _ = self.child.wait();
     }
+}
+
+/// When the view met a condition the harness waited for.
+#[derive(Clone, Copy, Debug)]
+pub struct Met {
+    /// The end of the sync that met it, in ns since boot.
+    pub at: u64,
+    /// No frame came after it: nothing on screen changed (the finder's
+    /// results for a longer query were the same, say).
+    pub unchanged: bool,
+}
+
+/// The `at` time in a command's answer.
+fn at(answer: &Value) -> Result<u64, String> {
+    answer.get("at").and_then(Value::as_u64).ok_or_else(|| format!("no time in {answer}"))
 }
 
 impl Drop for Genea {

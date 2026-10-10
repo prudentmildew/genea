@@ -13,6 +13,7 @@
 // emptied; its preedit-text is passed on and Rust draws it inline.
 
 import { Theme } from "theme.slint";
+import { AssistLayer, AssistPopups } from "assist-popups.slint";
 
 // One run of a line in one highlight, placed on the monospace grid by Rust.
 // Wide and non-Latin characters get runs of their own, so a fallback font's
@@ -99,6 +100,8 @@ export component EditorSurface inherits Rectangle {
     in property <length> preedit-width;
     in property <HunkPopup> hunk;
     in property <QuickFixPopup> quick-fixes;
+    // Completion, hover and signature help (ticket #43).
+    in property <AssistPopups> assist;
 
     // The width of one grid cell, measured by Slint's own shaper.
     out property <length> char-width: probe.preferred-width / 100;
@@ -122,6 +125,11 @@ export component EditorSurface inherits Rectangle {
     callback hide-hunk();
     // A click on a quick fix: apply it.
     callback quick-fix-clicked(int);
+    // A click on a completion; the pointer moving over the text (not
+    // dragging), for hover, and leaving it.
+    callback completion-clicked(index: int);
+    callback pointer-moved(x: length, y: length);
+    callback pointer-left();
 
     // The IME is enabled only for a focused TextInput in a native window
     // that exists, so the app calls this once the window is shown.
@@ -319,6 +327,14 @@ export component EditorSurface inherits Rectangle {
                 ime.focus();
                 root.pressed(self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.alt);
             }
+            if (event.kind == PointerEventKind.move && !self.pressed) {
+                root.pointer-moved(self.mouse-x, self.mouse-y);
+            }
+        }
+        changed has-hover => {
+            if !self.has-hover {
+                root.pointer-left();
+            }
         }
         moved => {
             if (self.pressed) {
@@ -467,6 +483,19 @@ export component EditorSurface inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // Above the TouchArea and the change's popover: popups take their own
+    // clicks.
+    AssistLayer {
+        width: root.width;
+        height: root.height;
+        popups: root.assist;
+        offset-y: root.offset-y;
+        text-left: Theme.gutter-width;
+        completion-clicked(index) => {
+            root.completion-clicked(index);
         }
     }
 }

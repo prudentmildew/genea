@@ -61,6 +61,16 @@ thread_local! {
 /// Runs `f` on the app. If the app is busy (a Slint callback fired while we
 /// were already inside it, e.g. a `changed` handler during a sync), `f` runs
 /// on the next event-loop turn instead.
+/// Runs `f` on a window's controller and the workbench, if the window is
+/// still open.
+pub fn with_window(key: WindowKey, f: impl FnOnce(&mut WindowController, &mut Workbench) + 'static) {
+    with_app(move |app| {
+        if let Some(controller) = app.windows.iter_mut().find(|c| c.key == key) {
+            f(controller, &mut app.workbench);
+        }
+    });
+}
+
 pub fn with_app(f: impl FnOnce(&mut App) + 'static) {
     APP.with(|cell| match cell.try_borrow_mut() {
         Ok(mut app) => {
@@ -217,6 +227,17 @@ impl App {
     fn sync(&mut self, key: WindowKey) {
         let Some(controller) = self.windows.iter_mut().find(|c| c.key == key) else { return };
         controller.sync(&mut self.workbench);
+    }
+
+    /// The command for an editor key: an open popup's (the quick-fix popup's
+    /// ↑, ↓, Return and Esc, then completion, hover and signature help's),
+    /// else the keymap's.
+    fn editor_key(&self, key: WindowKey, text: &str, modifiers: Modifiers) -> Option<Command> {
+        let controller = self.windows.iter().find(|c| c.key == key);
+        let quick_fix = keys::popup_key(text, modifiers).and_then(|k| controller?.quick_fix_command(k));
+        quick_fix
+            .or_else(|| controller.and_then(|c| c.popup_command(text, modifiers)))
+            .or_else(|| keys::command_for(text, modifiers))
     }
 
     /// Opens `folder` as a project in a new window and returns the window.
@@ -448,16 +469,13 @@ fn wire(controller: &WindowController) {
         let modifiers = Modifiers { shift, cmd, alt, ctrl };
         let clone = clone_caret.borrow_mut().command_for(&text, modifiers);
         let everywhere = editor_shift.borrow_mut().command_for(&text);
-        let command = clone.or(everywhere).or_else(|| keys::command_for(&text, modifiers));
-        // The quick-fix popup takes ↑, ↓, Return and Esc while it shows.
-        let popup = keys::popup_key(&text, modifiers);
-        if command.is_none() && popup.is_none() {
+        if let Some(command) = clone.or(everywhere) {
+            with_app(move |app| app.dispatch(key, command));
             return;
         }
+        let text = text.to_string();
         with_app(move |app| {
-            let controller = app.windows.iter().find(|c| c.key == key);
-            let popup = popup.and_then(|k| controller?.quick_fix_command(k));
-            if let Some(command) = popup.or(command) {
+            if let Some(command) = app.editor_key(key, &text, modifiers) {
                 app.dispatch(key, command);
             }
         });
@@ -466,6 +484,15 @@ fn wire(controller: &WindowController) {
         let Ok(index) = usize::try_from(index) else { return };
         with_app(move |app| app.dispatch(key, Command::ApplyQuickFix(index)));
     });
+    // Completion, hover and signature help (ticket #43).
+    window.on_completion_clicked(move |index| {
+        let Ok(index) = usize::try_from(index) else { return };
+        with_window(key, move |controller, workbench| controller.click_completion(workbench, index));
+    });
+    window.on_pointer_moved(move |pane, x, y| {
+        with_window(key, move |controller, _| controller.pointer_moved(index(pane), x, y));
+    });
+    window.on_pointer_left(move |_| with_window(key, |controller, _| controller.pointer_left()));
     // The finder (ticket #33).
     window.on_open_finder(move |kind| {
         let mode = match kind {

@@ -36,11 +36,13 @@
 //! every background result.
 
 pub(crate) mod actions;
+pub(crate) mod assist;
 mod connection;
 pub(crate) mod formatting;
 pub(crate) mod oxc;
 pub(crate) mod symbols;
 pub(crate) mod navigation;
+pub(crate) mod decorations;
 pub(crate) mod text;
 pub(crate) mod typescript;
 pub(crate) mod watch;
@@ -137,6 +139,12 @@ pub(crate) enum Output {
     /// The answer to [`format`](LanguageServer::format) with this ticket:
     /// the edits that format the document, none if it failed (ticket #50).
     Formatted { ticket: u64, edits: Vec<actions::TextEdit> },
+    /// Semantic tokens, inlay hints and code lenses for an open editor
+    /// (ticket #46).
+    Decorations(decorations::Output),
+    /// The answer to a completion, hover or signature help request
+    /// (ticket #43), by the tag it was sent with.
+    Assist { tag: u64, result: Result<Value, String> },
 }
 
 /// A request waiting for its answer.
@@ -154,6 +162,10 @@ pub(crate) enum Pending {
     Navigation(navigation::Ask),
     /// `textDocument/formatting`, with the asker's ticket (ticket #50).
     Formatting(u64),
+    /// Semantic tokens, inlay hints or code lenses (ticket #46).
+    Decorations(decorations::Pending),
+    /// Completion, hover or signature help (ticket #43): the project's tag.
+    Assist(u64),
 }
 
 /// A timer of a server's, on the host clock.
@@ -219,6 +231,10 @@ pub(crate) struct LanguageServer {
     documents: BTreeMap<PathBuf, Document>,
     requests: HashMap<i64, Pending>,
     watchers: Watchers,
+    /// Semantic tokens, inlay hints and code lenses (ticket #46).
+    decorations: decorations::Decorations,
+    /// What the server offers for completion, hover and signature help.
+    assist: assist::AssistCapabilities,
 }
 
 impl LanguageServer {
@@ -239,6 +255,8 @@ impl LanguageServer {
             documents: BTreeMap::new(),
             requests: HashMap::new(),
             watchers: Watchers::default(),
+            decorations: decorations::Decorations::default(),
+            assist: assist::AssistCapabilities::default(),
         }
     }
 
@@ -292,8 +310,13 @@ impl LanguageServer {
         }
         self.requests.clear();
         self.watchers = Watchers::default();
+        self.decorations = decorations::Decorations::default();
         let had_documents = !std::mem::take(&mut self.documents).is_empty();
-        if had_documents { vec![Output::ClearAll] } else { Vec::new() }
+        if had_documents {
+            vec![Output::ClearAll, Output::Decorations(decorations::Output::ClearAll)]
+        } else {
+            Vec::new()
+        }
     }
 
     /// Whether events and timers of `generation` are this server's: its
@@ -307,9 +330,25 @@ impl LanguageServer {
         self.state == State::Ready
     }
 
+    /// Which decorations the config shows (ticket #46): inlay hints, code
+    /// lenses.
+    pub(crate) fn show_decorations(&mut self, hints: bool, lenses: bool) {
+        self.decorations.show(hints, lenses);
+    }
+
     /// The server's columns: positions it sends and expects are in these.
     pub(crate) fn encoding(&self) -> Encoding {
         self.encoding
+    }
+
+    /// What it offers for completion, hover and signature help.
+    pub(crate) fn assist_capabilities(&self) -> &assist::AssistCapabilities {
+        &self.assist
+    }
+
+    /// The URI a file of the project's has on the server.
+    pub(crate) fn uri(&self, path: &std::path::Path) -> String {
+        text::uri(&self.root.join(path))
     }
 
     /// The status-bar item.
@@ -357,6 +396,7 @@ impl LanguageServer {
                 None => {
                     let uri = text::uri(&self.root.join(path));
                     connection.open(uri.clone(), language, 1, editor.text().clone());
+                    self.decorations.changed(path, editor.text().len_lines());
                     let document = Document {
                         uri,
                         version: 1,
@@ -371,6 +411,7 @@ impl LanguageServer {
                     document.version += 1;
                     document.editor_version = editor.version();
                     connection.change(document.uri.clone(), document.version, editor.text().clone());
+                    self.decorations.changed(path, editor.text().len_lines());
                     changed = true;
                 }
                 Some(_) => {}
@@ -380,6 +421,7 @@ impl LanguageServer {
         for path in closed {
             if let Some(document) = self.documents.remove(&path) {
                 connection.notify("textDocument/didClose", json!({ "textDocument": { "uri": document.uri } }));
+                self.decorations.closed(&path);
                 outputs.push(Output::Clear(path));
             }
         }
@@ -397,6 +439,7 @@ impl LanguageServer {
                 self.requests.insert(id, Pending::Diagnostics(path.clone()));
             }
         }
+        self.decorations.request(connection, &self.documents, &mut self.requests);
         outputs
     }
 
@@ -446,6 +489,10 @@ impl LanguageServer {
                 Some(Pending::CodeActions(ticket)) => self.code_actions_answered(ticket, result),
                 Some(Pending::Navigation(ask)) => navigation::answered(ask, result),
                 Some(Pending::Formatting(ticket)) => formatting::answered(ticket, result),
+                Some(Pending::Decorations(pending)) => {
+                    self.decorations.answered(pending, id, result, self.encoding).into_iter().map(Output::Decorations).collect()
+                }
+                Some(Pending::Assist(tag)) => vec![Output::Assist { tag, result: result.map_err(|e| e.message) }],
                 None => Vec::new(),
             },
             Event::Message { method, params } => self.message(&method, params),
@@ -541,16 +588,23 @@ impl LanguageServer {
             },
             ..Default::default()
         };
-        serde_json::to_value(params).expect("initialize params are JSON")
+        let mut params = serde_json::to_value(params).expect("initialize params are JSON");
+        decorations::add_capabilities(&mut params);
+        assist::client_capabilities(&mut params["capabilities"]["textDocument"]);
+        params
     }
 
     fn initialized(&mut self, result: Result<Value, ResponseError>) -> Vec<Output> {
+        if let Ok(result) = &result {
+            self.decorations.initialized(result);
+        }
         let result = result
             .map_err(|error| format!("it refused to start: {}", error.message))
             .and_then(|result| serde_json::from_value::<InitializeResult>(result).map_err(|e| e.to_string()));
         match result {
             Ok(result) => {
                 self.encoding = Encoding::from_lsp(result.capabilities.position_encoding.as_ref().map(|k| k.as_str()));
+                self.assist = assist::AssistCapabilities::new(&result.capabilities);
                 if let Some(version) = result.server_info.and_then(|info| info.version) {
                     self.label = format!("{} {version}", self.spec.name);
                 }
@@ -608,6 +662,7 @@ impl LanguageServer {
                     }
                 }
             }
+            method if self.decorations.refresh(method) => {}
             "workspace/diagnostic/refresh" => {
                 for document in self.documents.values_mut() {
                     document.wanted = true;
@@ -675,7 +730,6 @@ impl LanguageServer {
     /// Sends a request to a ready server, remembering what it is for; the
     /// answer comes back to [`event`](Self::event) as that [`Pending`].
     /// `None` while the server isn't ready.
-    #[allow(dead_code)] // The seam for completion, hover, … (#43–#47).
     pub(crate) fn request(&mut self, method: &str, params: Value, pending: Pending) -> Option<i64> {
         let connection = self.connection.as_mut().filter(|_| self.state == State::Ready)?;
         let id = connection.request(method, params);

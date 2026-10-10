@@ -87,4 +87,7 @@ pub use view::{FinderItem, FinderItemKind, FinderMode, FinderView};
 pub use view::QuickFixesView;
 pub use view::{PackageScripts, Script, ScriptLink};
 pub use view::{RenamePrompt, UsagesView};
+pub use view::{
+    CompletionItem, CompletionKind, CompletionView, HoverView, MAX_COMPLETION_ITEMS, MarkupBlock, SignatureHelpView,
+};
 pub use workbench::{OpenProjectError, ProjectId, SettleError, Workbench};

@@ -1,0 +1,278 @@
+// Completion, hover and signature help (ticket #43): popups over the
+// editor surface, set from Rust (src/assist.rs) out of the core's
+// EditorView. They are placed by Rust in surface coordinates relative to
+// the base line, like `Line.y`, and scroll with the lines. The keyboard
+// stays with the editor: ↑/↓, Return, Tab and Esc reach the list through
+// the editor's key handler.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+// A piece of documentation: code (drawn in the editor font) or prose.
+export struct DocBlock {
+    code: bool,
+    text: string,
+}
+
+export struct CompletionRow {
+    // A letter for the kind: m method, f function, v variable, C class, …
+    kind: string,
+    label: string,
+    // Dimmed after the label, e.g. a signature.
+    detail: string,
+    // At the right: the module an auto-import comes from.
+    source: string,
+}
+
+export struct AssistPopups {
+    completion-shown: bool,
+    // Where the completed word starts (x) and the top and bottom of its
+    // line (y), relative to the text's left edge and the base line.
+    completion-x: length,
+    completion-line-top: length,
+    completion-line-bottom: length,
+    completion-rows: [CompletionRow],
+    completion-selected: int,
+    // The selected item's details, once the server sent them.
+    completion-detail: string,
+    completion-docs: [DocBlock],
+    hover-shown: bool,
+    hover-x: length,
+    hover-line-top: length,
+    hover-line-bottom: length,
+    hover-docs: [DocBlock],
+    signature-shown: bool,
+    signature-x: length,
+    signature-line-top: length,
+    signature-line-bottom: length,
+    // The signature split around the active parameter, which is bold.
+    signature-before: string,
+    signature-active: string,
+    signature-after: string,
+    // "2/3" for overloads, else empty.
+    signature-count: string,
+    signature-docs: [DocBlock],
+}
+
+// Documentation blocks, top to bottom.
+component Docs inherits VerticalLayout {
+    in property <[DocBlock]> blocks;
+    spacing: 6px;
+
+    for block in root.blocks: Text {
+        text: block.text;
+        wrap: word-wrap;
+        color: block.code ? Theme.editor-foreground : Theme.chrome-foreground;
+        font-family: block.code ? Theme.editor-font : "";
+        font-size: block.code ? Theme.editor-font-size : Theme.chrome-font-size;
+    }
+}
+
+component Popup inherits Rectangle {
+    background: Theme.chrome-background;
+    border-width: 1px;
+    border-color: Theme.chrome-border;
+    border-radius: 4px;
+    drop-shadow-blur: 8px;
+    drop-shadow-color: #00000030;
+    clip: true;
+
+    // Clicks inside don't reach the text below.
+    TouchArea {
+        mouse-cursor: default;
+    }
+}
+
+export component AssistLayer inherits Rectangle {
+    in property <AssistPopups> popups;
+    // As EditorSurface's: where the base line is drawn, and the text's left.
+    in property <length> offset-y;
+    in property <length> text-left;
+
+    callback completion-clicked(index: int);
+
+    property <length> row-height: 20px;
+    property <int> visible-rows: min(root.popups.completion-rows.length, 10);
+    property <length> list-height: root.visible-rows * root.row-height + 2px;
+    // Below the word if it fits, else above it.
+    property <length> completion-below: root.offset-y + root.popups.completion-line-bottom;
+    property <length> completion-y: root.completion-below + root.list-height <= root.height || root.offset-y + root.popups.completion-line-top - root.list-height < 0
+        ? root.completion-below : root.offset-y + root.popups.completion-line-top - root.list-height;
+
+    // Keep the selected row in view.
+    changed popups => {
+        if root.popups.completion-shown {
+            if root.popups.completion-selected * root.row-height + list.content-y < 0 {
+                list.content-y = -root.popups.completion-selected * root.row-height;
+            } else if (root.popups.completion-selected + 1) * root.row-height + list.content-y > list.visible-height {
+                list.content-y = list.visible-height - (root.popups.completion-selected + 1) * root.row-height;
+            }
+        }
+    }
+
+    // Signature help: above the caret's line (below it if there's no room).
+    if root.popups.signature-shown: Popup {
+        property <length> above: root.offset-y + root.popups.signature-line-top - self.height - 2px;
+        x: min(root.text-left + root.popups.signature-x, max(0px, root.width - self.width - 4px));
+        y: self.above >= 0 ? self.above : root.offset-y + root.popups.signature-line-bottom + 2px;
+        width: min(root.width - 8px, max(200px, signature-layout.preferred-width));
+        height: signature-layout.preferred-height;
+
+        signature-layout := VerticalLayout {
+            padding: 6px;
+            spacing: 4px;
+
+            HorizontalLayout {
+                spacing: 0px;
+
+                Text {
+                    text: root.popups.signature-before;
+                    color: Theme.editor-foreground;
+                    font-family: Theme.editor-font;
+                    font-size: Theme.editor-font-size;
+                }
+
+                Text {
+                    text: root.popups.signature-active;
+                    color: Theme.editor-foreground;
+                    font-family: Theme.editor-font;
+                    font-size: Theme.editor-font-size;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: root.popups.signature-after;
+                    color: Theme.editor-foreground;
+                    font-family: Theme.editor-font;
+                    font-size: Theme.editor-font-size;
+                    horizontal-stretch: 1;
+                }
+
+                if root.popups.signature-count != "": Text {
+                    text: root.popups.signature-count;
+                    color: Theme.chrome-muted;
+                }
+            }
+
+            if root.popups.signature-docs.length > 0: Docs {
+                blocks: root.popups.signature-docs;
+            }
+        }
+    }
+
+    // Hover: above the hovered word (below it if there's no room).
+    if root.popups.hover-shown: Popup {
+        property <length> above: root.offset-y + root.popups.hover-line-top - self.height - 2px;
+        x: min(root.text-left + root.popups.hover-x, max(0px, root.width - self.width - 4px));
+        y: self.above >= 0 ? self.above : root.offset-y + root.popups.hover-line-bottom + 2px;
+        width: min(root.width - 8px, 560px);
+        height: min(hover-layout.preferred-height, 320px);
+
+        hover-layout := Docs {
+            padding: 8px;
+            width: parent.width;
+            blocks: root.popups.hover-docs;
+        }
+    }
+
+    // Always there (hidden while closed), so the list can be scrolled to
+    // the selection from outside it.
+    Rectangle {
+        visible: root.popups.completion-shown;
+        x: min(root.text-left + root.popups.completion-x, max(0px, root.width - 380px - 4px));
+        y: root.completion-y;
+        // Room for the list and the details beside it; it has no
+        // TouchArea, so the text under its empty parts stays clickable.
+        width: 702px;
+        height: max(root.list-height, 280px);
+
+        Popup {
+            x: 0px;
+            y: 0px;
+            width: 380px;
+            height: root.list-height;
+
+            list := ListView {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+
+                for row[index] in root.popups.completion-rows: Rectangle {
+                    height: root.row-height;
+                    background: index == root.popups.completion-selected ? Theme.selection : touch.has-hover ? Theme.chrome-highlight : transparent;
+
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 8px;
+                        spacing: 6px;
+
+                        Text {
+                            width: 12px;
+                            text: row.kind;
+                            color: Theme.chrome-muted;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: row.label;
+                            color: Theme.editor-foreground;
+                            font-family: Theme.editor-font;
+                            font-size: Theme.editor-font-size;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            horizontal-stretch: 1;
+                            text: row.detail;
+                            color: Theme.chrome-muted;
+                            font-family: Theme.editor-font;
+                            font-size: Theme.editor-font-size;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: row.source;
+                            color: Theme.chrome-muted;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    touch := TouchArea {
+                        clicked => {
+                            root.completion-clicked(index);
+                        }
+                    }
+                }
+            }
+        }
+
+        // The selected item's details, beside the list.
+        if root.popups.completion-detail != "" || root.popups.completion-docs.length > 0: Popup {
+            x: 382px;
+            y: 0px;
+            width: 320px;
+            height: min(details-layout.preferred-height, 280px);
+
+            details-layout := VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+
+                if root.popups.completion-detail != "": Text {
+                    text: root.popups.completion-detail;
+                    wrap: word-wrap;
+                    color: Theme.editor-foreground;
+                    font-family: Theme.editor-font;
+                    font-size: Theme.editor-font-size;
+                }
+
+                Docs {
+                    blocks: root.popups.completion-docs;
+                }
+            }
+        }
+    }
+}
