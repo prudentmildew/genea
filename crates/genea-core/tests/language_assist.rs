@@ -266,3 +266,157 @@ fn a_completion_answer_for_text_that_has_moved_on_is_dropped() {
     assert_eq!(fake.received("textDocument/completion").len(), 2, "the server answered");
     assert_eq!(session.editor().completion, None);
 }
+
+const COUNT_HOVER: &str = "```typescript\nlet count: number\n```\nHow many there are.";
+
+fn count_hover() -> Vec<MarkupBlock> {
+    vec![MarkupBlock::Code("let count: number".into()), MarkupBlock::Text("How many there are.".into())]
+}
+
+#[test]
+fn resting_the_pointer_on_code_shows_the_servers_hover_until_the_caret_moves() {
+    let fake = FakeLsp::new().hover("count", COUNT_HOVER);
+    let mut session = open_main("let count = 1;\ncount += 1;\n", &fake);
+
+    session.dispatch(Command::HoverAt { line: 1, column: 3 });
+    session.settle();
+
+    let hover = session.editor().hover.expect("a hover");
+    assert_eq!(hover.at, Caret { line: 1, column: 0 }, "it is anchored where the word starts");
+    assert_eq!(hover.contents, count_hover());
+    assert_eq!(fake.received("textDocument/hover")[0]["position"], json!({ "line": 1, "character": 3 }));
+
+    session.dispatch(Command::MoveCaret(CaretMove::Down));
+    assert_eq!(session.editor().hover, None);
+}
+
+#[test]
+fn the_pointer_past_the_end_of_a_line_or_over_nothing_known_shows_no_hover() {
+    let fake = FakeLsp::new().hover("count", COUNT_HOVER);
+    let mut session = open_main("let count = 1;\n", &fake);
+    session.dispatch(Command::HoverAt { line: 0, column: 5 });
+    session.settle();
+    assert!(session.editor().hover.is_some());
+
+    session.dispatch(Command::HoverAt { line: 0, column: 40 });
+    assert_eq!(session.editor().hover, None, "past the end of the line it closes at once");
+
+    session.dispatch(Command::HoverAt { line: 0, column: 0 });
+    session.settle();
+    assert_eq!(session.editor().hover, None, "`let` has no hover");
+    assert_eq!(fake.received("textDocument/hover").len(), 2);
+
+    session.dispatch(Command::HoverAt { line: 0, column: 5 });
+    session.settle();
+    session.dispatch(Command::HideHover);
+    assert_eq!(session.editor().hover, None);
+}
+
+#[test]
+fn quick_documentation_shows_the_hover_at_the_caret() {
+    let fake = FakeLsp::new().hover("count", COUNT_HOVER);
+    let mut session = open_main("let count = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 0, column: 9 });
+
+    session.dispatch(Command::ShowHover);
+    session.settle();
+
+    let hover = session.editor().hover.expect("a hover: the caret is just after `count`");
+    assert_eq!(hover.at, Caret { line: 0, column: 4 });
+    assert_eq!(hover.contents, count_hover());
+}
+
+#[test]
+fn a_hover_answer_after_typing_is_dropped() {
+    let fake = FakeLsp::new().hover("count", COUNT_HOVER).slow("textDocument/hover", Duration::from_millis(200));
+    let mut session = open_main("let count = 1;\n", &fake);
+    session.dispatch(Command::HoverAt { line: 0, column: 5 });
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+    session.type_text("x");
+    session.settle();
+
+    assert_eq!(fake.received("textDocument/hover").len(), 1);
+    assert_eq!(session.editor().hover, None);
+}
+
+const ADD: &str = "add(first: number, second: number): number";
+
+fn add_server() -> FakeLsp {
+    FakeLsp::new().signature("add", ADD, &["first: number", "second: number"], "Adds two numbers.")
+}
+
+/// The signature help's label with its active parameter, as `add([first: number], …)`.
+fn signature(session: &Session) -> Option<String> {
+    session.editor().signature_help.map(|help| {
+        let chars: Vec<char> = help.label.chars().collect();
+        match help.active_parameter {
+            Some(range) => format!(
+                "{}[{}]{}",
+                chars[..range.start].iter().collect::<String>(),
+                chars[range.clone()].iter().collect::<String>(),
+                chars[range.end..].iter().collect::<String>()
+            ),
+            None => help.label,
+        }
+    })
+}
+
+#[test]
+fn typing_a_call_shows_its_signature_and_follows_the_argument() {
+    let mut session = open_main("const a = 1;\n", &add_server());
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+
+    session.type_text("add(");
+    session.settle();
+    assert_eq!(signature(&session).as_deref(), Some("add([first: number], second: number): number"));
+    let help = session.editor().signature_help.unwrap();
+    assert_eq!(help.at, Caret { line: 1, column: 4 });
+    assert_eq!(help.documentation, [MarkupBlock::Text("Adds two numbers.".into())]);
+    assert_eq!((help.signature, help.signatures), (0, 1));
+
+    session.type_text("1, 2");
+    session.settle();
+    assert_eq!(signature(&session).as_deref(), Some("add(first: number, [second: number]): number"));
+
+    session.type_text(")");
+    session.settle();
+    assert_eq!(signature(&session), None, "the caret left the call");
+}
+
+#[test]
+fn typing_on_before_the_signature_arrives_asks_again() {
+    let fake = add_server().slow("textDocument/signatureHelp", Duration::from_millis(100));
+    let mut session = open_main("const a = 1;\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 1, column: 0 });
+
+    session.type_text("add(1, 2");
+    session.settle();
+
+    assert_eq!(signature(&session).as_deref(), Some("add(first: number, [second: number]): number"));
+}
+
+#[test]
+fn parameter_info_shows_the_signature_of_the_call_at_the_caret() {
+    let mut session = open_main("add(1, 2);\n", &add_server());
+    session.dispatch(Command::PlaceCaret { line: 0, column: 7 });
+
+    session.dispatch(Command::ShowSignatureHelp);
+    session.settle();
+    assert_eq!(signature(&session).as_deref(), Some("add(first: number, [second: number]): number"));
+
+    session.dispatch(Command::HideSignatureHelp);
+    assert_eq!(signature(&session), None);
+}
+
+#[test]
+fn signature_help_closed_before_its_answer_comes_stays_closed() {
+    let fake = add_server().slow("textDocument/signatureHelp", Duration::from_millis(200));
+    let mut session = open_main("add(1, 2);\n", &fake);
+    session.dispatch(Command::PlaceCaret { line: 0, column: 7 });
+    session.dispatch(Command::ShowSignatureHelp);
+    session.dispatch(Command::HideSignatureHelp);
+    session.settle();
+
+    assert_eq!(fake.received("textDocument/signatureHelp").len(), 1);
+    assert_eq!(signature(&session), None);
+}

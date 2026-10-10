@@ -282,7 +282,10 @@ impl Project {
             Trigger::ShowSignatureHelp => ask_signature = Some(SignatureTrigger::Invoked),
             _ => {}
         }
-        if ask_signature.is_none() && self.assist.signature.as_ref().is_some_and(|s| s.context != focus) {
+        // Open, or asked for: follow the text and the caret.
+        let signature_for = self.assist.asked_signature.as_ref().map(|a| &a.context);
+        let signature_for = signature_for.or(self.assist.signature.as_ref().map(|s| &s.context));
+        if ask_signature.is_none() && signature_for.is_some_and(|context| *context != focus) {
             ask_signature = Some(SignatureTrigger::ContentChange);
         }
 
