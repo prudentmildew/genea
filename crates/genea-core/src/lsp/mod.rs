@@ -8,14 +8,18 @@
 //!   main thread: starting and initializing, the restart policy (up to
 //!   [`MAX_RESTARTS`] within [`RESTART_WINDOW`] on the host clock, then
 //!   failed until "Restart language server"), document sync and pulled
-//!   diagnostics. It is generic: tsgo now, `oxlint --lsp` and `oxfmt --lsp`
-//!   later (#49, #50) as more instances with their own [`ServerSpec`].
+//!   diagnostics. It is generic: tsgo, `oxlint --lsp` (#49) and later
+//!   `oxfmt --lsp` (#50) are instances with their own [`ServerSpec`].
+//!   Generations are unique across servers, so a project routes events and
+//!   timers by them ([`LanguageServer::owns`]).
 //! - [`typescript`]: finding tsgo in `node_modules`, and "Add TypeScript 7".
+//! - [`oxc`]: finding Oxlint and Oxfmt, and "Add Oxlint and Oxfmt".
 //! - [`watch`]: the globs a server registers for
 //!   `workspace/didChangeWatchedFiles`, fed from the project watcher.
 //! - [`text`]: URIs, language ids and positions.
 //!
-//! The project glue (`project/language.rs`) owns the servers, feeds them the
+//! The project glue (`project/language.rs`, and `project/oxlint.rs` for
+//! Oxlint) owns the servers, feeds them the
 //! open editors and the watcher's changes, and turns their [`Output`] into
 //! Problems. **Typing never waits on a server**: edits apply on the main
 //! thread as always; syncing a document only queues its text (a cheap rope

@@ -461,9 +461,24 @@ message types. `project/language.rs` is a project's side of it.
   with `LanguageServer::request` while ready, answered in
   `LanguageServer::event`. Oxlint and Oxfmt are more `LanguageServer`s with
   their own `ServerSpec`.
+- **Oxlint** (ticket #49, `lsp/oxc.rs`, `project/oxlint.rs`): runs when the
+  root `package.json` lists both `oxlint` and `oxfmt` and
+  `node_modules/oxlint/bin/oxlint` exists, as
+  `<pinned node or bun> node_modules/oxlint/bin/oxlint --lsp` in the project
+  environment, once that environment is ready (the launcher is a Node
+  script). Type-aware linting is passed explicitly in
+  `initializationOptions` (`[{ workspaceUri, options: { typeAware } }]`),
+  true only when the root `.oxlintrc.json(c)` says
+  `"options": { "typeAware": true }`. A change of runtime, Oxlint install or
+  that flag starts it afresh. Its diagnostics are `ProblemSource::Oxlint`.
+  Without Oxlint and Oxfmt a notice offers `Command::AddOxlintAndOxfmt`.
+  Server generations are unique across servers, so `language_event` and
+  `language_timer` route Oxlint's by generation; "Restart language server"
+  restarts both.
 
 Tests use the **fake LSP server** (`genea_testkit::FakeLsp`), installed on
-the test host as `tsc`: scripted per test to report markers, crash, stay
+the test host as `tsc` (and as `node` or `bun` for Oxlint in
+`tests/oxlint.rs`): scripted per test to report markers, crash, stay
 silent, delay or flood, and asked afterwards what reached it. As a binary
 (`genea-fake-lsp`, script in `<binary>.json` beside it) it stands in for
 tsgo in the harness's `typing-silent-lsp`. The slow lane

@@ -169,9 +169,10 @@ impl Project {
             server.files_changed(&changes.paths, &changes.created);
         }
         let node_modules = self.root.join("node_modules");
+        let at_root = |path: &PathBuf, name: &str| path.parent() == Some(self.root.as_path()) && path.ends_with(name);
         let relevant = |path: &PathBuf| {
-            path.parent() == Some(self.root.as_path())
-                && path.file_name().is_some_and(|name| name == "package.json" || OXLINT_CONFIGS.iter().any(|c| name == *c))
+            at_root(path, "package.json")
+                || OXLINT_CONFIGS.iter().any(|config| at_root(path, config))
                 || path.strip_prefix(&node_modules).is_ok_and(|rest| rest.components().count() <= 2)
         };
         if changes.rescan || changes.paths.iter().any(relevant) {
